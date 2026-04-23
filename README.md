@@ -29,6 +29,7 @@ Hi-EM/
 ├── handoff.md                세션 진입점 — 지금 무엇을 해야 하는지
 ├── CLAUDE.md                 Claude Code 작업 규칙 (환경 분리, 커밋, Step 완료 프로토콜)
 ├── README.md                 이 파일
+├── requirements.txt          로컬/git 환경 Python 의존성 (Colab과 분리 관리)
 ├── .gitignore
 │
 ├── context/                  확립된 설계 문서 (세션 시작 시 읽기)
@@ -96,9 +97,13 @@ cd ..
 
 ---
 
-## 빠른 시작 (Claude Code 세션)
+## 빠른 시작
 
 ```bash
+# 0. 로컬 환경 의존성 설치 (Colab 사용자는 setup_colab.ipynb 실행, 아래 무시)
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
 # 1. Step 진행 중 언제든 상태 검증
 python scripts/check_step_done.py             # 현재 Step 자동 감지
 python scripts/check_step_done.py --step 0-3  # 특정 Step

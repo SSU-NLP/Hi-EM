@@ -1,0 +1,21 @@
+# Hi-EM Python 의존성 (로컬/git 환경용, Python 3.10+)
+#
+# Colab 환경은 `setup_colab.ipynb`가 별도로 관리 (gitignored).
+# 이 파일과 setup_colab.ipynb는 동기화 대상이 아니다 — 각자 다른 use case.
+
+# ── Core: Phase 1 구현 (sCRP + 사건 모델 + 임베딩) ────────────────
+torch>=2.0
+sentence-transformers>=3.0
+transformers>=4.40
+numpy>=1.24
+
+# ── Phase 0 도구 (논문 정독 / 벤치마크 다운로드) ──────────────────
+pypdf>=5.0                # SEM-paper.pdf 텍스트 추출
+wget>=3.2                 # TopiOCQA download_data.py 의존
+
+# ── 테스트 ───────────────────────────────────────────────────────
+pytest>=7.0
+
+# ── Phase 3+ 응답 생성 LLM (선택적, 실제 쓸 것 결정 시 해제) ─────
+# openai>=1.30
+# anthropic>=0.30
