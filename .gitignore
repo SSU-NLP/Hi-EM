@@ -1,0 +1,17 @@
+setup_colab.ipynb
+__pycache__/
+*.pyc
+.DS_Store
+
+# 외부 벤치마크 레포 (각자 clone) — handoff.md 지침 참조
+benchmarks/locomo/
+benchmarks/topiocqa/
+benchmarks/LongMemEval/
+
+# 데이터 / 실험 산출물
+outputs/
+*.log
+.venv/
+
+# PDF 텍스트 덤프 (작업 보조)
+sem.txt
