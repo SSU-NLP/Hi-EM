@@ -20,10 +20,10 @@
 - [x] `outputs/benchmark-analysis.md` 작성 (8239자, 3 벤치마크 + 옵션 A~F 증거 매트릭스 + Step 0-3 입력)
 
 ### 0-3. 사건 모델 설계 판단
-- [ ] 벤치마크 분석 결과에 근거해 사건 모델 형태 결정
-- [ ] `context/01-hi-em-design.md`의 미확정 섹션 채우기
-- [ ] `context/02-math-model.md`의 수식 확정
-- [ ] `context/06-decision-log.md`에 판단 근거 기록
+- [x] 벤치마크 분석 결과에 근거해 사건 모델 형태 결정 (옵션 A — Centroid + diag variance)
+- [x] `context/01-hi-em-design.md`의 미확정 섹션 채우기 (§4 옵션 A 확정, §3 Markov 확장 철회, B~E는 Phase 1/2로 위임)
+- [x] `context/02-math-model.md`의 수식 확정 ($P(s_n|e_n=k)=\mathcal{N}(\mu_k, \mathrm{diag}(\sigma_k^2))$, PE = Mahalanobis)
+- [x] `context/06-decision-log.md`에 판단 근거 기록 (옵션 A 선택 + Markov 철회 + 기각 옵션별 사유)
 
 ## Phase 1: 코어 모듈 구현 (src/hi_em/)
 - [ ] 쿼리 임베딩 모듈 (bge-base-en-v1.5)

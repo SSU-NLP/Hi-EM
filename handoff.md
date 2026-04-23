@@ -35,7 +35,7 @@
 
 **마지막 업데이트**: 2026-04-23
 **현재 Phase**: Phase 0 — 자료 분석 및 설계 확정
-**진행률**: 2/3 Step 완료
+**진행률**: 3/3 Step 완료 → **Phase 0 종료**
 
 ### 완료된 것
 - 프로젝트 디렉토리 구조 생성
@@ -44,29 +44,28 @@
 - 설계 문서 초안 작성 (`context/`)
 - **Step 0-1 완료**: SEM 논문 전 35페이지 정독(pdftotext 산문 + 수식 10페이지 PNG 직독). `SEM/sem/sem.py` 실제 코드 검증(`_calculate_unnormed_sCRP`, `run()` verbatim pseudocode). `context/00-sem-paper.md` 재작성 — 식 1~24 정확한 정의, Hi-EM 계승/대체/폐기 매핑, 검증 미해결 지점 3건 명시 (11940자).
 - **Step 0-2 완료**: LoCoMo(10 conv × 27 sess × 22 turns, topic annotation 없음), TopiOCQA dev(2514 turns, 205 conv, Wiki Topic ground truth, topic shift 3.3/conv), LongMemEval oracle(500 Q, 6 types, 1206자 chat) 실데이터 분석. 옵션 A~F × 3 벤치마크 증거 매트릭스 → `outputs/benchmark-analysis.md` (8239자).
+- **Step 0-3 완료 (Phase 0 종료)**: 사건 모델 **옵션 A (Centroid + diag variance)** 확정 — $P(s_n|e_n=k)=\mathcal{N}(\mu_k,\mathrm{diag}(\sigma_k^2))$. **Markov 확장 철회** (double counting). B~E는 Phase 1/2/4로 위임. `01-hi-em-design.md`, `02-math-model.md`, `06-decision-log.md` 확정본 반영.
 
 ### 미완료
-- 사건 모델 형태 결정 (Step 0-3)
-- Phase 1 구현
+- Phase 1 구현 (**사용자 승인 대기**)
 
 ---
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### 즉시 시작: Phase 0 Step 3 — 사건 모델 설계 확정
+### 대기: Phase 1 착수는 사용자 명시적 승인 이후
 
-`outputs/benchmark-analysis.md`의 "옵션 A~F × 3 벤치마크 증거 매트릭스"를 근거로 $f$의 형태를 결정하고 `context/01-hi-em-design.md`, `02-math-model.md`의 미확정 섹션을 채운다.
+Phase 0 종료. Phase 1(코어 모듈 구현)은 **사용자 승인 후** 진행.
 
-1. 벤치마크 증거 재검토 (`outputs/benchmark-analysis.md` §4, §5)
-2. 옵션 A~F 중 선택 (또는 F로 새 옵션 제안) — 근거를 구체적으로:
-   - LongMemEval 긴 content에서 centroid만으로 충분한가?
-   - TopiOCQA bias 회피하면서 section 과분할 막을 수 있는가?
-   - LoCoMo session boundary 회수 가능한가?
-3. `context/01-hi-em-design.md` "미확정 사항 A" 섹션을 채워 넣기 (문자열 "미확정"/"TBD"/"TODO"/"???" 제거)
-4. `context/02-math-model.md` $P(\mathbf{s}_n \mid e_n, \cdot)$ 수식 확정
-5. `context/06-decision-log.md`에 오늘 날짜로 결정 근거 append
-6. 3-angle self-audit (구조/동작/설계)
-7. `python scripts/check_step_done.py --step 0-3` 통과 확인 후 plan.md [x], commit
+Phase 1 진입 시 첫 할 일 (참고):
+1. `src/hi_em/` 디렉토리 구조 잡기 (`context/03-architecture.md` 기반)
+2. `embedding.py` — bge-base-en-v1.5 wrapper
+3. `topic.py` — Topic 클래스 (centroid + diag variance + Welford 상태)
+4. `scrp.py` — sticky-CRP prior 계산 (SEM2 `_calculate_unnormed_sCRP` 참조)
+5. `sem_core.py` — online MAP inference 루프 (SEM2 `run()` 참조, GRU 부분은 Gaussian likelihood로 대체)
+6. `tests/test_scrp.py`, `test_topic.py` — seed 고정 단위 테스트
+
+Phase 1 완료 기준: sCRP + 사건 모델 옵션 A + online MAP 루프가 `src/hi_em/`에 구현되고 `tests/`에 단위 테스트 통과.
 
 ---
 
