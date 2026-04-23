@@ -14,10 +14,10 @@
 - [x] LoCoMo clone (`benchmarks/locomo/`)
 - [x] TopiOCQA clone (`benchmarks/topiocqa/`)
 - [x] LongMemEval clone (`benchmarks/LongMemEval/`)
-- [ ] LoCoMo `data/locomo10.json` 구조 분석
-- [ ] TopiOCQA 데이터 다운로드 및 분석
-- [ ] LongMemEval 데이터 다운로드 및 분석
-- [ ] `outputs/benchmark-analysis.md` 작성
+- [x] LoCoMo `data/locomo10.json` 구조 분석 (10 conv × 27 sess × 22 turns, topic annotation 없음)
+- [x] TopiOCQA 데이터 다운로드 및 분석 (dev 2514 turns, 205 conv, Wiki Topic ground truth)
+- [x] LongMemEval 데이터 다운로드 및 분석 (oracle 500 Q, 6 question_types, 긴 chat)
+- [x] `outputs/benchmark-analysis.md` 작성 (8239자, 3 벤치마크 + 옵션 A~F 증거 매트릭스 + Step 0-3 입력)
 
 ### 0-3. 사건 모델 설계 판단
 - [ ] 벤치마크 분석 결과에 근거해 사건 모델 형태 결정

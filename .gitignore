@@ -8,8 +8,12 @@ benchmarks/locomo/
 benchmarks/topiocqa/
 benchmarks/LongMemEval/
 
-# 데이터 / 실험 산출물
-outputs/
+# 데이터 / 실험 산출물 (분석 md는 track, 대용량/로그만 제외)
+outputs/*.npy
+outputs/*.pkl
+outputs/*.npz
+outputs/*.h5
+outputs/tmp/
 *.log
 .venv/
 

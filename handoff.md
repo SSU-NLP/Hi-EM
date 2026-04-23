@@ -35,7 +35,7 @@
 
 **마지막 업데이트**: 2026-04-23
 **현재 Phase**: Phase 0 — 자료 분석 및 설계 확정
-**진행률**: 1/3 Step 완료
+**진행률**: 2/3 Step 완료
 
 ### 완료된 것
 - 프로젝트 디렉토리 구조 생성
@@ -43,9 +43,9 @@
 - SEM2 레포 clone (`SEM/` ← `nicktfranklin/SEM2`, 과거 v1에서 교체)
 - 설계 문서 초안 작성 (`context/`)
 - **Step 0-1 완료**: SEM 논문 전 35페이지 정독(pdftotext 산문 + 수식 10페이지 PNG 직독). `SEM/sem/sem.py` 실제 코드 검증(`_calculate_unnormed_sCRP`, `run()` verbatim pseudocode). `context/00-sem-paper.md` 재작성 — 식 1~24 정확한 정의, Hi-EM 계승/대체/폐기 매핑, 검증 미해결 지점 3건 명시 (11940자).
+- **Step 0-2 완료**: LoCoMo(10 conv × 27 sess × 22 turns, topic annotation 없음), TopiOCQA dev(2514 turns, 205 conv, Wiki Topic ground truth, topic shift 3.3/conv), LongMemEval oracle(500 Q, 6 types, 1206자 chat) 실데이터 분석. 옵션 A~F × 3 벤치마크 증거 매트릭스 → `outputs/benchmark-analysis.md` (8239자).
 
 ### 미완료
-- 벤치마크 데이터 다운로드 및 분석 (Step 0-2)
 - 사건 모델 형태 결정 (Step 0-3)
 - Phase 1 구현
 
@@ -53,21 +53,20 @@
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### 즉시 시작: Phase 0 Step 2 — 벤치마크 데이터 분석
+### 즉시 시작: Phase 0 Step 3 — 사건 모델 설계 확정
 
-1. **LoCoMo** (`benchmarks/locomo/data/locomo10.json`) — 레포 내 포함됨
-   - JSON 구조 직접 확인 (샘플 1~2개)
-   - 세션 수, 턴 수, 쿼리 길이 통계
-   - Topic 전환 annotation 있는지 확인
-2. **TopiOCQA** — `benchmarks/topiocqa/download_data.py` 실행해 train/dev 다운
-   - Wiki document 기반 topic 경계 확인
-   - 평균 턴 수, topic shift 빈도
-3. **LongMemEval** — HuggingFace에서 `longmemeval_oracle.json` 등 다운
-   - 5개 능력(IE/Multi-session/Temporal/Knowledge update/Abstention) 분포
-   - Needle-in-haystack 구조 확인
-4. 세 벤치마크를 비교: Claude-유사 장기 대화와의 유사성, 어떤 사건 모델 옵션이 유리할지 판단 근거
-5. `outputs/benchmark-analysis.md` 작성 — 각 벤치마크 섹션 + 종합 판단 (1500자 이상)
-6. `python scripts/check_step_done.py` 통과 확인
+`outputs/benchmark-analysis.md`의 "옵션 A~F × 3 벤치마크 증거 매트릭스"를 근거로 $f$의 형태를 결정하고 `context/01-hi-em-design.md`, `02-math-model.md`의 미확정 섹션을 채운다.
+
+1. 벤치마크 증거 재검토 (`outputs/benchmark-analysis.md` §4, §5)
+2. 옵션 A~F 중 선택 (또는 F로 새 옵션 제안) — 근거를 구체적으로:
+   - LongMemEval 긴 content에서 centroid만으로 충분한가?
+   - TopiOCQA bias 회피하면서 section 과분할 막을 수 있는가?
+   - LoCoMo session boundary 회수 가능한가?
+3. `context/01-hi-em-design.md` "미확정 사항 A" 섹션을 채워 넣기 (문자열 "미확정"/"TBD"/"TODO"/"???" 제거)
+4. `context/02-math-model.md` $P(\mathbf{s}_n \mid e_n, \cdot)$ 수식 확정
+5. `context/06-decision-log.md`에 오늘 날짜로 결정 근거 append
+6. 3-angle self-audit (구조/동작/설계)
+7. `python scripts/check_step_done.py --step 0-3` 통과 확인 후 plan.md [x], commit
 
 ---
 
