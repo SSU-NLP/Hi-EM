@@ -56,6 +56,7 @@ python scripts/check_step_done.py
 
 ## 커밋 규칙
 
+- **Claude Code는 `git add`/`git commit`/`git push`를 직접 실행하지 않는다.** 변경이 준비되면 사용자가 복사해서 실행할 수 있는 **명령어만 제시**한다. 커밋 실행 권한은 사용자에게 있다.
 - 한 커밋 = 한 논리적 단위
 - 제목 50자 이내, 본문은 이유 중심
 - prefix: `feat`, `fix`, `docs`, `refactor`, `test`, `exp`

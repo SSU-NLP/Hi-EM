@@ -108,7 +108,7 @@ python scripts/check_step_done.py --step 0-3  # 특정 Step
 #    - check_step_done.py exit 0 확인
 #    - plan.md 체크박스 [x]
 #    - handoff.md 현재 상태/다음 할 일 갱신
-#    - git commit
+#    - git add/commit 명령어를 사용자에게 제시 (사용자가 실행)
 ```
 
 ---
