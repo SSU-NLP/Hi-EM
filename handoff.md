@@ -23,10 +23,11 @@
 1. 이 파일의 "현재 상태"와 "다음 할 일" 섹션 업데이트 (날짜 `마지막 업데이트` 오늘로 갱신)
 2. 설계 결정이 있었다면 `context/06-decision-log.md`에 append
 3. 설계 변경이 있었다면 `context/01-hi-em-design.md` 또는 `02-math-model.md` 갱신
-4. **`python scripts/check_step_done.py` 실행 → exit code 0 받을 때까지 수정-재실행 반복**
-5. `plan.md` 체크박스 갱신 (검증 통과한 항목만 `[x]`)
-6. `git add -A && git commit` (커밋 메시지는 CLAUDE.md 규칙 따름)
-7. 다음 세션이 바로 이어갈 수 있게 이 파일의 "다음 할 일" 첫 항목을 구체적으로 작성
+4. **3-angle self-audit 수행** (CLAUDE.md "Step 완료 프로토콜 1단계" 참조): 구조/동작/설계 각도에서 최소 3 Q&A씩. 답 못 한 지점은 결과물 파일에 "검증 미해결" 섹션으로 기록.
+5. **`python scripts/check_step_done.py` 실행 → exit code 0 받을 때까지 수정-재실행 반복**
+6. `plan.md` 체크박스 갱신 (검증 통과한 항목만 `[x]`)
+7. `git add -A && git commit` (커밋 메시지는 CLAUDE.md 규칙 따름)
+8. 다음 세션이 바로 이어갈 수 있게 이 파일의 "다음 할 일" 첫 항목을 구체적으로 작성
 
 ---
 
