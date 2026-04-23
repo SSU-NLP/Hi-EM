@@ -21,9 +21,10 @@ import sys
 from datetime import date
 from pathlib import Path
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = Path(
     subprocess.check_output(
-        ["git", "rev-parse", "--show-toplevel"], text=True
+        ["git", "rev-parse", "--show-toplevel"], text=True, cwd=_SCRIPT_DIR
     ).strip()
 )
 
@@ -68,7 +69,7 @@ def check_common(results: list[Result]) -> None:
             _fail(results, f"handoff.md: '{section}' 섹션 없음")
 
     status = subprocess.check_output(
-        ["git", "status", "--porcelain"], text=True, cwd=ROOT
+        ["git", "status", "--porcelain"], text=True, cwd=str(ROOT)
     )
     dirty = [ln for ln in status.splitlines() if ln.strip() and "setup_colab.ipynb" not in ln]
     if dirty:
