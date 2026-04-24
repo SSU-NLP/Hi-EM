@@ -1,6 +1,15 @@
 # 벤치마크 정리
 
-## Tier 1 (메인): 장기 대화 메모리
+## 평가 축 구분 (중요)
+
+| 목적 | 벤치마크 | 메트릭 |
+|---|---|---|
+| **Topic 경계 감지** (Phase 1) | **TopiOCQA**, **TIAGE** | turn-transition binary F1 |
+| **Downstream QA** (Phase 4) | LoCoMo, LongMemEval | QA accuracy (GPT-4o judge) |
+
+**LongMemEval / LoCoMo를 topic 경계 감지에 쓰면 안 된다** — turn-level topic label이 없고 session 경계는 weak proxy. 내부적으로 한 세션에 여러 subtopic이 공존할 수 있으므로 session-as-topic 가정은 over-segmentation을 FP로 잘못 처벌한다.
+
+## Tier 1 (Downstream QA — Phase 4): 장기 대화 메모리
 
 ### LoCoMo
 - 경로: `benchmarks/locomo/`
@@ -19,36 +28,39 @@
   3. Temporal reasoning
   4. Knowledge updates
   5. Abstention
-- 평가: QA accuracy (GPT-4o judge)
+- 평가: QA accuracy (GPT-4o judge). **Topic 경계 감지 용도 아님.**
 - 논문: ICLR 2025
 - 레포: https://github.com/xiaowu0162/LongMemEval
 
-## Tier 2 (토픽 감지 검증)
+## Tier 1 (Topic 경계 감지 — Phase 1): Hi-EM segmentation 검증
 
 ### TopiOCQA
 - 경로: `benchmarks/topiocqa/`
-- 데이터: `python download_data.py --resource data.retriever.all_history.dev`
-- 구조: 3920 대화, 평균 13턴, 4 topic
-- Topic 정의: Wikipedia document 경계
+- 데이터: `python download_data.py --resource data.topiocqa_dataset.dev`
+- 구조: dev 2514 turns, 205 conv, 평균 12턴, 3.3 shift/conv
+- Topic 정의: Wikipedia document 경계 (명시 annotation)
 - 평가: topic shift detection F1
 - 레포: https://github.com/McGill-NLP/topiocqa
+- **특성**: factoid QA, shift rate 28%/transition — frequent-shift regime
 
-### TIAGE (옵션)
+### TIAGE
+- 경로: `benchmarks/tiage/`
+- 데이터: `benchmarks/tiage/data/personachat/anno/{train,dev,test}/anno_*.json` (레포 내 포함)
+- 구조: train 300 / dev 100 / test 100 conv, 평균 15.6턴, 3.15 shift/conv (test 기준)
+- Turn label: `-1`(첫 턴) / `0`(continue) / `1`(shift). 인간 주석, Cohen's Kappa 0.48.
+- 평가: topic shift detection F1 (turn-transition binary)
 - 레포: https://github.com/HuiyuanXie/tiage
-- 구조: 500 annotated 대화, shift 3.5회/대화
-- Cohen's Kappa = 0.48
-- 필요 시 추가 clone
+- **특성**: PersonaChat 기반 chit-chat, shift rate 20%/transition, 짧은 utterance (~50자)
 
 ---
 
 ## 데이터 준비 체크리스트
-- [x] LoCoMo clone
-- [x] TopiOCQA clone
-- [x] LongMemEval clone
-- [ ] LoCoMo 데이터 확인 (레포 내 포함)
-- [ ] TopiOCQA data download
-- [ ] LongMemEval HF data download
-- [ ] TIAGE clone (옵션)
+- [x] LoCoMo clone (`benchmarks/locomo/`)
+- [x] TopiOCQA clone (`benchmarks/topiocqa/`)
+- [x] LongMemEval clone + HF 데이터 다운 (`benchmarks/LongMemEval/data/`)
+- [x] TIAGE clone (`benchmarks/tiage/`)
+- [x] LoCoMo 데이터 확인 (레포 내 포함)
+- [x] TopiOCQA train/dev download (via `download_data.py`)
 
 ---
 

@@ -50,8 +50,8 @@
 
 ### 미완료
 - Phase 2 (LTM + Memory window)
-- Phase 2.5 smoke test (LongMemEval oracle) — **TopiOCQA가 주 타깃 아니므로 Phase 2 착수 전 먼저 실행 권장**
-- Phase 3 이후
+- Phase 1-5 (TIAGE topic-shift F1 측정) + 1-6 (TopiOCQA·TIAGE 종합 Gate)
+- Phase 2 이후
 
 ---
 
@@ -108,10 +108,6 @@ LoCoMo/LongMemEval까지 직접 보고 다시 판단해라.
 ### Phase 2: 메모리 계층 (LTM + Memory window)
 - LTM = SSD 파일 영속 저장, Memory window = 현재 라운드 prefill 대상 STM
 - 저장 포맷, Memory window 크기·구성 정책, importance/merge 확정
-
-### Phase 2.5: Integrated smoke test
-- LongMemEval oracle에서 topic 분할 결과가 session 경계에 대충 정렬되는지 질적 확인
-- 심각한 불일치 시 Phase 4까지 기다리지 않고 옵션 재검토
 
 ### Phase 3 이후: `plan.md` 참조
 

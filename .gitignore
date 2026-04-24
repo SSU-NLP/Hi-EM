@@ -7,6 +7,7 @@ __pycache__/
 benchmarks/locomo/
 benchmarks/topiocqa/
 benchmarks/LongMemEval/
+benchmarks/tiage/
 
 # 데이터 / 실험 산출물 (분석 md는 track, 대용량/로그만 제외)
 outputs/*.npy

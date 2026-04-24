@@ -61,8 +61,26 @@
 
 ### 1-4. Gate 판정 + 분기
 - [x] **PASS 조건**: Hi-EM F1 > cosine (0.471 > 0.467) AND F1 > 0.4 AND overhead ≤ 200ms
-- [x] **Gate 결과: PASS (marginal)** — Phase 2.5 smoke test 먼저 수행 권장 (TopiOCQA는 Hi-EM 주 타깃 아님)
+- [x] **Gate 결과: PASS (marginal)** — TopiOCQA는 frequent-shift regime, Hi-EM 주 타깃 아님
 - [x] hyperparam regime split 확정 → `06-decision-log.md` 2026-04-24 entry
+
+### 1-5. TIAGE dev/test topic-shift 평가 (Phase 1-3 확장)
+
+**근거**: LongMemEval는 turn-level topic label이 없어 topic 경계 감지 평가엔 부적합 (04-benchmarks.md 참조). TopiOCQA는 factoid QA로 편향. **PersonaChat 기반 TIAGE**를 추가 평가해 Hi-EM segmentation의 chit-chat 대화에서의 성능을 독립 벤치마크로 검증한다.
+
+- [ ] `scripts/run_tiage_segmentation.py` — test 100 conv / 1564 turns 예측
+- [ ] **Metric: topic shift F1** — label `'1'` = shift, `'0'` = continue (인간 annotated, Cohen's Kappa 0.48)
+- [ ] **Baseline 3종 비교**: (a) all-boundary / (b) cosine threshold sweep / (c) Hi-EM
+- [ ] **HP 두 regime 병행**: persistence (α=1, λ=10, σ₀²=0.01) vs freq-shift (α=10, λ=1, σ₀²=0.1)
+- [ ] 결과 기록: `outputs/phase-1-tiage.md`
+- [ ] **Gate 조건**: TopiOCQA와 동일 (baseline 대비 우위 AND F1 > 0.4 AND latency +20% 이내)
+
+### 1-6. Phase 1 종합 Gate
+
+- [ ] TopiOCQA gate: 1-4 기준 PASS/FAIL
+- [ ] TIAGE gate: 1-5 기준 PASS/FAIL
+- [ ] **두 gate 모두 PASS** → Phase 2 진입
+- [ ] 둘 중 하나라도 FAIL → `06-decision-log.md` append, 옵션 A 재검토 or regime-split HP 확장
 
 ---
 
@@ -81,17 +99,6 @@
 
 ---
 
-## Phase 2.5: Integrated smoke test (Phase 3 진입 전 조기 검증)
-
-**목적**: Phase 4까지 기다리지 않고 LongMemEval에서 옵션 A의 실제 감도를 조기에 가늠.
-
-- [ ] LongMemEval oracle에서 Hi-EM을 돌려 topic 분할 결과 기록
-- [ ] Hi-EM이 만든 topic 경계가 LongMemEval의 `haystack_session_ids`(session 경계)에 **대충 정렬되는지** 질적 확인 (정량 F1 아님)
-- [ ] 결과 → `outputs/phase-2.5-smoke.md`
-- [ ] 심각한 불일치 발견 시: Phase 4까지 기다리지 않고 옵션 재검토 절차 실행 (Phase 1-4 FAIL 경로 준용)
-
----
-
 ## Phase 3: 오케스트레이션
 - [ ] 매 턴 파이프라인: `query → embedding → segment → LTM write`
 - [ ] 매 라운드 파이프라인: `query → Memory window 구성 → LLM 호출 prefill/prefix`
@@ -99,10 +106,19 @@
 
 ---
 
-## Phase 4: 전체 평가
-- [ ] LoCoMo QA accuracy
-- [ ] LongMemEval 5개 능력별 accuracy (variance 효과 간접 측정 포함)
-- [ ] Latency 누적 측정 (전체 파이프라인 overhead)
+## Phase 4: 전체 평가 — QA accuracy 4-way baseline 비교
+
+**실제 downstream 유용성 평가**. Hi-EM이 단순 retrieval보다 낫다는 증거 수집.
+
+4 baseline QA accuracy 비교 (LoCoMo · LongMemEval):
+- **Baseline 1. Sliding window**: 최근 N개 세션만 LLM에 투입. 오래된 정보 놓침.
+- **Baseline 2. Full context**: 모든 세션 투입. Context length 초과·비용 폭발.
+- **Baseline 3. RAG (embedding retrieval)**: 쿼리와 cosine-similar top-K 턴. Topic 구조 없는 flat retrieval.
+- **Hi-EM**: Topic 단위 조직화 + 관련 topic 턴을 Memory window로 승격 → compact context.
+
+- [ ] LoCoMo QA accuracy (4 baseline × 전체 197 QA/conv)
+- [ ] LongMemEval 5개 능력별 accuracy (IE / Multi-session / Temporal / Knowledge update / Abstention; oracle + _s + _m)
+- [ ] Latency 누적 측정 (LLM 호출 포함 총 overhead)
 - [ ] Memory window 크기 / prefix 토큰 수 효율 측정 (재사용률 등)
 
 ---
@@ -114,4 +130,4 @@
 ---
 
 ## 각 Phase 완료 기준
-`outputs/phase-N-results.md` 또는 세부 파일(`phase-1-topiocqa.md`, `phase-2.5-smoke.md` 등)에 측정 결과 기록.
+`outputs/phase-N-results.md` 또는 세부 파일(`phase-1-topiocqa.md`, `phase-1-tiage.md` 등)에 측정 결과 기록.

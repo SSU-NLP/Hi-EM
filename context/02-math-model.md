@@ -87,7 +87,7 @@ $$I(e) = g(n_e,\, m_e,\, \Delta t_e,\, \text{neighbors})$$
 | Persistence (few shifts) | LongMemEval, 실서비스 Claude 대화 | $\alpha$=1.0, $\lambda$=10.0, $\sigma_0^2$=0.01 (초기 Hi-EM) |
 | Frequent shift (factoid QA) | TopiOCQA | $\alpha$=10.0, $\lambda$=1.0, $\sigma_0^2$=0.1 (SEM2 defaults) |
 
-Phase 2.5 LongMemEval smoke test · Phase 4 전체 평가에서 regime 구분 재검증.
+Phase 1-5 TIAGE 평가 · Phase 4 전체 평가에서 regime 구분 재검증.
 
 ## Phase 4 실험 후 경험적 결정 대상
 

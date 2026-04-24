@@ -129,6 +129,39 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 
 ---
 
+### 2026-04-24: 평가 축 개념 정정 — LongMemEval는 QA용, Topic 경계 감지는 TIAGE로 확장
+
+**근거**:
+- Phase 2.5 smoke test에서 LongMemEval oracle session 경계를 topic 경계 GT proxy로 사용해 평가 → Gate FAIL (recall 0.734 PASS, purity 0.542 FAIL, topics/sess 1.96 FAIL).
+- 재검토: LongMemEval는 **downstream QA accuracy 평가용**으로 설계된 benchmark. turn-level topic label이 없고 session 경계는 weak proxy. 한 세션에 여러 subtopic이 공존할 수 있어 Hi-EM의 정상적 subtopic 분할이 FP로 잘못 처벌됨.
+- 결과적으로 Phase 2.5 smoke test의 **전제 자체가 틀린 설계**였음.
+
+**결정**:
+- **LongMemEval**은 topic 경계 감지 평가에 쓰지 않는다. Phase 4 downstream QA 비교(Sliding window / Full context / RAG / Hi-EM 4 baseline)에만 사용.
+- **Topic 경계 감지 벤치마크는 TopiOCQA + TIAGE 2종**으로 확장:
+  - TopiOCQA (Wikipedia doc 경계, factoid QA, frequent-shift regime)
+  - TIAGE (PersonaChat 인간 주석, chit-chat, 20%/transition shift rate) — 기존 Tier 2 "옵션"에서 **Tier 1 필수**로 승격
+- Phase 2.5 "LongMemEval smoke test"는 **폐기**. 대신 Phase 1-3 augment로 TIAGE 평가 추가.
+
+**영향 범위**:
+- `context/04-benchmarks.md`: 평가 축 구분 명시, TIAGE Tier 승격
+- `plan.md`: Phase 2.5 LongMemEval smoke test 제거, Phase 1-3에 TIAGE 추가
+- `benchmarks/tiage/` 추가 clone (`.gitignore`에 등록)
+- `setup_colab.ipynb` BENCHMARK_REPOS에 tiage 추가
+- `scripts/run_tiage_segmentation.py` 신설
+- `outputs/phase-2.5-smoke.md`·`.json` 및 sweep 결과는 "참고용" (결론에 쓰지 않음)
+
+**대안**:
+- LongMemEval session을 topic 경계로 강제 가정하고 gate 유지 (기각: 근본적으로 misaligned)
+- Phase 2.5를 LongMemEval QA로 재정의 (기각: Phase 4와 중복, Phase 2 메모리 계층 전 smoke는 더 가볍게)
+
+**Phase 1 topic 경계 검증 재정의**:
+- TopiOCQA gate: 현재 PASS (marginal, F1 0.471)
+- TIAGE gate: 이번 추가 수행 — 결과 `outputs/phase-1-tiage.md`로 기록
+- 두 벤치마크 모두 PASS면 Phase 2 진입
+
+---
+
 ### 2026-04-24: Phase 1-3 TopiOCQA — hyperparam regime split 확인, Gate marginal PASS
 
 **근거**:

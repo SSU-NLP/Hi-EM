@@ -36,7 +36,7 @@
 
 **Gate 결과: PASS (marginal)**
 
-→ **Phase 2 진입 가능** (단, Phase 2.5 smoke test 통해 LongMemEval 감도 조기 검증 필수)
+→ **Phase 2 진입 가능** (단, Phase 1-5 TIAGE 평가도 PASS해야 종합 Gate 통과)
 
 ---
 
@@ -85,7 +85,7 @@
 
 ## 권장 다음 행동
 
-1. `context/02-math-model.md` 하이퍼파라미터 표에 footnote 추가: "α=1, λ=10은 persistence-dominant 대화 초기값. TopiOCQA 같은 frequent-shift 벤치마크는 α=10, λ=1 권장. Phase 2.5/Phase 4에서 벤치마크별 재튜닝."
+1. `context/02-math-model.md` 하이퍼파라미터 표에 footnote 추가: "α=1, λ=10은 persistence-dominant 대화 초기값. TopiOCQA 같은 frequent-shift 벤치마크는 α=10, λ=1 권장. Phase 1-5 TIAGE / Phase 4 QA 평가에서 벤치마크별 재튜닝."
 2. `context/06-decision-log.md`에 이번 탐색 결과 append (FAIL→PASS 경로와 근거).
-3. **Phase 2.5 smoke test**를 Phase 2 착수 전 먼저 돌려 LongMemEval에서 옵션 A의 실제 감도 확인. TopiOCQA 통과는 "최소 동작 sanity"일 뿐, 주 타깃은 LongMemEval.
+3. **Phase 1-5 TIAGE 평가** 추가로 수행하여 chit-chat 대화에서의 Hi-EM segmentation 일반성을 확인. TopiOCQA(factoid) + TIAGE(chit-chat) 둘 다 PASS해야 Phase 2 진입.
 
