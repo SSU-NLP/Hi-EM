@@ -129,6 +129,43 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 
 ---
 
+### 2026-04-23: Phase 1 범위 재정의 + KV cache → Memory window 용어 전환
+
+**근거**:
+- Phase 1 완료 기준을 "단위 테스트 통과"에서 "TopiOCQA topic shift F1 gate 통과"로 강화. 이유: topic 분할이 검증 안 된 상태에서 LTM/STM 계층 구축은 허구 위에 쌓임.
+- 3-angle audit(구조·동작·설계 18 Q&A)로 8개 gap 발견:
+  1. `Topic_section` 변화를 noise로 취급(FP 카운트) 정의 누락
+  2. Gate 임계값 선험적 숫자 제거 → "baseline 대비 우위 + 절대 하한" 규칙화
+  3. brief.md latency +10~20% 제약 조기 측정(Phase 4 아닌 Phase 1-3)
+  4. TopiOCQA 평균 12턴 → variance 학습 기회 거의 없음, centroid 부분만 검증된다는 한계 명시
+  5. FAIL 시 옵션 D escalation 경로 plan 명시 (Phase 0-3 결정 번복 규칙)
+  6. Phase 2 완료 후 Phase 3 진입 전 smoke test(Phase 2.5) 신설 — LongMemEval 옵션 A 감도 조기 가늠
+  7. TopiOCQA gate는 "최소 동작 sanity check" 비대칭 의미 재포지셔닝 (PASS ≠ 최종 성공, FAIL = 확실한 재설계)
+  8. Phase 4에서 TopiOCQA F1 항목 제거(Phase 1로 이전)
+- 용어 전환: "KV cache paging/관리"는 LLM 런타임 내부 메커니즘에 종속돼 Hi-EM 책임 경계를 흐림. Hi-EM은 **LTM(SSD)에서 현재 라운드 prefill 대상을 Memory window(STM)로 promotion**하는 역할로 단순화. KV cache 재사용은 이 promotion의 부산물이며 실제 prefill 전달은 downstream(vLLM/SGLang)이 담당.
+
+**결정**:
+- plan.md 전체 재구조: Phase 1 4-Step (1-1 코어 / 1-2 unit test / 1-3 TopiOCQA 측정 / 1-4 Gate), Phase 2.5 smoke test 신설, Phase 4에서 TopiOCQA 이전.
+- 용어 전역 교체: "STM" → "Memory window", "KV cache paging" → "LTM → Memory window promotion" (구현 세부는 필요시만 언급).
+- `kv_cache.py` → `memory_window.py` 모듈명 변경 (architecture).
+
+**영향 범위**:
+- `plan.md` (전체)
+- `handoff.md` "Phase별 진입점" Phase 1~2.5 재작성
+- `brief.md` 핵심 차별점 bullet
+- `context/01-hi-em-design.md` §9, §A
+- `context/03-architecture.md` 모듈명
+- `context/05-open-questions.md` 질문 3
+- `README.md` 상단 description
+
+**대안 및 기각 사유**:
+- plan 유지(기각: topic 분할 검증 없는 LTM/STM 설계는 허구).
+- "KV cache paging" 용어 유지(기각: LLM 런타임 API 종속, Hi-EM 책임 경계 모호).
+- Phase 1에 LongMemEval QA까지 포함(기각: QA accuracy는 full 파이프라인 필요, Phase 4가 적절).
+- Gate 절대 임계 "F1 0.6" 고정(기각: 선험적 근거 없음, baseline 상대 비교가 정직).
+
+---
+
 ### 2026-04-23: Markov 확장 $P(e_n\mid e_{n-1}, s_{n-1})$ 철회
 
 **근거**:

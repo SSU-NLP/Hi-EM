@@ -3,13 +3,13 @@
 ## 목적
 Transformer 기반 LLM에 fine-tuning 없이 붙는 **실시간 대화 메모리 관리 시스템**.
 인지과학의 Structured Event Memory (SEM, Franklin et al. 2020)를 쿼리-토픽 구조로
-재해석하여, 긴 대화에서 **토픽 단위 STM/LTM 관리** 및 **KV cache paging**을 구현한다.
+재해석하여, 긴 대화에서 **LTM(SSD) 영속 저장**과 **현재 라운드 prefill 대상을 Memory window(STM)로 promotion**하는 구조를 구현한다.
 
 ## 핵심 차별점
 - **No fine-tuning** — 어떤 Transformer LLM에도 add-on으로 붙음
 - **Online topic segmentation** — 매 턴 실시간 판정
 - **Sticky-CRP 기반 topic 수 자동 결정**
-- **Topic 단위 KV cache 재사용** — latency + memory 동시 최적화
+- **Topic 단위 Memory window 관리** — LTM에서 현재 라운드 관련 턴만 prefill prefix로 승격
 
 ## 평가 벤치마크 (우선순위순)
 1. **LoCoMo** — 장기 메모리 (메인, `benchmarks/locomo/`)

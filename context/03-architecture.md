@@ -18,7 +18,7 @@ src/hi_em/
 ├── merge.py               # topic merge
 ├── ltm.py                 # 장기 메모리
 ├── stm.py                 # 단기 메모리
-├── kv_cache.py            # KV cache 인터페이스 (초기 stub)
+├── memory_window.py       # STM 구성 — LTM에서 현재 라운드 prefill 대상 턴 선별/승격
 └── orchestrator.py        # 매 턴 파이프라인
 # 사건 모델이 엔티티/cue/qtype 등을 사용하는 옵션으로 결정되면 추가:
 ├── entity.py            # spaCy NER wrapper

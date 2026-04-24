@@ -33,9 +33,9 @@
 
 ## 현재 상태
 
-**마지막 업데이트**: 2026-04-23
+**마지막 업데이트**: 2026-04-24
 **현재 Phase**: Phase 0 — 자료 분석 및 설계 확정
-**진행률**: 3/3 Step 완료 → **Phase 0 종료**
+**진행률**: Phase 0 종료 → Phase 1 (2/4 Step 완료)
 
 ### 완료된 것
 - 프로젝트 디렉토리 구조 생성
@@ -45,27 +45,35 @@
 - **Step 0-1 완료**: SEM 논문 전 35페이지 정독(pdftotext 산문 + 수식 10페이지 PNG 직독). `SEM/sem/sem.py` 실제 코드 검증(`_calculate_unnormed_sCRP`, `run()` verbatim pseudocode). `context/00-sem-paper.md` 재작성 — 식 1~24 정확한 정의, Hi-EM 계승/대체/폐기 매핑, 검증 미해결 지점 3건 명시 (11940자).
 - **Step 0-2 완료**: LoCoMo(10 conv × 27 sess × 22 turns, topic annotation 없음), TopiOCQA dev(2514 turns, 205 conv, Wiki Topic ground truth, topic shift 3.3/conv), LongMemEval oracle(500 Q, 6 types, 1206자 chat) 실데이터 분석. 옵션 A~F × 3 벤치마크 증거 매트릭스 → `outputs/benchmark-analysis.md` (8239자).
 - **Step 0-3 완료 (Phase 0 종료)**: 사건 모델 **옵션 A (Centroid + diag variance)** 확정 — $P(s_n|e_n=k)=\mathcal{N}(\mu_k,\mathrm{diag}(\sigma_k^2))$. **Markov 확장 철회** (double counting). B~E는 Phase 1/2/4로 위임. `01-hi-em-design.md`, `02-math-model.md`, `06-decision-log.md` 확정본 반영.
+- **Phase 1-1, 1-2 완료**: `src/hi_em/{embedding,topic,scrp,sem_core}.py` 구현 + `tests/{test_scrp,test_topic,test_sem_core}.py` 18 tests passing (0.89s). 옵션 A의 centroid-independence 근거로 SEM2 restart-vs-repeat 분기와 `lmda/2` halving은 미포팅.
 
 ### 미완료
-- Phase 1 구현 (**사용자 승인 대기**)
+- Phase 1-3 (TopiOCQA topic shift F1 측정 + latency)
+- Phase 1-4 (Gate 판정: PASS → Phase 2, FAIL → 옵션 D escalation)
+- Phase 2 이후
 
 ---
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### 대기: Phase 1 착수는 사용자 명시적 승인 이후
+### 즉시 시작: Phase 1 Step 1-3 — TopiOCQA dev 측정
 
-Phase 0 종료. Phase 1(코어 모듈 구현)은 **사용자 승인 후** 진행.
+1. `scripts/run_topiocqa_segmentation.py` 작성
+   - 입력: `benchmarks/topiocqa/downloads/data/topiocqa_dataset/dev.json` (205 conv, 2514 turns)
+   - 각 턴의 `Question` 필드를 `QueryEncoder.encode`로 임베딩 → `HiEMSegmenter.assign` → `(k, is_boundary)` 수집
+   - Ground truth: `Topic` 필드 변화를 shift로 간주. `Topic_section` 변화는 noise (Hi-EM이 해당 경계에서 분할 시 FP)
+2. 3 baseline 비교:
+   - (a) all-boundary (lower bound)
+   - (b) cosine threshold (dev에서 sweep)
+   - (c) Hi-EM sCRP + 옵션 A
+3. Latency 측정: 턴당 Hi-EM 추가 시간 (brief.md "+10~20%" 제약)
+4. 결과 → `outputs/phase-1-topiocqa.md`
+5. 한계 명시: TopiOCQA 평균 12턴 → variance 학습 거의 안 됨 (centroid 부분만 실측)
 
-Phase 1 진입 시 첫 할 일 (참고):
-1. `src/hi_em/` 디렉토리 구조 잡기 (`context/03-architecture.md` 기반)
-2. `embedding.py` — bge-base-en-v1.5 wrapper
-3. `topic.py` — Topic 클래스 (centroid + diag variance + Welford 상태)
-4. `scrp.py` — sticky-CRP prior 계산 (SEM2 `_calculate_unnormed_sCRP` 참조)
-5. `sem_core.py` — online MAP inference 루프 (SEM2 `run()` 참조, GRU 부분은 Gaussian likelihood로 대체)
-6. `tests/test_scrp.py`, `test_topic.py` — seed 고정 단위 테스트
+### Step 1-4 — Gate 판정
 
-Phase 1 완료 기준: sCRP + 사건 모델 옵션 A + online MAP 루프가 `src/hi_em/`에 구현되고 `tests/`에 단위 테스트 통과.
+- **PASS**: `Hi-EM F1 > cosine baseline F1` AND `Hi-EM F1 > 0.4` AND `latency +20% 이내` → Phase 2 진입
+- **FAIL**: `06-decision-log.md` append → 옵션 A "번복됨" 마킹 → 옵션 D로 재시작
 
 ---
 
@@ -86,12 +94,25 @@ LoCoMo/LongMemEval까지 직접 보고 다시 판단해라.
 - 주로 쓰기: `outputs/benchmark-analysis.md`, `context/01-hi-em-design.md`, `context/02-math-model.md`, `context/06-decision-log.md`
 - 완료 기준: 사건 모델 형태가 `context/01-hi-em-design.md`에 확정됨
 
-### Phase 1: 코어 모듈 구현
-- 주로 읽기: `context/01-hi-em-design.md` (확정된 설계), `context/02-math-model.md` (수식), `context/03-architecture.md`, `SEM/sem/sem.py`
-- 주로 쓰기: `src/hi_em/`
-- 완료 기준: sCRP + 사건 모델 + online MAP 루프가 `src/hi_em/`에 구현되고 `tests/`에 단위 테스트 통과
+### Phase 1: Topic 경계 감지 코어 + TopiOCQA sanity check
+- 주로 읽기: `context/01-hi-em-design.md` §4, `02-math-model.md`, `SEM/sem/sem.py` `_calculate_unnormed_sCRP`/`run()`, `outputs/benchmark-analysis.md`
+- 주로 쓰기: `src/hi_em/{embedding,topic,scrp,sem_core}.py`, `tests/test_{scrp,topic,sem_core}.py`, `scripts/run_topiocqa_segmentation.py`, `outputs/phase-1-topiocqa.md`
+- 완료 기준 (1-4 Gate 모두 만족):
+  - 단위 테스트 통과
+  - `Hi-EM F1 > cosine baseline F1` (TopiOCQA dev)
+  - `Hi-EM F1 > 0.4`
+  - 턴당 latency 증가 +20% 이내
+- FAIL 시: 옵션 D로 escalation, `06-decision-log.md` append 후 Phase 1 재시작
 
-### Phase 2 이후: `plan.md` 참조
+### Phase 2: 메모리 계층 (LTM + Memory window)
+- LTM = SSD 파일 영속 저장, Memory window = 현재 라운드 prefill 대상 STM
+- 저장 포맷, Memory window 크기·구성 정책, importance/merge 확정
+
+### Phase 2.5: Integrated smoke test
+- LongMemEval oracle에서 topic 분할 결과가 session 경계에 대충 정렬되는지 질적 확인
+- 심각한 불일치 시 Phase 4까지 기다리지 않고 옵션 재검토
+
+### Phase 3 이후: `plan.md` 참조
 
 ---
 

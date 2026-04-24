@@ -2,9 +2,10 @@
 
 > **Step 완료 규칙:** 각 Step의 하위 항목을 `[x]`로 표시하기 전,
 > `python scripts/check_step_done.py`가 exit 0을 반환해야 한다.
-> FAIL이 나오면 원인을 수정하고 재실행한다. 통과할 때까지 반복. 세부는 `CLAUDE.md` 참조.
+> FAIL이 나오면 원인을 수정하고 재실행한다. 통과할 때까지 반복.
+> 3-angle self-audit(구조/동작/설계)은 스크립트 실행 전 필수. 세부는 `CLAUDE.md` 참조.
 
-## Phase 0: 자료 분석 및 설계 확정 (현재 단계)
+## Phase 0: 자료 분석 및 설계 확정
 ### 0-1. SEM 논문 정독
 - [x] `SEM-paper.pdf` 전체 정독 (pdftotext 산문 + 수식 10페이지 `pdftoppm` 이미지 직독)
 - [x] 핵심 수식 1~24 이해 및 Hi-EM 계승/대체/폐기 분류 (context/00-sem-paper.md §2, §5)
@@ -25,34 +26,98 @@
 - [x] `context/02-math-model.md`의 수식 확정 ($P(s_n|e_n=k)=\mathcal{N}(\mu_k, \mathrm{diag}(\sigma_k^2))$, PE = Mahalanobis)
 - [x] `context/06-decision-log.md`에 판단 근거 기록 (옵션 A 선택 + Markov 철회 + 기각 옵션별 사유)
 
-## Phase 1: 코어 모듈 구현 (src/hi_em/)
-- [ ] 쿼리 임베딩 모듈 (bge-base-en-v1.5)
-- [ ] Topic 클래스 (확정된 사건 모델 형태에 따라)
-- [ ] sCRP prior 계산 (SEM/sem/sem.py 참조)
-- [ ] Topic 배정 로직 (확정된 likelihood 형태에 따라)
-- [ ] Online MAP inference 루프
+---
 
-## Phase 2: 메모리 계층
-- [ ] LTM (저장 형식 결정 후)
-- [ ] STM (in-memory)
-- [ ] Topic importance 계산
-- [ ] Topic merge 로직
-- [ ] KV cache paging 인터페이스 (초기 stub)
+## Phase 1: Topic 경계 감지 코어 + 최소 동작 sanity check (현재 단계)
+
+**목적**: 옵션 A 기반 segmentation이 최소 벤치마크(TopiOCQA)에서 쓸만한지 먼저 확인. 이 gate를 통과해야 Phase 2(메모리 계층) 설계가 허구 위에 쌓이지 않는다.
+
+**Gate 의미**: TopiOCQA는 Hi-EM 주 타깃(Claude-유사 대화)과 다르므로 "최소 동작 sanity check"로 이해. PASS ≠ 최종 성공, FAIL = 확실한 재설계 필요 (비대칭).
+
+### 1-1. 최소 실행 가능 코어 (`src/hi_em/`)
+- [x] `embedding.py` — `bge-base-en-v1.5` L2-norm wrapper (768dim, lazy torch import)
+- [x] `topic.py` — Topic 클래스 (centroid μ + diag σ² + Welford + cold start $\sigma_0^2$ + $\sigma_\min^2$ floor)
+- [x] `scrp.py` — `sticky_crp_unnormed(counts, prev_k, alpha, lmda)` (SEM2 동치)
+- [x] `sem_core.py` — `HiEMSegmenter.assign(s)` → `(k, is_boundary)`. 옵션 A centroid independence 근거로 SEM2 restart-vs-repeat 분기와 λ/2 halving은 **미포팅** (docstring 명시)
+
+### 1-2. 단위 테스트 (18/18 passing, 0.89s)
+- [x] `tests/test_scrp.py` — 7 tests: 첫 턴, stickiness, Hi-EM α/λ 반전, SEM2 default, 용량 가득, 입력 불변
+- [x] `tests/test_topic.py` — 6 tests: Welford vs `np.mean`/`np.var`, cold start 복귀값, variance floor, log-lik 최대, PE zero@centroid, 입력 불변
+- [x] `tests/test_sem_core.py` — 5 tests: 첫 턴 topic 0, stickiness 유지, 3 cluster 복원, boundary flag, 재현성
+
+### 1-3. TopiOCQA dev 측정
+- [ ] `scripts/run_topiocqa_segmentation.py` — dev 2514 turns / 205 conv 전체 예측
+- [ ] **Metric: topic shift F1**
+  - Ground truth: `Topic` 필드 변화만 (`Topic_section` 변화는 noise → Hi-EM이 section 경계에서 분할 시 **False Positive**)
+  - Precision / Recall / F1
+- [ ] **Baseline 3종 비교**:
+  - (a) 모든 턴 boundary (lower bound)
+  - (b) cosine threshold (의미 있는 baseline, threshold는 dev에서 sweep)
+  - (c) Hi-EM sCRP + 옵션 A
+- [ ] **Latency 측정**: 턴당 추가 시간 (brief.md "+10~20%" 제약 검증용)
+- [ ] 결과 기록: `outputs/phase-1-topiocqa.md`
+- [ ] **검증 한계 명시**: TopiOCQA 평균 12턴 → 옵션 A의 variance($\sigma_k^2$)가 $n_e \geq 3$ 이후 학습되므로 본 Step은 **centroid 부분만 실측** 검증. variance 효과는 Phase 4 LongMemEval QA에서 간접 측정.
+
+### 1-4. Gate 판정 + 분기
+- [ ] **PASS 조건 (모두 만족)**:
+  - `Hi-EM F1 > cosine baseline F1` (상대 우위)
+  - `Hi-EM F1 > 0.4` (절대 하한, 쓸모 있는 최소치)
+  - `턴당 latency 증가 +20% 이내` (brief.md 제약)
+- [ ] **PASS 시**: Phase 2 진입
+- [ ] **FAIL 경로**:
+  1. `context/06-decision-log.md`에 옵션 A 번복 append
+  2. `context/01-hi-em-design.md §4` "옵션 A 확정" → "번복됨(날짜)" 마킹
+  3. 옵션 D(multi-signal ensemble)로 재확정 + 새 decision-log entry
+  4. Phase 1-1부터 재시작
+
+---
+
+## Phase 2: 메모리 계층 (LTM + Memory window)
+
+**핵심 구도**:
+- **LTM** = SSD 파일 공간. 모든 턴 원문 + topic 메타 영속 저장.
+- **Memory window** (= STM) = 현재 라운드에서 LLM 호출 전 prefill할 턴들. LTM에서 선별해 승격.
+
+- [ ] LTM 저장 포맷 결정 (JSON / SQLite / Parquet)
+- [ ] LTM write API (매 턴 append, topic 메타 포함)
+- [ ] Memory window 구성 로직: 현재 query → 관련 topic 선별 → 해당 topic의 턴을 prefill prefix로 배열
+- [ ] Topic importance 계산 (Memory window 승격 우선순위; 사용 빈도·최근성·cross-reference)
+- [ ] Topic merge 로직 (centroid cosine threshold 기반, LTM 압축)
+- [ ] Memory window 크기 정책 $K_{\text{window}}$ (고정 vs 적응적)
+
+---
+
+## Phase 2.5: Integrated smoke test (Phase 3 진입 전 조기 검증)
+
+**목적**: Phase 4까지 기다리지 않고 LongMemEval에서 옵션 A의 실제 감도를 조기에 가늠.
+
+- [ ] LongMemEval oracle에서 Hi-EM을 돌려 topic 분할 결과 기록
+- [ ] Hi-EM이 만든 topic 경계가 LongMemEval의 `haystack_session_ids`(session 경계)에 **대충 정렬되는지** 질적 확인 (정량 F1 아님)
+- [ ] 결과 → `outputs/phase-2.5-smoke.md`
+- [ ] 심각한 불일치 발견 시: Phase 4까지 기다리지 않고 옵션 재검토 절차 실행 (Phase 1-4 FAIL 경로 준용)
+
+---
 
 ## Phase 3: 오케스트레이션
-- [ ] 매 턴 파이프라인
-- [ ] 매 라운드 비동기 파이프라인
+- [ ] 매 턴 파이프라인: `query → embedding → segment → LTM write`
+- [ ] 매 라운드 파이프라인: `query → Memory window 구성 → LLM 호출 prefill/prefix`
+- [ ] 비동기 라운드 처리(merge · importance 재계산)
 
-## Phase 4: 평가
+---
+
+## Phase 4: 전체 평가
 - [ ] LoCoMo QA accuracy
-- [ ] LongMemEval 5개 능력별 accuracy
-- [ ] TopiOCQA topic shift F1
-- [ ] Latency 측정
-- [ ] KV cache 효율 측정
+- [ ] LongMemEval 5개 능력별 accuracy (variance 효과 간접 측정 포함)
+- [ ] Latency 누적 측정 (전체 파이프라인 overhead)
+- [ ] Memory window 크기 / prefix 토큰 수 효율 측정 (재사용률 등)
+
+---
 
 ## Phase 5: 논문 실험
-- [ ] Ablation study
+- [ ] Ablation study (sCRP prior 기여도, centroid vs centroid+variance, 옵션 D 비교 등)
 - [ ] Baseline 비교 (MemGPT, RAG, sliding window)
 
+---
+
 ## 각 Phase 완료 기준
-`outputs/phase-N-results.md`에 측정 결과 기록.
+`outputs/phase-N-results.md` 또는 세부 파일(`phase-1-topiocqa.md`, `phase-2.5-smoke.md` 등)에 측정 결과 기록.

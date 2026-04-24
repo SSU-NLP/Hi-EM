@@ -17,10 +17,10 @@
    - spaCy `en_core_web_trf` (정확 ~20ms)
    - 간단한 noun phrase chunker
 
-3. KV cache paging 구현 수준
-   - vLLM/SGLang 실제 통합
-   - stub만 (topic_id 라벨 부착)
-   - 프로파일링 측정만
+3. Memory window → LLM 전달 수준
+   - vLLM/SGLang 등 prefix caching API 실제 통합
+   - Hi-EM은 Memory window(선별 턴 리스트)만 반환, 실제 prefill은 downstream이 담당
+   - 프로파일링·시뮬 측정만 (실제 prefill 생략)
 
 4. Topic importance 학습화 여부
    - 지금은 heuristic

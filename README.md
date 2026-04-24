@@ -2,7 +2,8 @@
 
 > Transformer 기반 LLM에 **fine-tuning 없이** 붙는 **실시간 대화 메모리 관리 시스템**.
 > 인지과학 Structured Event Memory (Franklin et al. 2020)을 쿼리-토픽 구조로
-> 재해석해 **토픽 단위 STM/LTM 관리**와 **KV cache paging**을 구현한다.
+> 재해석해 **LTM(SSD) 영속 저장**과 **Memory window(STM) 승격**으로
+> 긴 대화에서 현재 라운드에 필요한 턴만 prefill prefix로 로드한다.
 
 자세한 목표·제약은 `brief.md`.
 

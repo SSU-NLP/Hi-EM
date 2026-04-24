@@ -69,8 +69,9 @@ Gibbs sampling 불필요. LTM에 원문 그대로 저장.
 새 topic은 prior variance $\sigma_0^2$로 시작, $n_e \geq 3$부터 running variance로 전환.
 
 ### 9. 메모리 계층 (개념적 확정)
-- **LTM**: 모든 턴 원문 + topic 메타 저장
-- **STM**: importance 상위 topic만 상주
+- **LTM**: SSD 파일 공간. 모든 턴 원문 + topic 메타 영속 저장.
+- **STM = Memory window**: 현재 라운드 query 기반으로 LTM에서 선별된 턴. LLM 호출의 prefill prefix로 사용.
+- **Promotion 정책**: topic importance rank에 따라 LTM → Memory window로 승격. 구체 기준은 Phase 2에서 확정.
 
 ---
 
@@ -80,8 +81,9 @@ Gibbs sampling 불필요. LTM에 원문 그대로 저장.
 
 ### A. 메모리 계층 세부 (→ Phase 2)
 - LTM 저장 형식: JSON / SQLite / Parquet 중 선택
-- STM 용량 $K_{\text{STM}}$: 고정값 vs 적응적
-- KV cache paging 구현 수준: 실제 vLLM/SGLang 통합 vs stub
+- Memory window 크기 $K_{\text{window}}$: 고정값 vs 적응적
+- Prefill prefix 구성 정책: 선별 topic 간 순서 유지 vs 재배열, prefix 길이 상한 정책
+- LLM 런타임에 실제 prefill 전달 방식 (vLLM/SGLang API 통합 vs Hi-EM은 선별만 하고 downstream에 위임)은 Phase 3에서 결정
 
 ### B. Topic Importance 공식 (→ Phase 2)
 개략 heuristic(usage × recency × cross-reference) 방향 있음. 구체 가중치는 실험 후 튜닝.
