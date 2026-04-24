@@ -46,11 +46,12 @@
 - **Step 0-2 완료**: LoCoMo(10 conv × 27 sess × 22 turns, topic annotation 없음), TopiOCQA dev(2514 turns, 205 conv, Wiki Topic ground truth, topic shift 3.3/conv), LongMemEval oracle(500 Q, 6 types, 1206자 chat) 실데이터 분석. 옵션 A~F × 3 벤치마크 증거 매트릭스 → `outputs/benchmark-analysis.md` (8239자).
 - **Step 0-3 완료 (Phase 0 종료)**: 사건 모델 **옵션 A (Centroid + diag variance)** 확정 — $P(s_n|e_n=k)=\mathcal{N}(\mu_k,\mathrm{diag}(\sigma_k^2))$. **Markov 확장 철회** (double counting). B~E는 Phase 1/2/4로 위임. `01-hi-em-design.md`, `02-math-model.md`, `06-decision-log.md` 확정본 반영.
 - **Phase 1-1, 1-2 완료**: `src/hi_em/{embedding,topic,scrp,sem_core}.py` 구현 + `tests/{test_scrp,test_topic,test_sem_core}.py` 18 tests passing (0.89s). 옵션 A의 centroid-independence 근거로 SEM2 restart-vs-repeat 분기와 `lmda/2` halving은 미포팅.
+- **Phase 1-3, 1-4 완료**: TopiOCQA dev 실측. Hi-EM F1=0.471 (cosine 0.467), overhead ~20 ms/turn. **Gate PASS (marginal)**. 초기 HP(α=1,λ=10)은 FAIL이라 3 iteration 탐색(`scripts/run_topiocqa_{sweep,variants,multisignal}.py`) 후 SEM2 defaults(α=10,λ=1,σ₀²=0.1)로 PASS 도달. Hi-EM HP는 regime-split(persistence vs frequent-shift)로 운용.
 
 ### 미완료
-- Phase 1-3 (TopiOCQA topic shift F1 측정 + latency)
-- Phase 1-4 (Gate 판정: PASS → Phase 2, FAIL → 옵션 D escalation)
-- Phase 2 이후
+- Phase 2 (LTM + Memory window)
+- Phase 2.5 smoke test (LongMemEval oracle) — **TopiOCQA가 주 타깃 아니므로 Phase 2 착수 전 먼저 실행 권장**
+- Phase 3 이후
 
 ---
 

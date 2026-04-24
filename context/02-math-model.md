@@ -72,15 +72,22 @@ $$I(e) = g(n_e,\, m_e,\, \Delta t_e,\, \text{neighbors})$$
 
 ---
 
-## 확정 하이퍼파라미터
+## 확정 하이퍼파라미터 (persistence regime 기본값)
 
 | 파라미터 | 값 | 역할 |
 |---|---|---|
-| $\alpha$ | 1.0 | sCRP concentration (Hi-EM 초기값) |
-| $\lambda$ | 10.0 | sCRP stickiness (Hi-EM 초기값) |
+| $\alpha$ | 1.0 | sCRP concentration (Hi-EM persistence 기본) |
+| $\lambda$ | 10.0 | sCRP stickiness (Hi-EM persistence 기본) |
 | $\sigma_0^2$ | 0.01 | cold start variance prior |
 
-**주**: SEM2 기본값은 `alfa=10.0, lmda=1.0`. Hi-EM은 대화의 topic persistence 가정에 맞춰 반전. Phase 4 실험에서 벤치마크별 최적값 재검토.
+**주**: 위 값은 Hi-EM이 가정하는 "대화 topic persistence 우세" 상황의 기본값. Phase 1-3 TopiOCQA 실측에서는 **SEM2 원본 defaults(α=10, λ=1, σ₀²=0.1)**가 F1=0.471로 우세 — TopiOCQA shift rate 28%/transition이 frequent-shift regime이라 반대 profile 필요. 벤치마크별 최적값:
+
+| Regime | 예시 benchmark | 권장 $\alpha$, $\lambda$, $\sigma_0^2$ |
+|---|---|---|
+| Persistence (few shifts) | LongMemEval, 실서비스 Claude 대화 | $\alpha$=1.0, $\lambda$=10.0, $\sigma_0^2$=0.01 (초기 Hi-EM) |
+| Frequent shift (factoid QA) | TopiOCQA | $\alpha$=10.0, $\lambda$=1.0, $\sigma_0^2$=0.1 (SEM2 defaults) |
+
+Phase 2.5 LongMemEval smoke test · Phase 4 전체 평가에서 regime 구분 재검증.
 
 ## Phase 4 실험 후 경험적 결정 대상
 

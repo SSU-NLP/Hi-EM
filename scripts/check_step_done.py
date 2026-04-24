@@ -122,6 +122,42 @@ def _check_0_2(results: list[Result]) -> None:
         _ok(results, f"benchmark-analysis.md: {len(text)}자")
 
 
+@step("1-3")
+def _check_1_3(results: list[Result]) -> None:
+    """Phase 1-3 — outputs/phase-1-topiocqa.md + Gate 결과 기록 확인."""
+    path = ROOT / "outputs" / "phase-1-topiocqa.md"
+    if not path.exists():
+        _fail(results, f"{path.relative_to(ROOT)} 없음")
+        return
+    text = path.read_text(encoding="utf-8")
+    for kw in ["all-boundary", "cosine", "Hi-EM", "Latency", "Gate"]:
+        if kw not in text:
+            _warn(results, f"phase-1-topiocqa.md에 '{kw}' 섹션/키워드 없음")
+    if len(text) < 1500:
+        _fail(results, f"phase-1-topiocqa.md 내용 부족 ({len(text)}자)")
+    else:
+        _ok(results, f"phase-1-topiocqa.md: {len(text)}자")
+
+
+@step("1-4")
+def _check_1_4(results: list[Result]) -> None:
+    """Phase 1-4 Gate — outputs/phase-1-topiocqa.md에 'Gate 결과: PASS' 또는 FAIL 처리 기록."""
+    path = ROOT / "outputs" / "phase-1-topiocqa.md"
+    if not path.exists():
+        _fail(results, f"{path.relative_to(ROOT)} 없음 — Step 1-3 먼저 수행")
+        return
+    text = path.read_text(encoding="utf-8")
+    if "Gate 결과: PASS" in text:
+        _ok(results, "phase-1-topiocqa.md: Gate PASS 기록됨")
+    elif "Gate 결과: FAIL" in text:
+        _ok(results, "phase-1-topiocqa.md: Gate FAIL — decision-log append + 옵션 D 전환 확인 필요")
+        log = (ROOT / "context" / "06-decision-log.md").read_text(encoding="utf-8")
+        if "옵션 A 번복" not in log:
+            _fail(results, "FAIL인데 decision-log에 '옵션 A 번복' 기록 없음")
+    else:
+        _fail(results, "phase-1-topiocqa.md에 'Gate 결과' 명시 없음")
+
+
 @step("0-3")
 def _check_0_3(results: list[Result]) -> None:
     """사건 모델 설계 확정."""
