@@ -19,3 +19,6 @@ outputs/tmp/
 
 # PDF 텍스트 덤프 (작업 보조)
 sem.txt
+
+# Claude Code local settings
+.claude/
