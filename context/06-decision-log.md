@@ -337,3 +337,37 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 - TopiOCQA만 측정 (기각: TIAGE도 함께 봐야 두 벤치마크 일관성 확인 가능. 1분 추가만 필요).
 - HP 단일 측정 (freq-shift만) (기각: persistence HP 추가 측정으로 trade-off 발견 — 큰 발견).
 - 다른 cluster baseline (k-means on embeddings 등) 추가 (기각: scope creep, cosine sequential이 baseline으로 충분).
+
+---
+
+### 2026-04-25: Phase 2 진입 (옵션 3 reframing) + Step 2-1 LTM 저장 포맷 확정
+
+**근거**:
+- Phase 1-6 옵션 1·5 종료 후 옵션 3(Phase 2 reframing 진입) 채택. boundary F1·ARI 모두 unsupervised metric으로는 Hi-EM 가치 증명 불가 → **진짜 가치는 Phase 4 downstream QA에서만 검증 가능**. Phase 2 LTM/Memory window 구현 후 Phase 4 진입이 정공법.
+- LTM 저장 포맷 후보: JSON / SQLite / Parquet / Hybrid(JSONL+npy memmap). 결정 요인: 매 턴 append (write), centroid cosine top-k (read), 10k turns 미만 스케일, 단일 process (no concurrency), debug 우선.
+
+**결정**:
+- **포맷: per-conversation JSONL (embedding inline, append-only) + `<conv_id>.state.json` (topic 상태 latest snapshot, overwrite)**
+- **디렉토리**: `data/ltm/` (gitignored)
+- **Turn 스키마**: `{turn_id, ts, role, text, embedding[768], topic_id, is_boundary}`
+- **Topic state**: `{conv_id, n_turns, topics: [{topic_id, centroid, variance, count, first_turn_id, last_turn_id}]}`
+- **Topic 분할 HP**: persistence (α=1, λ=10, σ₀²=0.01) 채택 — 옵션 5에서 ARI/completeness 우위 (cluster 보존성)가 메모리 시스템 가치와 정합.
+
+**영향 범위**:
+- `context/01-hi-em-design.md §9.1` 신규 섹션 + `§A` 한 줄 [확정] 처리
+- `plan.md` Phase 2 Step 2-1 [x] + 2-2~ 명시
+- `.gitignore` `data/` 추가
+- `handoff.md` 다음 할 일 → Step 2-2 (`src/hi_em/ltm.py` 구현)
+- `context/03-architecture.md` 향후 추가 모듈 표시 (`ltm.py`, `memory_window.py`)
+
+**대안 및 기각 사유**:
+- SQLite (기각: index 이점은 over-engineered, cat/grep 디버깅 손실, sqlite3 CLI 추가 학습 비용).
+- Parquet (기각: append 비효율 — rewrite, pyarrow 의존성 추가, 바이너리라 디버깅 어려움).
+- Hybrid (JSONL+npy memmap) (기각: embedding 30% 절약하나 두 파일 동기화 부담 + idx 매핑 복잡도. 50MB 절약 가치 없음).
+- 전역 1 file (기각: multi-conversation lock/seek 부담, 손상 risk 전파).
+- Topic state도 append-only (`.topics.jsonl`) (기각: centroid는 매 턴 변하므로 history 가치 낮음, 디버깅 필요 시 future 변경).
+- HP freq-shift (α=10) 채택 (기각: ARI 0.187·0.314로 메모리 보존성 약함. 옵션 5 trade-off에서 명확).
+
+**Phase 5 직전 재검토 트리거**:
+- Phase 4 read 병목 시 → Hybrid/SQLite 교체.
+- 100k turns 이상 시 → Parquet 검토.

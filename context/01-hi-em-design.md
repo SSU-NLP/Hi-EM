@@ -73,6 +73,64 @@ Gibbs sampling 불필요. LTM에 원문 그대로 저장.
 - **STM = Memory window**: 현재 라운드 query 기반으로 LTM에서 선별된 턴. LLM 호출의 prefill prefix로 사용.
 - **Promotion 정책**: topic importance rank에 따라 LTM → Memory window로 승격. 구체 기준은 Phase 2에서 확정.
 
+#### 9.1 LTM 저장 포맷 (Phase 2-1 확정, 2026-04-25)
+
+**채택**: per-conversation **JSONL (turn 기록, append-only)** + **`.state.json` (topic 상태 latest snapshot, overwrite)**.
+
+**디렉토리 레이아웃** (gitignored, `data/ltm/`):
+```
+data/ltm/
+├── <conv_id>.jsonl        # turn 기록, append-only
+└── <conv_id>.state.json   # topic 상태, overwrite
+```
+
+**Turn 스키마** (JSONL 1 row = 1 turn):
+```json
+{
+  "turn_id": 0,
+  "ts": "2026-04-25T12:34:56Z",
+  "role": "user" | "assistant",
+  "text": "...",
+  "embedding": [768 floats],
+  "topic_id": 3,
+  "is_boundary": false
+}
+```
+
+**Topic state 스키마** (`<conv_id>.state.json`, 매 턴 overwrite):
+```json
+{
+  "conv_id": "...",
+  "n_turns": 42,
+  "topics": [
+    {
+      "topic_id": 0,
+      "centroid": [768 floats],
+      "variance": [768 floats],
+      "count": 7,
+      "last_turn_id": 41,
+      "first_turn_id": 0
+    },
+    ...
+  ]
+}
+```
+
+**선택 근거** (대안 trade-off):
+- JSONL inline embedding: 매 턴 append O(1), debug 용이 (cat/grep), 의존성 없음, 10k turns ≈ 50MB (무시 가능). 현 Phase 2 목표는 "동작하는 메모리 시스템 검증" — 최적화 불필요.
+- Per-conversation 파일: LongMemEval/LoCoMo는 user/conversation 단위라 자연스럽고, multi-tenant 격리 쉽고, 한 conversation 손상이 전역 영향 없음.
+- Topic state overwrite: centroid는 매 턴 변하므로 history 추적 가치 낮음. 디버깅 필요 시 `.topics.jsonl` append-only로 변경 가능.
+
+**기각된 대안**:
+- SQLite: index 이점은 현 스케일에 over-engineered. cat/grep 디버깅 잃음.
+- Parquet: append 비효율 (rewrite), pyarrow 의존성 추가, debug 어려움.
+- Hybrid (JSONL + .npy memmap): embedding 저장 30% 절약하나 두 파일 동기화 부담 + idx 매핑 복잡도. 50MB 절약 가치 없음.
+- 전역 1 file: multi-conversation 시 lock/seek 부담, 손상 risk 전파.
+
+**Phase 5 직전 재검토 트리거**:
+- Phase 4 LongMemEval/LoCoMo 실측에서 read 병목 발생 시 → Hybrid (JSONL + .npy memmap) 또는 SQLite로 교체.
+- 100k turns 이상 시 → Parquet 검토.
+
 ---
 
 ## Phase 1/2로 위임된 결정
@@ -80,10 +138,11 @@ Gibbs sampling 불필요. LTM에 원문 그대로 저장.
 아래 항목들은 Phase 0 범위 밖. Phase 1 구현 또는 Phase 2 메모리 계층 설계 시 확정한다.
 
 ### A. 메모리 계층 세부 (→ Phase 2)
-- LTM 저장 형식: JSON / SQLite / Parquet 중 선택
+- ~~LTM 저장 형식: JSON / SQLite / Parquet 중 선택~~ → **§9.1 확정 (2026-04-25): JSONL inline + per-conversation + state.json overwrite**
 - Memory window 크기 $K_{\text{window}}$: 고정값 vs 적응적
 - Prefill prefix 구성 정책: 선별 topic 간 순서 유지 vs 재배열, prefix 길이 상한 정책
 - LLM 런타임에 실제 prefill 전달 방식 (vLLM/SGLang API 통합 vs Hi-EM은 선별만 하고 downstream에 위임)은 Phase 3에서 결정
+- **Topic 분할 HP**: persistence (α=1, λ=10, σ₀²=0.01) 채택 (`outputs/phase-1-clustering-quality.md`: ARI/completeness 우위 — 메모리 시스템엔 boundary 정확도보다 cluster 보존성이 중요)
 
 ### B. Topic Importance 공식 (→ Phase 2)
 개략 heuristic(usage × recency × cross-reference) 방향 있음. 구체 가중치는 실험 후 튜닝.

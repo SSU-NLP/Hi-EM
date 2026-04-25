@@ -102,9 +102,17 @@
 - **LTM** = SSD 파일 공간. 모든 턴 원문 + topic 메타 영속 저장.
 - **Memory window** (= STM) = 현재 라운드에서 LLM 호출 전 prefill할 턴들. LTM에서 선별해 승격.
 
-- [ ] LTM 저장 포맷 결정 (JSON / SQLite / Parquet)
-- [ ] LTM write API (매 턴 append, topic 메타 포함)
-- [ ] Memory window 구성 로직: 현재 query → 관련 topic 선별 → 해당 topic의 턴을 prefill prefix로 배열
+### 2-1. LTM 저장 포맷 결정 (2026-04-25 완료)
+- [x] **확정: per-conversation JSONL (turn append-only) + `.state.json` (topic latest snapshot, overwrite)**
+- [x] 디렉토리: `data/ltm/<conv_id>.{jsonl,state.json}` (gitignored)
+- [x] Turn 스키마: `{turn_id, ts, role, text, embedding[768], topic_id, is_boundary}`
+- [x] Topic state 스키마: `{conv_id, n_turns, topics: [{topic_id, centroid, variance, count, first_turn_id, last_turn_id}]}`
+- [x] **HP 채택: persistence (α=1, λ=10, σ₀²=0.01)** — 옵션 5 ARI/completeness 우위 근거
+- 자세한 trade-off 분석: `context/01-hi-em-design.md §9.1`
+
+### 2-2~2-N (대기)
+- [ ] LTM write API (매 턴 append, topic 메타 포함) — `src/hi_em/ltm.py`
+- [ ] Memory window 구성 로직: 현재 query → 관련 topic 선별 → 해당 topic의 턴을 prefill prefix로 배열 — `src/hi_em/memory_window.py`
 - [ ] Topic importance 계산 (Memory window 승격 우선순위; 사용 빈도·최근성·cross-reference)
 - [ ] Topic merge 로직 (centroid cosine threshold 기반, LTM 압축)
 - [ ] Memory window 크기 정책 $K_{\text{window}}$ (고정 vs 적응적)

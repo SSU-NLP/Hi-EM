@@ -11,7 +11,7 @@
 
 ## 현재 상태 (2026-04-25)
 
-**Phase 1 측정 완료, 종합 Gate FAIL — 결정 분기 대기.**
+**Phase 2 진입 (옵션 3 reframing 채택), Step 2-1 LTM 저장 포맷 확정. Phase 1-6 Gate FAIL은 boundary F1·ARI 모두 Hi-EM의 진짜 가치 지표가 아니라는 reframing으로 인정 → Phase 4 downstream QA로 가치 검증.**
 
 - **Phase 0 완료**: 자료 분석, 사건 모델 옵션 A 확정 ($P(\mathbf{s}_n \mid e_n=k) = \mathcal{N}(\mu_k, \mathrm{diag}(\sigma_k^2))$)
 - **Phase 1-1, 1-2 완료**: `src/hi_em/` 구현 + 18 unit tests passing
@@ -19,7 +19,8 @@
 - **Phase 1-5 (TIAGE)**: Hi-EM 두 HP 모두 cosine 0.421에 패배 → **Gate FAIL**
 - **Phase 1-6 종합 Gate**: TopiOCQA PASS + TIAGE FAIL → **Phase 2 진입 보류**
 - **2026-04-25 TIAGE 108-config sweep 종료**: best F1=0.383 (α=10, λ=3, σ₀²=0.1) < cosine 0.421, 두 Gate 조건 모두 FAIL → **어떤 HP로도 baseline 못 넘음** 결정적 증거 확보.
-- **2026-04-25 옵션 5 (clustering quality) 완료**: V-measure/NMI/ARI 측정 — 모든 metric에서 cosine 우위. **Boundary F1 ↔ ARI trade-off** 발견 — persistence HP (α=1) ARI=0.398·0.397 vs freq-shift HP (α=10) ARI=0.187·0.314. **메모리 시스템 관점에선 persistence HP 적합** (cluster 보존성↑) → **Phase 2 LTM/Memory window HP 채택 근거**. 다음 = 옵션 3 (Phase 2 reframing 진입).
+- **2026-04-25 옵션 5 (clustering quality) 완료**: V-measure/NMI/ARI 측정 — 모든 metric에서 cosine 우위. **Boundary F1 ↔ ARI trade-off** 발견 — persistence HP (α=1) ARI=0.398·0.397 vs freq-shift HP (α=10) ARI=0.187·0.314. **메모리 시스템 관점에선 persistence HP 적합** (cluster 보존성↑) → **Phase 2 LTM/Memory window HP 채택 근거**.
+- **2026-04-25 Phase 2 진입 + Step 2-1 LTM 저장 포맷 확정**: per-conversation **JSONL** (turn append-only) + **`<conv_id>.state.json`** (topic 상태 latest snapshot, overwrite). 디렉토리 `data/ltm/` (gitignored). Topic 분할 HP **persistence (α=1, λ=10, σ₀²=0.01)** 채택. 자세한 trade-off: `context/01-hi-em-design.md §9.1`.
 - 종합 회고 + 다음 행동 후보 5종: `report.md`
 - 결정 이력 (append-only): `context/06-decision-log.md`
 - HP regime split 발견: persistence(α=1, λ=10, σ₀²=0.01) vs frequent-shift(α=10, λ=1, σ₀²=0.1)
