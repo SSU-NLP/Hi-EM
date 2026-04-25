@@ -94,25 +94,54 @@ class WandbRun:
         sidecar_path: Path | None = None,
         resume_id: str | None = None,
     ) -> None:
-        self.enabled = bool(wandb is not None and os.environ.get("WANDB_API_KEY"))
         self._run = None
-        if not self.enabled:
+        self.enabled = False
+        if wandb is None:
             return
+        # Explicit opt-out wins.
+        if os.environ.get("WANDB_MODE") == "disabled":
+            return
+        # Defer auth to wandb itself — it accepts WANDB_API_KEY env,
+        # `wandb login` (~/.netrc), or interactive prompt (CI: throws).
+        # If auth fails for any reason, fall back to no-op.
         kwargs: dict[str, Any] = {
             "project": project, "name": name, "group": group, "config": config,
         }
         if resume_id:
             kwargs["id"] = resume_id
             kwargs["resume"] = "allow"
-        self._run = wandb.init(**kwargs)
-        if sidecar_path and not resume_id and self._run is not None:
+        try:
+            self._run = wandb.init(**kwargs)
+        except Exception as e:  # noqa: BLE001 — broad catch is intentional
+            print(f"[wandb] init failed → metrics disabled: {e}")
+            return
+        self.enabled = self._run is not None
+        if self.enabled:
+            # Use ``question_idx`` as the X axis instead of wandb's
+            # auto-incrementing global step. Without this, a run started by
+            # run_longmemeval.py and resumed by judge_longmemeval.py would
+            # collide on monotonic step (judge re-emits 1..N after run wrote
+            # 1..N), and wandb would silently drop every judge row.
+            self._run.define_metric("question_idx")
+            self._run.define_metric("*", step_metric="question_idx")
+        if sidecar_path and self.enabled and not resume_id:
             sidecar_path.parent.mkdir(parents=True, exist_ok=True)
             sidecar_path.write_text(self._run.id)
 
     def log(self, data: dict[str, Any], step: int | None = None) -> None:
+        """Log ``data`` for one question.
+
+        ``step`` (1-based question index) is forwarded as ``question_idx``,
+        the custom step axis configured at run init. We do **not** pass it as
+        wandb's native ``step`` because resume from a sibling process needs
+        to re-log the same indices, which the global step counter rejects.
+        """
         if not self.enabled or self._run is None:
             return
-        self._run.log(data, step=step)
+        payload = dict(data)
+        if step is not None:
+            payload["question_idx"] = step
+        self._run.log(payload)
 
     def summary(self, **kvs: Any) -> None:
         if not self.enabled or self._run is None:
@@ -144,7 +173,7 @@ def aggregate_summary(per_q: list[dict[str, Any]]) -> dict[str, float]:
     """Build summary scalars from a list of per-question records.
 
     Recognized fields per record (all optional, missing → skipped):
-        accuracy (0/1) · prefill_tokens · latency_sec · is_empty ·
+        accuracy (0/1) · prefill_tokens · latency_sec · error (str|None) ·
         topic_revisit_hit · question_type
     """
     if not per_q:
@@ -161,8 +190,10 @@ def aggregate_summary(per_q: list[dict[str, Any]]) -> dict[str, float]:
             for sk, sv in _percentiles(vals).items():
                 out[f"{key}_{sk}"] = sv
 
-    empties = [int(r.get("is_empty", False)) for r in per_q]
-    out["error_or_empty_rate"] = float(np.mean(empties))
+    # Catch-able exception rate (empty hypothesis is already reflected in
+    # accuracy_overall via judge → no, so no separate metric needed).
+    errors = [int(bool(r.get("error"))) for r in per_q]
+    out["error_rate"] = float(np.mean(errors))
 
     revisits = [r["topic_revisit_hit"] for r in per_q if "topic_revisit_hit" in r]
     if revisits:

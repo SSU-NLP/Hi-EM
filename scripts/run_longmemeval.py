@@ -87,7 +87,7 @@ def run_rag(
         msgs = [{"role": "user", "content": question}]
         return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
     contents = [t["content"] for t in history]
-    embs = np.asarray(encoder.encode(contents))           # (N, D)
+    embs = np.asarray(encoder.encode(contents))           # (N, D), thread-safe
     q_emb = np.asarray(encoder.encode([question])[0])     # (D,)
     sims = embs @ q_emb
     top_idx = np.argsort(-sims)[: min(k, len(history))]
@@ -109,6 +109,8 @@ def run_hi_em(
         response_filter=strip_think_tags,
         **llm_kwargs,
     )
+    # encoder serializes its own forward pass (see hi_em.embedding); segmenter +
+    # LTM are per-question (fresh HiEM instance), so no cross-thread state.
     hi.preload_history(history)
     response, debug = hi.handle_turn(question, return_debug=True)
     revisit_hit = int(any(t["topic_id"] == debug["topic_id"]
@@ -119,6 +121,9 @@ def run_hi_em(
 # --- Driver --------------------------------------------------------------
 
 def main() -> None:
+    # .env first so HIEM_* defaults below pick up overrides.
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--method", required=True, choices=["sliding", "full", "rag", "hi-em"])
     parser.add_argument(
@@ -133,11 +138,21 @@ def main() -> None:
                              "LongMemEval oracle is type-sorted, so plain "
                              "--limit yields a single type — almost always "
                              "what you want for sanity.")
-    parser.add_argument("--model", default="Qwen/Qwen3-8B")
-    parser.add_argument("--max-tokens", type=int, default=800,
-                        help="Reasoning models (Qwen3) need room for <think> "
-                             "+ final answer. 800 covers most cases.")
-    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--model",
+                        default=os.environ.get("HIEM_MODEL", "Qwen/Qwen3-8B"),
+                        help="Default: $HIEM_MODEL (.env) or Qwen/Qwen3-8B.")
+    parser.add_argument("--max-tokens", type=int,
+                        default=int(os.environ.get("HIEM_RUN_MAX_TOKENS", "800")),
+                        help="Default: $HIEM_RUN_MAX_TOKENS (.env) or 800. "
+                             "Reasoning models (Qwen3) need room for <think> "
+                             "+ final answer.")
+    parser.add_argument("--temperature", type=float,
+                        default=float(os.environ.get("HIEM_TEMPERATURE", "0.7")))
+    parser.add_argument("--device",
+                        default=os.environ.get("HIEM_DEVICE"),
+                        help="Encoder device: cuda / mps / cpu. "
+                             "None = auto (cuda → mps → cpu). "
+                             "Default: $HIEM_DEVICE (.env) or auto.")
     # method-specific HP
     parser.add_argument("--sliding-k", type=int, default=20)
     parser.add_argument("--rag-k", type=int, default=10)
@@ -168,7 +183,6 @@ def main() -> None:
                              "tokenizer download is undesirable).")
     args = parser.parse_args()
 
-    load_dotenv()
     base_url = os.environ.get("OPENAI_BASE_URL", "(SDK default)")
     if not os.environ.get("OPENAI_API_KEY"):
         print("[fatal] OPENAI_API_KEY missing — set in .env"); sys.exit(1)
@@ -196,8 +210,20 @@ def main() -> None:
     encoder = None
     if needs_encoder:
         print("[encoder] loading bge-base-en-v1.5 ...")
-        encoder = QueryEncoder()
+        encoder = QueryEncoder(device=args.device)
         print(f"  device={encoder.device}")
+
+    # Warm up the tokenizer in the main thread before the ThreadPool starts:
+    # transformers' lazy module initialization is not thread-safe and races
+    # on the first concurrent call (Python 3.13 + transformers 4.49 surfaces
+    # this as 'cannot import name AutoTokenizer').
+    if not args.no_token_count:
+        print("[tokenizer] warmup ...")
+        try:
+            count_prefill_tokens([{"role": "user", "content": "warmup"}], args.model)
+        except Exception as e:
+            print(f"  warmup failed ({e}); disabling token count")
+            args.no_token_count = True
 
     llm = OpenAIChatLLM()
     llm_kwargs = {"temperature": args.temperature, "max_tokens": args.max_tokens}
@@ -255,7 +281,6 @@ def main() -> None:
                 "history_n_turns": len(history),
                 "prefill_n_msgs": len(msgs),
                 "latency_sec": elapsed,
-                "is_empty": not bool(hyp_clean.strip()),
                 "error": None,
                 **extras,
             }
@@ -269,7 +294,6 @@ def main() -> None:
                 "question_type": entry["question_type"],
                 "history_n_turns": len(history),
                 "latency_sec": time.perf_counter() - t0,
-                "is_empty": True,
                 "error": str(e),
             }
 
@@ -301,9 +325,7 @@ def main() -> None:
     def write_result(rec: dict) -> None:
         with write_lock:
             i = next(counter)
-            tag = ("ERROR " + rec["error"]) if rec.get("error") else (
-                "EMPTY" if rec["is_empty"] else "ok"
-            )
+            tag = ("ERROR " + rec["error"]) if rec.get("error") else "ok"
             tok = f" tok={rec['prefill_tokens']}" if "prefill_tokens" in rec else ""
             print(f"  [{i}/{total}] {rec['question_id']} ({rec['question_type']}) "
                   f"hist={rec['history_n_turns']} msgs={rec.get('prefill_n_msgs', '?')}{tok} "
@@ -320,7 +342,6 @@ def main() -> None:
                            if k in {"prefill_n_msgs", "prefill_tokens",
                                     "latency_sec", "history_n_turns",
                                     "topic_revisit_hit"}}
-            log_payload["is_empty"] = int(rec["is_empty"])
             wb.log(log_payload, step=i)
 
     with out_path.open("w") as f:

@@ -5,8 +5,8 @@ from __future__ import annotations
 from hi_em.eval_logging import WandbRun, aggregate_summary, parse_judge_yes_no
 
 
-def test_wandb_run_disabled_when_no_api_key(monkeypatch, tmp_path) -> None:
-    monkeypatch.delenv("WANDB_API_KEY", raising=False)
+def test_wandb_run_disabled_when_explicitly_off(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WANDB_MODE", "disabled")
     wb = WandbRun(project="p", name="n", group="g", config={"a": 1},
                   sidecar_path=tmp_path / "sidecar")
     assert wb.enabled is False
@@ -18,6 +18,26 @@ def test_wandb_run_disabled_when_no_api_key(monkeypatch, tmp_path) -> None:
     assert not (tmp_path / "sidecar").exists()
 
 
+def test_wandb_run_falls_back_when_init_throws(monkeypatch, tmp_path) -> None:
+    """Auth failure (no WANDB_API_KEY and no `wandb login`) → no-op, no crash."""
+    monkeypatch.delenv("WANDB_MODE", raising=False)
+    import hi_em.eval_logging as m
+    orig = m.wandb
+    if orig is None:
+        return  # wandb not installed in this env
+
+    class _StubWandb:
+        @staticmethod
+        def init(**_):
+            raise RuntimeError("auth failed (test stub)")
+
+    monkeypatch.setattr(m, "wandb", _StubWandb)
+    wb = WandbRun(project="p", name="n", group="g", config={"a": 1},
+                  sidecar_path=tmp_path / "sidecar")
+    assert wb.enabled is False
+    assert not (tmp_path / "sidecar").exists()
+
+
 def test_aggregate_summary_empty_list_returns_empty() -> None:
     assert aggregate_summary([]) == {}
 
@@ -25,11 +45,11 @@ def test_aggregate_summary_empty_list_returns_empty() -> None:
 def test_aggregate_summary_basic_metrics() -> None:
     per_q = [
         {"accuracy": 1, "prefill_tokens": 100, "latency_sec": 1.0,
-         "is_empty": False, "question_type": "single-session-user"},
+         "error": None, "question_type": "single-session-user"},
         {"accuracy": 0, "prefill_tokens": 200, "latency_sec": 2.0,
-         "is_empty": False, "question_type": "single-session-user"},
+         "error": None, "question_type": "single-session-user"},
         {"accuracy": 1, "prefill_tokens": 300, "latency_sec": 3.0,
-         "is_empty": True, "question_type": "multi-session"},
+         "error": "RateLimit", "question_type": "multi-session"},
     ]
     s = aggregate_summary(per_q)
     assert s["n_questions"] == 3
@@ -37,7 +57,7 @@ def test_aggregate_summary_basic_metrics() -> None:
     assert s["prefill_tokens_avg"] == 200.0
     assert s["prefill_tokens_p50"] == 200.0
     assert s["latency_sec_avg"] == 2.0
-    assert s["error_or_empty_rate"] == 1 / 3
+    assert s["error_rate"] == 1 / 3
     assert s["accuracy_by_qtype/single-session-user"] == 0.5
     assert s["accuracy_by_qtype/multi-session"] == 1.0
 

@@ -136,16 +136,29 @@ class HiEM:
         :meth:`handle_turn`. Only user turns are passed through the segmenter
         so that assistant text does not pollute topic centroids.
 
+        All user texts are encoded in a **single batch** (one ``encoder.encode``
+        call) so the GPU/MPS forward pass actually amortizes. Per-turn encode
+        across N user turns left small models like bge-base running at near-
+        zero GPU utilization on Apple Silicon.
+
         Each input turn is a dict with at least ``{"role", "content"}``.
         Optional ``ts`` is preserved if present.
         """
+        user_indices = [i for i, t in enumerate(turns) if t["role"] == "user"]
+        if user_indices:
+            user_texts = [turns[i]["content"] for i in user_indices]
+            user_embs = np.asarray(self._encoder.encode(user_texts))  # (M, D)
+        else:
+            user_embs = np.empty((0, self._encoder.dim))
+        emb_by_turn_idx = {idx: user_embs[k] for k, idx in enumerate(user_indices)}
+
         last_topic_id = 0
-        for t in turns:
+        for i, t in enumerate(turns):
             role = t["role"]
             text = t["content"]
             ts = t.get("ts", datetime.now(timezone.utc).isoformat())
             if role == "user":
-                q = np.asarray(self._encoder.encode([text])[0])
+                q = emb_by_turn_idx[i]
                 topic_id, is_boundary = self._segmenter.assign(q)
                 last_topic_id = topic_id
                 self._ltm.append_turn(

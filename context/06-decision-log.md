@@ -551,3 +551,34 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 - stratify를 default on (기각: 사용자가 "전체 500" 돌릴 때 stratify 의미 없음 — 이미 모두 처리. opt-in이 명시적).
 - parse_yes_no를 LLM judge에 넘기는 대신 정규식만 (기각: judge prompt가 정해져 있어 LLM 응답 robust parsing 필요. 정규식 fallback이 안전).
 - think 안 닫혀도 yes/no 추출 (현재 동작, 9/10 test pass 중 1개는 unclosed think 안 yes를 True로) — 이건 ambiguous edge case. max_tokens 충분히 크면 거의 발생 안 함.
+
+---
+
+### 2026-04-26: Apple Silicon 가속 — PyTorch MPS auto-detect (MLX 폐기)
+
+**근거**:
+- 사용자 요구: M4 Pro 등 Apple Silicon에서 GPU 가속 동작하면서, **다른 환경(CPU/CUDA)과 모델이 다르면 안 됨** — 재현성 + 협업자 환경 일관성.
+- MLX (mlx-community/...): 별도 conversion → model 다름. 위 요구 위반. **폐기**.
+- PyTorch MPS: 같은 `BAAI/bge-base-en-v1.5` 가중치, device 인자(cuda/mps/cpu)만 변경. 결과 numerical 차이 ~1e-5 (kernel 차이), segmentation/RAG 영향 없음. **채택**.
+
+**결정**:
+- `QueryEncoder.__init__` auto-detect 우선순위: cuda → mps → cpu (Apple Silicon에서 자동 mps).
+- `scripts/run_longmemeval.py --device` 인자 추가, env `HIEM_DEVICE` fallback.
+- `.env.example`에 `HIEM_DEVICE` 안내 (auto / cuda / mps / cpu).
+- 토크나이저 (HF tokenizers, Rust 기반): GPU 안 씀, 변경 없음.
+- 외부 LLM (vLLM endpoint): 사용자 원격 GPU. 우리 client 무관.
+
+**검증**:
+- M4 Pro 환경: `mps available=True / built=True`, auto → mps, L2 norm=1.0 유지
+- 57/57 tests PASS (FakeEncoder는 별개, 영향 없음)
+
+**영향 범위**:
+- `src/hi_em/embedding.py`: auto-detect mps 추가
+- `scripts/run_longmemeval.py`: `--device` + `HIEM_DEVICE` env
+- `.env.example`: HIEM_DEVICE 안내
+
+**대안 및 기각 사유**:
+- MLX (mlx-embeddings) 도입 (기각: model conversion으로 다른 환경과 model 불일치 — 사용자 핵심 요구 위반).
+- MPS+MLX 둘 다 지원 (기각: model 일관성 위반 + 코드 복잡도. ROI 낮음 — MPS 대비 MLX 추가 가속은 ~10-30%인데 LLM call이 압도적 시간).
+- 인텔/CUDA 자동 fallback 안 함 (기각: torch가 cuda detect 자동 — 그냥 우선순위만 추가).
+- bge보다 작은 model로 교체 (기각: 평가 일관성 + 옵션 5에서 bge-base 검증됨).

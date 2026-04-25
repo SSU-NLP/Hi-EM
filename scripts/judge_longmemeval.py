@@ -113,13 +113,23 @@ def get_prompt(qtype: str, q: str, a: str, r: str, abstention: bool) -> str:
 
 
 def main() -> None:
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("hyp_file", help="Hypothesis jsonl from run_longmemeval.py")
     parser.add_argument("--ref", required=True, help="LongMemEval reference json")
-    parser.add_argument("--judge-model", default="Qwen/Qwen3-8B")
-    parser.add_argument("--max-tokens", type=int, default=256,
-                        help="Need room for reasoning models' <think> block "
-                             "before the final yes/no.")
+    parser.add_argument(
+        "--judge-model",
+        default=os.environ.get("HIEM_JUDGE_MODEL")
+                or os.environ.get("HIEM_MODEL", "Qwen/Qwen3-8B"),
+        help="Default: $HIEM_JUDGE_MODEL or $HIEM_MODEL or Qwen/Qwen3-8B.",
+    )
+    parser.add_argument(
+        "--max-tokens", type=int,
+        default=int(os.environ.get("HIEM_JUDGE_MAX_TOKENS", "256")),
+        help="Default: $HIEM_JUDGE_MAX_TOKENS (.env) or 256. "
+             "Need room for reasoning models' <think> before yes/no.",
+    )
     parser.add_argument("--output", default=None,
                         help="Default: <hyp_file>.judged.jsonl")
     parser.add_argument(
@@ -129,7 +139,6 @@ def main() -> None:
     parser.add_argument("--wandb-project", default="hi-em-phase4")
     args = parser.parse_args()
 
-    load_dotenv()
     if not os.environ.get("OPENAI_API_KEY"):
         print("[fatal] OPENAI_API_KEY missing"); sys.exit(1)
     print(f"[env] base_url={os.environ.get('OPENAI_BASE_URL', '(default)')}")
