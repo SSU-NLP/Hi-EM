@@ -1,0 +1,94 @@
+{
+  "topiocqa": {
+    "benchmark": "topiocqa_dev",
+    "cosine_best_threshold": 0.525,
+    "cosine": {
+      "n_turns": 2514,
+      "n_gt_clusters": 751,
+      "n_pred_clusters": 1116,
+      "v_measure": 0.9255603480400579,
+      "nmi": 0.9255603480400579,
+      "ari": 0.48834603727704823,
+      "homogeneity": 0.9499868005250138,
+      "completeness": 0.9023585332109566
+    },
+    "hi_em": {
+      "freq-shift": {
+        "hp": {
+          "alpha": 10.0,
+          "lmda": 1.0,
+          "sigma0_sq": 0.1
+        },
+        "n_turns": 2514,
+        "n_gt_clusters": 751,
+        "n_pred_clusters": 1982,
+        "v_measure": 0.9095136607702415,
+        "nmi": 0.9095136607702415,
+        "ari": 0.1865241703397267,
+        "homogeneity": 0.9851551917591099,
+        "completeness": 0.8446595711217237
+      },
+      "persistence": {
+        "hp": {
+          "alpha": 1.0,
+          "lmda": 10.0,
+          "sigma0_sq": 0.01
+        },
+        "n_turns": 2514,
+        "n_gt_clusters": 751,
+        "n_pred_clusters": 1004,
+        "v_measure": 0.918961814731618,
+        "nmi": 0.9189618147316181,
+        "ari": 0.3982849520613624,
+        "homogeneity": 0.9491662247711774,
+        "completeness": 0.8906204509248348
+      }
+    }
+  },
+  "tiage": {
+    "benchmark": "tiage_test",
+    "cosine_best_threshold": 0.5,
+    "cosine": {
+      "n_turns": 1564,
+      "n_gt_clusters": 415,
+      "n_pred_clusters": 490,
+      "v_measure": 0.9281557974803255,
+      "nmi": 0.9281557974803255,
+      "ari": 0.5684775228283536,
+      "homogeneity": 0.9353819729033034,
+      "completeness": 0.9210404159462746
+    },
+    "hi_em": {
+      "sweep-best": {
+        "hp": {
+          "alpha": 10.0,
+          "lmda": 3.0,
+          "sigma0_sq": 0.1
+        },
+        "n_turns": 1564,
+        "n_gt_clusters": 415,
+        "n_pred_clusters": 966,
+        "v_measure": 0.9091517617411842,
+        "nmi": 0.9091517617411843,
+        "ari": 0.31440133883415045,
+        "homogeneity": 0.9794375985308161,
+        "completeness": 0.8482781161763976
+      },
+      "persistence": {
+        "hp": {
+          "alpha": 1.0,
+          "lmda": 10.0,
+          "sigma0_sq": 0.01
+        },
+        "n_turns": 1564,
+        "n_gt_clusters": 415,
+        "n_pred_clusters": 609,
+        "v_measure": 0.913530012613792,
+        "nmi": 0.9135300126137921,
+        "ari": 0.3972414689335038,
+        "homogeneity": 0.9550676527044446,
+        "completeness": 0.8754548778033625
+      }
+    }
+  }
+}

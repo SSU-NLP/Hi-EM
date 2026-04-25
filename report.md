@@ -300,10 +300,12 @@ TIAGE(50자 짧은 PersonaChat)에서 **두 HP 모두 cosine baseline에 패배*
 
 ### 7.1 Phase 1-6 종합 Gate FAIL → 어디로?
 
-**옵션 A**: TIAGE HP sweep
-- TopiOCQA처럼 5분 짧은 실험으로 천장 확인
-- 작은 효과만 있어도 PASS 가능성 (현재 cosine 0.421 vs Hi-EM persistence 0.317, 격차 0.1)
-- 그러나 TopiOCQA에서 본 패턴 — sweep 후도 cosine 천장과 동등할 가능성 큼
+**옵션 A**: TIAGE HP sweep — ✅ 완료 (2026-04-25, `outputs/phase-1-tiage-sweep.json`)
+- TopiOCQA-symmetric grid 108 configs (3α × 6λ × 6σ²)
+- **best Hi-EM F1 = 0.383** (α=10, λ=3, σ₀²=0.1) vs **cosine baseline 0.421**
+- Gate 두 조건 모두 FAIL: Hi-EM > cosine (False, -0.038) AND Hi-EM > 0.4 (False)
+- Top 10 패턴: **모두 α=10**, λ 다양(0.0~3.0), σ₀² 큰 값 선호(0.05~0.1) → high recall(0.7~0.96) / low precision(0.23~0.26) → over-segmentation
+- **결정적 증거**: 어떤 HP에서도 cosine 천장을 못 넘음. TIAGE chit-chat의 boundary 신호 자체가 흐려서 sticky-CRP 정밀 분할 불가능. → 옵션 A 종료, 옵션 B(reframing) 정합성 강화
 
 **옵션 B**: Topic boundary F1 ≠ Hi-EM 핵심 가치라는 reframing 인정
 - 두 벤치마크 일관 패턴 → Hi-EM의 segmentation F1 우위는 없다는 결론
@@ -446,7 +448,7 @@ Hi-EM/
 | 2 | Hi-EM likelihood를 cosine-vs-last-turn으로 교체 후 재측정 | 작음 (옵션 A 변형) | TIAGE에서 cosine baseline 따라잡기 가능 |
 | 3 | Phase 1 종결 + 옵션 B 채택 → Phase 2 진입 | 중 (LTM/Memory window 설계) | downstream QA 정직 검증으로 가치 판정 |
 | 4 | 옵션 D 본격 escalation (multi-signal 재설계) | 큼 | 새 가설 검증 필요 |
-| 5 | Hi-EM의 clustering 품질 (V-measure/ARI) 측정 추가 | 작음 | boundary F1 외 segmentation 가치 측면 |
+| 5 | [x] **완료 (2026-04-25)** Hi-EM clustering 품질 (V-measure/NMI/ARI) 측정 — 가설 반박, ARI에서도 cosine 우위. **Boundary F1 ↔ ARI trade-off 발견 (persistence HP가 ARI/completeness↑)** → Phase 2 HP 선택 근거. `outputs/phase-1-clustering-quality.md` |
 | 6 | Phase 0의 검증 미해결 3건 중 일부 재검토 | 작음~중 | 옵션 A 구조 정당성 강화 |
 
 ---

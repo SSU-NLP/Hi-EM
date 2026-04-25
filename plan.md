@@ -87,12 +87,12 @@
 - [ ] **두 gate 모두 PASS** → Phase 2 진입 — **불충족**
 - [x] 둘 중 하나라도 FAIL → `06-decision-log.md` append, 옵션 A 재검토 or regime-split HP 확장 — **현재 결정 대기 (report.md §7 옵션 A~E 참조)**
 
-**종합 Gate: FAIL.** 다음 행동은 사용자 결정 대기. 후보 5종(`report.md §12`):
-1. TIAGE HP sweep (TopiOCQA 패턴 준용)
-2. Hi-EM likelihood를 cosine-vs-last-turn으로 교체 (옵션 A 변형)
-3. Phase 2 reframing 진입 — boundary F1 ≠ Hi-EM 핵심 가치, downstream QA로 정직 검증
-4. 옵션 D escalation (multi-signal 재설계)
-5. Hi-EM clustering 품질 추가 측정 (V-measure / ARI)
+**종합 Gate: FAIL.** 후보 5종(`report.md §12`) 중 #1 종료, 권장 경로 = #5 → #3:
+1. [x] TIAGE HP sweep (108 configs, 2026-04-25) — **best F1=0.383 (α=10, λ=3, σ₀²=0.1) < cosine 0.421, 두 Gate 조건 모두 FAIL**. → "어떤 HP로도 못 넘는다" 결정적 증거. `outputs/phase-1-tiage-sweep.json`
+2. [ ] Hi-EM likelihood를 cosine-vs-last-turn으로 교체 (옵션 A 변형) — 보류
+3. [ ] Phase 2 reframing 진입 — boundary F1 ≠ Hi-EM 핵심 가치, downstream QA로 정직 검증 ⭐
+4. [ ] 옵션 D escalation (multi-signal 재설계) — TopiOCQA 전례상 효과 약함, 보류
+5. [x] Hi-EM clustering 품질 측정 (V-measure / NMI / ARI, 2026-04-25) — **가설 반박**: 모든 metric에서 cosine 우위. **새 발견**: Boundary F1 ↔ ARI trade-off — persistence HP (α=1) ARI=0.398/0.397 > freq-shift HP (α=10) ARI=0.187/0.314. **메모리 시스템 관점에선 persistence HP 적합** → Phase 2 HP 선택 근거 확보. `outputs/phase-1-clustering-quality.md`
 
 ---
 

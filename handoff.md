@@ -49,6 +49,8 @@
 - **Phase 1-3, 1-4 완료**: TopiOCQA dev. **Gate PASS (marginal)** — Hi-EM F1=0.471 vs cosine 0.467 (HP α=10, λ=1, σ₀²=0.1, SEM2 defaults). 7-iteration 탐색으로 bge intrinsic ceiling ~0.47 확인.
 - **Phase 1-5 완료**: TIAGE test. **Gate FAIL** — Hi-EM persistence F1=0.317 / freq-shift F1=0.377, **둘 다 cosine baseline 0.421에 패배**. Latency 0.73 ms/turn은 PASS.
 - **Phase 1-6 종합 Gate: FAIL** — TopiOCQA PASS + TIAGE FAIL → Phase 2 진입 자격 미충족.
+- **2026-04-25 환경 복구 + TIAGE sweep 완료**: 로컬 `.venv` (uv-managed Python 3.11) 셋업, TopiOCQA F1=0.471 / TIAGE F1=0.317·0.377 재현 검증. **TIAGE 108-config grid sweep 신규 실행** (`run_tiage_sweep.py`) → **best Hi-EM F1=0.383 (α=10, λ=3, σ₀²=0.1), cosine 0.421 미달 + 0.4 floor 미달, Gate 두 조건 모두 FAIL**. "TopiOCQA만 sweep best, TIAGE는 두 점만"의 비대칭 해소 → 옵션 1(TIAGE HP sweep) 사실상 종료.
+- **2026-04-25 옵션 5 (clustering quality) 완료**: V-measure/NMI/ARI 측정 (`run_clustering_quality.py`). **모든 metric에서 cosine 우위** — 원래 가설(Hi-EM 토픽 ID 묶기 우위) 반박. **새 발견**: Boundary F1 ↔ ARI **trade-off** — freq-shift HP (α=10): F1↑ ARI=0.187·0.314 / persistence HP (α=1): F1↓ ARI=0.398·0.397. **메모리 시스템엔 persistence HP가 적합** (completeness↑, 같은 토픽 복귀 cluster 보존 우선) → Phase 2 HP 선택 근거. `outputs/phase-1-clustering-quality.md`
 - **Phase 2.5 폐기**: LongMemEval session=topic 가정이 잘못된 설계였음 (한 세션 내 subtopic 공존 정상). LongMemEval은 Phase 4 downstream QA용으로 재배치.
 - **종합 보고서 작성**: `report.md` (Phase 0 시작 ~ Phase 1-5 시점, 12 섹션 + 부록).
 
@@ -63,15 +65,15 @@
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### 즉시 결정 필요: Phase 1-6 Gate FAIL 후 진로 (사용자 결정 대기)
+### 즉시 결정 필요: Phase 1-6 Gate FAIL 후 진로
 
-`report.md §7, §11, §12`를 읽고 5 후보 중 선택:
+5 후보 중 옵션 1 종료(2026-04-25 sweep). 권장 경로 = **옵션 5 → 옵션 3** 묶음.
 
-1. **TIAGE HP sweep** (5분, TopiOCQA처럼 grid 100 configs) — HP만으로 PASS 가능한지 확인
-2. **Hi-EM likelihood 교체** (옵션 A 변형) — `cosine(s, last_turn_in_topic)`로 likelihood 형식 변경, sCRP prior 유지
-3. **Phase 2 reframing 진입** — "boundary F1 ≠ Hi-EM 핵심 가치"라 정직 기록 후 LTM/Memory window 설계 → Phase 4 downstream QA로 진짜 가치 검증
-4. **옵션 D escalation** (multi-signal 재설계) — plan.md FAIL 정공법, TopiOCQA에서 효과 약함 전례 있음
-5. **Clustering 품질 추가 측정** (V-measure/ARI) — boundary F1 외 segmentation 가치 측면 검증
+1. ~~**TIAGE HP sweep**~~ ✅ **완료 (2026-04-25)** — 108 configs all-FAIL, best F1=0.383 < cosine 0.421. `outputs/phase-1-tiage-sweep.json`
+2. **Hi-EM likelihood 교체** (옵션 A 변형) — `cosine(s, last_turn_in_topic)`로 likelihood 형식 변경, sCRP prior 유지 — 보류
+3. **Phase 2 reframing 진입** ⭐ — "boundary F1 ≠ Hi-EM 핵심 가치"라 정직 기록 후 LTM/Memory window 설계 → Phase 4 downstream QA로 진짜 가치 검증
+4. **옵션 D escalation** (multi-signal 재설계) — TopiOCQA에서 효과 약함 전례, 보류
+5. ~~**Clustering 품질 추가 측정**~~ ✅ **완료 (2026-04-25)** — 가설 반박 + Boundary F1↔ARI trade-off 발견. 다음 = 옵션 3 진입.
 
 **핵심 메타 질문** (`report.md §11`):
 - Topic boundary F1 우위가 Hi-EM의 정의된 contribution인가? Yes → 1, 2, 4 / No → 3

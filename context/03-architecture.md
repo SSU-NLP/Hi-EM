@@ -25,21 +25,27 @@ src/hi_em/
 ├── cue_phrase.py        # regex cue detector
 └── question_type.py     # rule-based qtype classifier
 
-## scripts/
+## scripts/ (Phase 1 현재 실재)
 scripts/
-├── analyze_benchmarks.py  # Phase 0 벤치마크 분석
-├── prepare_benchmarks.py  # 데이터 전처리
-├── run_locomo.py
-├── run_topiocqa.py
-├── run_longmemeval.py
-└── analyze_results.py
+├── check_step_done.py             # Step 완료 검증 게이트 (CLAUDE.md "Step 완료 프로토콜" 2단계)
+├── run_topiocqa_segmentation.py   # Phase 1-3 메인 평가 (TopiOCQA dev F1)
+├── run_topiocqa_sweep.py          # 108-config HP grid (α × λ × σ₀²) — Phase 1-4 best HP 탐색
+├── run_topiocqa_variants.py       # 5가지 구조 변형 비교 (gauss-origin/global/self, vMF-origin/const)
+├── run_topiocqa_anchors.py        # 옵션 A 변형: anchor turn 기반 likelihood
+├── run_topiocqa_bigencoder.py     # bge-large 인코더 시도 (Phase 1 추가 탐색)
+├── run_topiocqa_contextualized.py # contextualized embedding 시도
+├── run_topiocqa_multisignal.py    # 옵션 D escalation 탐색 (multi-signal)
+├── run_tiage_segmentation.py      # Phase 1-5 TIAGE test 평가 (persistence + freq-shift 두 점)
+├── run_tiage_sweep.py             # Phase 1-6 TIAGE 108-config grid (TopiOCQA sweep mirror)
+└── run_clustering_quality.py      # Phase 1-6 옵션 5: V-measure/NMI/ARI 측정 (cosine vs Hi-EM 두 HP)
+# Phase 2+ 진입 시 추가 예정: orchestrator/LTM/memory_window 등
 
-## tests/
+## tests/ (Phase 1 현재 실재, 18 tests passing)
 tests/
-├── test_topic.py
-├── test_scrp.py
-├── test_sem_core.py
-└── test_orchestrator.py
+├── test_topic.py        # Topic 클래스 (Welford 온라인 update + Gaussian likelihood)
+├── test_scrp.py         # sticky-CRP prior (SEM2 `_calculate_unnormed_sCRP` 수치 매칭)
+└── test_sem_core.py     # HiEMSegmenter MAP 할당 루프 (prior×likelihood argmax + boundary flag)
+# Phase 2+ 진입 시 추가 예정: test_orchestrator, test_ltm, test_memory_window
 
 ## 진입점 (예상)
 ```python

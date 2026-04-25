@@ -18,6 +18,8 @@
 - **Phase 1-3, 1-4 (TopiOCQA)**: Hi-EM F1=0.471 vs cosine 0.467 → **Gate PASS (marginal)**
 - **Phase 1-5 (TIAGE)**: Hi-EM 두 HP 모두 cosine 0.421에 패배 → **Gate FAIL**
 - **Phase 1-6 종합 Gate**: TopiOCQA PASS + TIAGE FAIL → **Phase 2 진입 보류**
+- **2026-04-25 TIAGE 108-config sweep 종료**: best F1=0.383 (α=10, λ=3, σ₀²=0.1) < cosine 0.421, 두 Gate 조건 모두 FAIL → **어떤 HP로도 baseline 못 넘음** 결정적 증거 확보.
+- **2026-04-25 옵션 5 (clustering quality) 완료**: V-measure/NMI/ARI 측정 — 모든 metric에서 cosine 우위. **Boundary F1 ↔ ARI trade-off** 발견 — persistence HP (α=1) ARI=0.398·0.397 vs freq-shift HP (α=10) ARI=0.187·0.314. **메모리 시스템 관점에선 persistence HP 적합** (cluster 보존성↑) → **Phase 2 LTM/Memory window HP 채택 근거**. 다음 = 옵션 3 (Phase 2 reframing 진입).
 - 종합 회고 + 다음 행동 후보 5종: `report.md`
 - 결정 이력 (append-only): `context/06-decision-log.md`
 - HP regime split 발견: persistence(α=1, λ=10, σ₀²=0.01) vs frequent-shift(α=10, λ=1, σ₀²=0.1)
@@ -67,7 +69,9 @@ Hi-EM/
 │   ├── run_topiocqa_anchors.py       Anchor 4종
 │   ├── run_topiocqa_bigencoder.py    bge-large 비교
 │   ├── run_topiocqa_contextualized.py Context window K∈{0..all}
-│   └── run_tiage_segmentation.py     Phase 1-5 main 측정
+│   ├── run_tiage_segmentation.py     Phase 1-5 main 측정
+│   ├── run_tiage_sweep.py            Phase 1-6 TIAGE 108-config grid (TopiOCQA mirror)
+│   └── run_clustering_quality.py     Phase 1-6 옵션 5: V-measure/NMI/ARI
 │
 ├── notebooks/                얇은 wrapper — Colab 인터랙티브 실행 편의용 (선택적)
 │   └── phase-1-tiage.ipynb       TIAGE 평가 + Phase 1-6 종합 Gate
@@ -90,7 +94,10 @@ Hi-EM/
 │   ├── phase-1-topiocqa-anchors.json
 │   ├── phase-1-topiocqa-encoder.json
 │   ├── phase-1-topiocqa-contextualized.json
-│   └── phase-1-tiage.md                  Phase 1-5 결과
+│   ├── phase-1-tiage.md                  Phase 1-5 결과
+│   ├── phase-1-tiage-sweep.json          Phase 1-6 TIAGE sweep raw (108 configs)
+│   ├── phase-1-clustering-quality.md     Phase 1-6 옵션 5 분석
+│   └── phase-1-clustering-quality.json   raw
 │
 └── SEM-paper.pdf             Franklin et al. 2020 원본 논문 (Psychological Review)
 ```
