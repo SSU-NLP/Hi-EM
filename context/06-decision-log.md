@@ -480,3 +480,74 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 - `conftest.py` 유지 (기각: editable install로 자연 해결되는데 hack 유지할 이유 없음).
 - `[project.optional-dependencies]` (기각: PEP 735 `[dependency-groups]`가 더 modern, uv 권장).
 - `pyproject.toml` 라이브러리 mode 안 함 (기각: `[build-system]` + hatchling으로 editable install이 깨끗).
+
+---
+
+### 2026-04-26: Phase 4 W&B logging 메트릭 설계 — codex review 후 확정
+
+**근거**:
+- Phase 4가 Hi-EM 가치 증명 또는 정직한 폐기의 마지막 게이트. 메트릭 설계가 잘못되면 결론 자체가 흔들림.
+- 1차안: accuracy + prefill_n_msgs/tokens + latency + (Hi-EM) n_topics/boundary_count/query_assigned_topic/selected_in_window. Visualizations: bar/heatmap/scatter/histogram/table.
+- Codex review 받음 — 6개 review 항목 답변. 핵심: (1) `topic_revisit_hit_rate` 추가 (A→B→A 가치 직접 측정 — smoke test에서 단위 확인됐지만 정량 없음), (2) `error_or_empty_hypothesis_rate` 추가 (run_longmemeval.py가 예외 시 empty hypothesis 작성 → raw accuracy가 fragility 숨김), (3) over-designed metric 4개 drop, (4) tokenizer는 실제 Qwen chat template (15% 휴리스틱 오차는 효율 claim 약화), (5) run-per-method 구조, (6) latency histogram → scalar p50/p95.
+
+**결정**:
+- **per-question**: `accuracy`, `prefill_n_msgs`, `prefill_tokens`, `latency_sec`, `is_empty`, (Hi-EM only) `topic_revisit_hit`
+- **summary**: `accuracy_overall`, `accuracy_by_qtype/{5축}`, `prefill_tokens_{avg,p50,p95}`, `latency_sec_{avg,p50,p95}`, `error_or_empty_rate`, (Hi-EM only) `topic_revisit_hit_rate`
+- **config**: method, model, dataset, alpha/lmda/sigma, k_topics, k_turns_per_topic, sliding_k, rag_k, workers, limit, temperature, max_tokens
+- **W&B 구조**: run-per-method, group=`<dataset_stem>-<UTC ts>` → 4 method 자동 비교 view
+- **Run↔Judge 연결**: `<output>.wandb-run-id` sidecar 파일 → judge가 같은 run에 accuracy 추가
+- **Tokenizer**: `transformers.AutoTokenizer.from_pretrained(model)` + `apply_chat_template` (정확). lazy cache.
+- **No-op fallback**: WANDB_API_KEY 미설정 시 `WandbRun`이 모든 op no-op (스크립트 정상 동작)
+
+**구현 영향**:
+- `pyproject.toml`: `wandb>=0.26.1` 추가
+- `src/hi_em/eval_logging.py` (신규): WandbRun, count_prefill_tokens, aggregate_summary
+- `src/hi_em/orchestrator.py`: `handle_turn(return_debug=True)` 옵션 추가 (test 1개)
+- `scripts/run_longmemeval.py`: baseline 함수 4개 모두 `(response, messages, extras)` tuple 반환. Hi-EM은 `topic_revisit_hit` 계산. wandb hooks.
+- `scripts/judge_longmemeval.py`: sidecar resume + accuracy backfill
+- `tests/test_eval_logging.py` (4 tests) → 전체 56/56 PASS
+- `.env.example`: WANDB_API_KEY/PROJECT 추가
+- `handoff.md`/`plan.md`: Step 4-4a 완료 + W&B 결과 활용법
+
+**대안 및 기각 사유**:
+- 1차안 그대로 유지 (기각: codex가 반박한 "Hi-EM 차별화 측정에 직접 metric 빠짐" 정당함).
+- judge 결과를 별도 wandb run으로 (기각: 같은 method의 accuracy/efficiency가 다른 run이면 비교 view 깨짐).
+- 토크나이저 휴리스틱 (`split * 1.3`) (기각: codex 지적 — 15% 오차는 "동일 accuracy + 적은 tokens" 효율 claim 정합성 깨짐).
+- 4 method 한 run에 묶기 (기각: codex 지적 — W&B sweep/filter는 method가 config 필드일 때 자연. 현재 호출 구조와 일치).
+- W&B 의존성 hard requirement (기각: 자격증명 없는 사용자/CI에서 스크립트 막힘. no-op fallback이 안전).
+
+---
+
+### 2026-04-26: Phase 4 1차 sanity 실패 → 4 fix (max_tokens, stratify, parse_yes_no)
+
+**근거**:
+- `uv run python scripts/run_phase4_all.py --limit 30` 1차 실행 → **모든 method overall accuracy 0~7%**. baseline 비교 무의미.
+- 분석 (`outputs/phase-4-sanity-{full,sliding,rag,hi-em}.judged.jsonl` 직접 검사):
+  1. **30 questions이 모두 `temporal-reasoning`** — LongMemEval oracle이 question_type 정렬, plain `--limit 30`은 첫 type 30개. 5축 비교 자체 불가.
+  2. **응답 생성 max_tokens=300** — Qwen3-8B reasoning model의 `<think>` 블록이 잘림 → strip 후 의미 없는 string.
+  3. **judge max_tokens=20** — judge도 동일 model이라 `<think>Okay, let's see. The user...`에서 끝남 → yes/no 추출 실패 → 모두 False.
+  4. `parse_yes_no` 단순 (첫 token이 yes로 시작?). think 안 닫혀도 robust 처리 필요.
+
+**결정** (4 fix):
+- **`run_longmemeval.py --max-tokens` default 300 → 800** — Qwen `<think>` + answer cover.
+- **`judge_longmemeval.py --max-tokens` default 20 → 256** — judge thinking + yes/no fit.
+- **`run_longmemeval.py --stratify` 옵션 추가** (`run_phase4_all.py`도 통과) — question_type별 균등 sample. LongMemEval oracle 정렬 문제 회피.
+- **`parse_judge_yes_no` 재작성** — closed think strip → unclosed think tail 200자만 → 마지막 yes/no token 검색. 못 찾으면 False (보수). `src/hi_em/eval_logging.py`로 이동 (testable). 11 case unit test.
+
+**영향 범위**:
+- `scripts/run_longmemeval.py`: `--max-tokens 800`, `--stratify` 추가, by_type stratify 로직
+- `scripts/judge_longmemeval.py`: `--max-tokens 256`, `parse_judge_yes_no` import (이동)
+- `scripts/run_phase4_all.py`: `--stratify` 통과
+- `src/hi_em/eval_logging.py`: `parse_judge_yes_no` 추가
+- `tests/test_eval_logging.py`: parse_judge_yes_no test (10 cases)
+- `handoff.md`: sanity 명령 `--stratify` 필수 명시
+
+**검증**:
+- 57/57 PASS (parse test 1개 추가)
+- 사용자 재실행 후 5 type 각 6 questions × 4 method accuracy 확인 필요 (이전 0% 결과는 폐기)
+
+**대안 및 기각 사유**:
+- max_tokens 그대로 + Qwen `enable_thinking=False` (chat_template_kwargs) (보류: vLLM endpoint side support 모름. max_tokens 늘리는 게 model-agnostic. Phase 4 결과 후 token 효율 비교 가능).
+- stratify를 default on (기각: 사용자가 "전체 500" 돌릴 때 stratify 의미 없음 — 이미 모두 처리. opt-in이 명시적).
+- parse_yes_no를 LLM judge에 넘기는 대신 정규식만 (기각: judge prompt가 정해져 있어 LLM 응답 robust parsing 필요. 정규식 fallback이 안전).
+- think 안 닫혀도 yes/no 추출 (현재 동작, 9/10 test pass 중 1개는 unclosed think 안 yes를 True로) — 이건 ambiguous edge case. max_tokens 충분히 크면 거의 발생 안 함.

@@ -57,8 +57,16 @@ class HiEM:
         self._llm_kwargs = llm_kwargs
         self._next_turn_id = 0
 
-    def handle_turn(self, user_text: str) -> str:
+    def handle_turn(
+        self, user_text: str, return_debug: bool = False
+    ) -> str | tuple[str, dict[str, Any]]:
         """Process one user turn and return the assistant's response.
+
+        With ``return_debug=True``, returns ``(response, debug)`` where
+        ``debug`` contains ``topic_id`` (assigned), ``is_boundary``,
+        ``prefill_turns`` (list[dict] from select_memory_window), and
+        ``messages`` (the exact list sent to the LLM). Used by Phase 4
+        evaluation for token-counting and topic-revisit metrics.
 
         Pipeline (see ``plan.md`` Phase 3-2 spec)::
 
@@ -111,6 +119,13 @@ class HiEM:
         )
         self._next_turn_id += 1
 
+        if return_debug:
+            return response, {
+                "topic_id": topic_id,
+                "is_boundary": is_boundary,
+                "prefill_turns": prefill,
+                "messages": messages,
+            }
         return response
 
     def preload_history(self, turns: list[dict[str, Any]]) -> None:

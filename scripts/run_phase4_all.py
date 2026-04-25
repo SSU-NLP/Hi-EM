@@ -46,16 +46,26 @@ def main() -> None:
                         help="Default: phase-4-sanity (limit 있을 때) 또는 phase-4-full")
     parser.add_argument("--skip-judge", action="store_true",
                         help="run만 하고 judge는 건너뛰기 (수동 inspection 후 judge)")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="ThreadPool concurrency for run + judge. "
+                             "Default 1 (sequential). 8 권장 (vLLM 부하 따라 조정).")
+    parser.add_argument("--stratify", action="store_true",
+                        help="Pass --stratify to run_longmemeval.py "
+                             "(question_type별 균등 sample). sanity 시 권장.")
     args = parser.parse_args()
 
     if args.prefix is None:
         args.prefix = "phase-4-sanity" if args.limit else "phase-4-full"
+
+    workers_args = ["--workers", str(args.workers)] if args.workers > 1 else []
+    stratify_args = ["--stratify"] if args.stratify else []
 
     for m in args.methods:
         out = f"outputs/{args.prefix}-{m}.jsonl"
         run_cmd = [
             "uv", "run", "python", "scripts/run_longmemeval.py",
             "--method", m, "--data", args.data, "--output", out,
+            *workers_args, *stratify_args,
         ]
         if args.limit:
             run_cmd += ["--limit", str(args.limit)]
@@ -65,6 +75,7 @@ def main() -> None:
             judge_cmd = [
                 "uv", "run", "python", "scripts/judge_longmemeval.py", out,
                 "--ref", args.data,
+                *workers_args,
             ]
             run(judge_cmd, f"JUDGE {m}")
 

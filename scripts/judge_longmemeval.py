@@ -17,11 +17,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
-import re
 import sys
+import threading
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +32,9 @@ from dotenv import load_dotenv
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from hi_em.eval_logging import (  # noqa: E402
+    WandbRun, aggregate_summary, parse_judge_yes_no,
+)
 from hi_em.llm import OpenAIChatLLM  # noqa: E402
 
 
@@ -104,15 +109,7 @@ def get_prompt(qtype: str, q: str, a: str, r: str, abstention: bool) -> str:
     raise ValueError(f"unknown qtype: {qtype}")
 
 
-_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
-
-
-def parse_yes_no(raw: str) -> bool:
-    """Return True iff judge's first non-think word is 'yes' (case-insensitive)."""
-    cleaned = _THINK_RE.sub("", raw).strip().lower()
-    # Take first whitespace-delimited token
-    first = cleaned.split()[0] if cleaned.split() else ""
-    return first.startswith("yes")
+# parse_judge_yes_no lives in hi_em.eval_logging (unit-tested there).
 
 
 def main() -> None:
@@ -120,10 +117,16 @@ def main() -> None:
     parser.add_argument("hyp_file", help="Hypothesis jsonl from run_longmemeval.py")
     parser.add_argument("--ref", required=True, help="LongMemEval reference json")
     parser.add_argument("--judge-model", default="Qwen/Qwen3-8B")
-    parser.add_argument("--max-tokens", type=int, default=20,
-                        help="Judge response is just yes/no — keep tight.")
+    parser.add_argument("--max-tokens", type=int, default=256,
+                        help="Need room for reasoning models' <think> block "
+                             "before the final yes/no.")
     parser.add_argument("--output", default=None,
                         help="Default: <hyp_file>.judged.jsonl")
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Concurrent judge workers (LLM I/O bound). 1=sequential.",
+    )
+    parser.add_argument("--wandb-project", default="hi-em-phase4")
     args = parser.parse_args()
 
     load_dotenv()
@@ -143,16 +146,30 @@ def main() -> None:
 
     out_path = Path(args.output or args.hyp_file + ".judged.jsonl")
 
+    # Resume the run created by run_longmemeval.py if its sidecar exists.
+    sidecar = Path(args.hyp_file + ".wandb-run-id")
+    resume_id = sidecar.read_text().strip() if sidecar.exists() else None
+    wb = WandbRun(
+        project=args.wandb_project, name="judge", group="judge",
+        config={"hyp_file": args.hyp_file, "ref": args.ref,
+                "judge_model": args.judge_model},
+        resume_id=resume_id,
+    )
+    if wb.enabled:
+        print(f"[wandb] resume_id={resume_id or '(new run)'}")
+
     llm = OpenAIChatLLM()
     qtype2hits: dict[str, list[int]] = defaultdict(list)
-    abs_hits: list[int] = []
     rows: list[dict] = []
+    rows_lock = threading.Lock()
+    counter = itertools.count(1)
 
-    for i, h in enumerate(hyps, 1):
+    def judge_one(h: dict) -> dict | None:
         qid = h["question_id"]
         if qid not in qid2ref:
-            print(f"  [{i}] skip {qid} (not in ref)")
-            continue
+            with rows_lock:
+                print(f"  skip {qid} (not in ref)")
+            return None
         ref = qid2ref[qid]
         qtype = ref["question_type"]
         is_abs = "_abs" in qid
@@ -163,17 +180,35 @@ def main() -> None:
             temperature=0.0,
             max_tokens=args.max_tokens,
         )
-        label = parse_yes_no(raw)
+        label = parse_judge_yes_no(raw)
         bucket = "abstention" if is_abs else qtype
-        qtype2hits[bucket].append(int(label))
-        rows.append({**h, "question_type": qtype, "abstention": is_abs,
-                      "judge_raw": raw, "label": label})
-        print(f"  [{i}/{len(hyps)}] {qid} ({bucket}): {'✓' if label else '✗'}")
+        row = {**h, "question_type": qtype, "abstention": is_abs,
+               "judge_raw": raw, "label": label}
+        with rows_lock:
+            i = next(counter)
+            qtype2hits[bucket].append(int(label))
+            rows.append(row)
+            print(f"  [{i}/{len(hyps)}] {qid} ({bucket}): {'✓' if label else '✗'}")
+        return row
+
+    if args.workers <= 1:
+        for h in hyps:
+            judge_one(h)
+    else:
+        print(f"[concurrency] workers={args.workers}")
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            futures = [ex.submit(judge_one, h) for h in hyps]
+            for fut in as_completed(futures):
+                fut.result()  # raise if exception
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
+
+    # Per-question accuracy → wandb
+    for i, r in enumerate(rows, 1):
+        wb.log({"accuracy": int(r["label"])}, step=i)
 
     print("\n=== Accuracy ===")
     total = sum(sum(v) for v in qtype2hits.values())
@@ -183,6 +218,15 @@ def main() -> None:
         v = qtype2hits[k]
         print(f"  {k:30s}: {np.mean(v):.3f} ({sum(v)}/{len(v)})")
     print(f"\nsaved → {out_path}")
+
+    # Summary backfill (overall + by qtype) on the resumed run.
+    summary_records = [{"accuracy": int(r["label"]),
+                        "question_type": r["question_type"]} for r in rows]
+    summary = aggregate_summary(summary_records)
+    wb.summary(**summary)
+    if wb.enabled:
+        print(f"[wandb] summary backfilled: {summary}")
+    wb.finish()
 
 
 if __name__ == "__main__":

@@ -34,8 +34,8 @@
 ## 현재 상태
 
 **마지막 업데이트**: 2026-04-25
-**현재 Phase**: Phase 4 — downstream QA 4-way baseline (Step 4-2/4-3/4-4 완료, **4-5 sanity 사용자 실행 대기**).
-**진행률**: Phase 0/1/2/3 완료. Phase 4 Step 4-1 (clone, data 다운로드는 사용자) + 4-2 (preload_history, 2 tests) + 4-3 (run_longmemeval.py 4 method) + 4-4 (judge_longmemeval.py, Qwen judge) 완료. 전체 테스트 **51/51 PASS**. **사용자 실행: subset 30 sanity → 전체 500 → 분석**.
+**현재 Phase**: Phase 4 — downstream QA 4-way baseline (Step 4-2/3/4/4a 완료, **4-5 sanity 사용자 실행 대기**).
+**진행률**: Phase 0/1/2/3 완료. Phase 4: clone + preload_history + 4 baseline + Qwen judge + 병렬화(--workers) + **W&B logging (codex review 적용 메트릭)** 완료. 전체 테스트 **56/56 PASS**. **사용자 실행: subset 30 sanity → 전체 500 → W&B 그래프 분석**.
 
 ### 완료된 것
 - 프로젝트 디렉토리 구조 생성
@@ -82,21 +82,31 @@ wget https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main
 cd /Users/joseonghyeon/Desktop/Hi-EM
 ```
 
-**Subset sanity (30 questions × 4 method)**:
+**W&B 셋업** (선택 — 키 없으면 wandb는 자동 skip):
 ```bash
-for m in sliding full rag hi-em; do
-    uv run python scripts/run_longmemeval.py --method $m --limit 30 \
-        --output outputs/phase-4-sanity-$m.jsonl
-done
+# .env에 WANDB_API_KEY 추가 (https://wandb.ai/settings → API key)
+echo "WANDB_API_KEY=..." >> .env
+echo "WANDB_PROJECT=hi-em-phase4" >> .env
 ```
 
-**Judge 4번**:
+**Subset sanity** (한 줄, 4 method × run+judge, 8 concurrent workers, 5 question_type 균등):
 ```bash
-for m in sliding full rag hi-em; do
-    uv run python scripts/judge_longmemeval.py outputs/phase-4-sanity-$m.jsonl \
-        --ref benchmarks/LongMemEval/data/longmemeval_oracle.json
-done
+uv run python scripts/run_phase4_all.py --limit 30 --workers 8 --stratify
 ```
+
+> ⚠️ `--stratify` 필수: LongMemEval oracle은 question_type 정렬돼 있어 plain `--limit 30`은 한 type만 30개 (1차 sanity에서 발견). max_tokens도 default 800/256으로 상향 (Qwen3-8B reasoning model의 `<think>` 블록 cover).
+
+**전체 500**:
+```bash
+uv run python scripts/run_phase4_all.py --workers 8
+```
+
+`--workers`: ThreadPool concurrency (1=sequential, 8 권장, 16+ vLLM saturate 시 더 빠름). encoder/segmenter/LTM 모두 thread-safe.
+
+**W&B 결과** — 4 method가 같은 group으로 묶여 비교 view 자동 생성:
+- per-question: prefill_tokens, latency_sec, accuracy, topic_revisit_hit (Hi-EM only)
+- summary: accuracy_overall, accuracy_by_qtype/{5축}, prefill_tokens_{avg,p50,p95}, error_or_empty_rate, topic_revisit_hit_rate
+- 권장 panel: scatter (prefill_tokens vs accuracy) ← Hi-EM 좌상단이면 효율 우위 증명
 
 → 결과 4 method × accuracy + question_type별 분리 알려주시면, 다음 단계 (전체 500 실행 또는 sanity 결과로 발견된 이슈 수정) 결정.
 

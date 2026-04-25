@@ -254,6 +254,25 @@ def test_preload_history_then_handle_turn_uses_history(tmp_path: Path) -> None:
     assert contents[-1] == "query"
 
 
+def test_handle_turn_return_debug(tmp_path: Path) -> None:
+    enc = FakeEncoder()
+    enc.register("a1", [1.0, 0.0, 0.0, 0.0])
+    enc.register("a2", [1.0, 0.0, 0.0, 0.0])  # same topic as a1
+    llm = _llm()
+    llm.chat.side_effect = ["r1", "r2"]
+    hi = _hi_em(tmp_path, enc, llm, k_topics=1, k_turns_per_topic=10)
+
+    hi.handle_turn("a1")
+    response, debug = hi.handle_turn("a2", return_debug=True)
+    assert response == "r2"
+    assert debug["topic_id"] == 0  # reused (same direction as a1)
+    # prefill should contain the prior 'a1' / 'r1' pair (selected by cosine)
+    prefill_texts = [t["text"] for t in debug["prefill_turns"]]
+    assert "a1" in prefill_texts
+    # messages = prefill + current user
+    assert debug["messages"][-1] == {"role": "user", "content": "a2"}
+
+
 def test_ltm_files_created_at_root(tmp_path: Path) -> None:
     enc = FakeEncoder()
     enc.register("hi", [1.0, 0.0, 0.0, 0.0])

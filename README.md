@@ -67,14 +67,15 @@ Hi-EM/
 │   ├── llm.py                    OpenAIChatLLM — OpenRouter / vLLM / OpenAI 본가 (OpenAI-compatible)
 │   └── orchestrator.py           HiEM.handle_turn — 7단계 파이프라인 (embed→segment→snapshot→MW→llm→append)
 │
-├── tests/                    pytest (51 tests passing)
+├── tests/                    pytest (56 tests passing)
 │   ├── test_scrp.py              7 tests
 │   ├── test_topic.py             6 tests
 │   ├── test_sem_core.py          5 tests
 │   ├── test_ltm.py               8 tests
 │   ├── test_memory_window.py     8 tests
 │   ├── test_llm.py               5 tests (mock OpenAI client)
-│   └── test_orchestrator.py      12 tests (FakeEncoder + mock LLM; 토픽 복귀, response_filter, preload_history)
+│   ├── test_orchestrator.py      13 tests (토픽 복귀, response_filter, preload_history, return_debug)
+│   └── test_eval_logging.py      4 tests (WandbRun no-op fallback, aggregate_summary)
 │
 ├── scripts/                  실행/분석 스크립트
 │   ├── check_step_done.py            Step 완료 gate

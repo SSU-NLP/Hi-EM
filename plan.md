@@ -183,6 +183,14 @@
 - [x] `<think>` strip 적용 (Qwen3-8B 등 reasoning model 대응)
 - [x] 출력: hypothesis jsonl `{question_id, hypothesis, method, model}`
 
+### 4-4a. W&B logging (2026-04-26 완료)
+- [x] `src/hi_em/eval_logging.py` — `WandbRun` (no-op if `WANDB_API_KEY` 미설정), `count_prefill_tokens` (Qwen tokenizer chat template, 정확), `aggregate_summary` (avg/p50/p95 + by_qtype + error_rate)
+- [x] `HiEM.handle_turn(return_debug=True)` — prefill/messages 외부 노출 (Phase 4 메트릭 계산용)
+- [x] `run_longmemeval.py` baseline 함수 4개 모두 `(response, messages, extras)` tuple 반환. `count_prefill_tokens(messages, model)`로 정확한 token count. Hi-EM은 `topic_revisit_hit` 추가.
+- [x] `judge_longmemeval.py` sidecar `<output>.wandb-run-id`로 같은 run에 accuracy resume 추가.
+- [x] **codex review 반영**: 빠진 metric (`topic_revisit_hit_rate`, `error_or_empty_rate`) 추가, over-designed metric 4개 (`boundary_count`, `n_topics`, `query_assigned_topic_count`, `selected_in_window`) drop, latency histogram → scalar p50/p95, run-per-method 구조.
+- [x] `tests/test_eval_logging.py` 4 tests + `tests/test_orchestrator.py` 1 test (return_debug). 전체 **56/56 PASS**.
+
 ### 4-4. Judge 스크립트 (2026-04-25 완료)
 - [x] `scripts/judge_longmemeval.py` — LongMemEval 6 prompt template 인용 (MIT License Copyright 2024 Di Wu, `benchmarks/LongMemEval/LICENSE`)
 - [x] **Judge model = Qwen/Qwen3-8B** (응답 생성과 동일 vLLM endpoint, 비용 0)

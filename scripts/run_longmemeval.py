@@ -18,12 +18,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import re
 import shutil
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # Silence HF tokenizers fork warning before any encoder import.
@@ -36,6 +39,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from hi_em.embedding import QueryEncoder  # noqa: E402
+from hi_em.eval_logging import (  # noqa: E402
+    WandbRun, aggregate_summary, count_prefill_tokens,
+)
 from hi_em.llm import OpenAIChatLLM  # noqa: E402
 from hi_em.orchestrator import HiEM  # noqa: E402
 
@@ -57,29 +63,29 @@ def flatten_history(haystack_sessions: list[list[dict]]) -> list[dict]:
 def run_sliding(
     history: list[dict], question: str, llm: OpenAIChatLLM, model: str,
     k_turns: int, **llm_kwargs,
-) -> str:
+) -> tuple[str, list[dict], dict]:
     selected = history[-k_turns:] if k_turns > 0 else []
     msgs = [{"role": t["role"], "content": t["content"]} for t in selected]
     msgs.append({"role": "user", "content": question})
-    return llm.chat(msgs, model=model, **llm_kwargs)
+    return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
 
 
 def run_full(
     history: list[dict], question: str, llm: OpenAIChatLLM, model: str,
     **llm_kwargs,
-) -> str:
+) -> tuple[str, list[dict], dict]:
     msgs = [{"role": t["role"], "content": t["content"]} for t in history]
     msgs.append({"role": "user", "content": question})
-    return llm.chat(msgs, model=model, **llm_kwargs)
+    return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
 
 
 def run_rag(
     history: list[dict], question: str, llm: OpenAIChatLLM, model: str,
     encoder: QueryEncoder, k: int, **llm_kwargs,
-) -> str:
+) -> tuple[str, list[dict], dict]:
     if not history:
         msgs = [{"role": "user", "content": question}]
-        return llm.chat(msgs, model=model, **llm_kwargs)
+        return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
     contents = [t["content"] for t in history]
     embs = np.asarray(encoder.encode(contents))           # (N, D)
     q_emb = np.asarray(encoder.encode([question])[0])     # (D,)
@@ -88,14 +94,14 @@ def run_rag(
     chrono = sorted(int(i) for i in top_idx)
     msgs = [{"role": history[i]["role"], "content": history[i]["content"]} for i in chrono]
     msgs.append({"role": "user", "content": question})
-    return llm.chat(msgs, model=model, **llm_kwargs)
+    return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
 
 
 def run_hi_em(
     history: list[dict], question: str, llm: OpenAIChatLLM, model: str,
     encoder: QueryEncoder, ltm_root: Path, conv_id: str,
     k_topics: int, k_turns_per_topic: int, **llm_kwargs,
-) -> str:
+) -> tuple[str, list[dict], dict]:
     hi = HiEM(
         conv_id=conv_id, encoder=encoder, llm=llm, model=model,
         ltm_root=ltm_root,
@@ -104,7 +110,10 @@ def run_hi_em(
         **llm_kwargs,
     )
     hi.preload_history(history)
-    return hi.handle_turn(question)
+    response, debug = hi.handle_turn(question, return_debug=True)
+    revisit_hit = int(any(t["topic_id"] == debug["topic_id"]
+                          for t in debug["prefill_turns"]))
+    return response, debug["messages"], {"topic_revisit_hit": revisit_hit}
 
 
 # --- Driver --------------------------------------------------------------
@@ -117,9 +126,17 @@ def main() -> None:
         default=str(REPO_ROOT / "benchmarks/LongMemEval/data/longmemeval_oracle.json"),
     )
     parser.add_argument("--limit", type=int, default=None,
-                        help="Process only the first N questions (sanity)")
+                        help="Process only the first N questions (sanity). "
+                             "With --stratify, samples N/n_qtypes per type.")
+    parser.add_argument("--stratify", action="store_true",
+                        help="Sample evenly across question_type. "
+                             "LongMemEval oracle is type-sorted, so plain "
+                             "--limit yields a single type — almost always "
+                             "what you want for sanity.")
     parser.add_argument("--model", default="Qwen/Qwen3-8B")
-    parser.add_argument("--max-tokens", type=int, default=300)
+    parser.add_argument("--max-tokens", type=int, default=800,
+                        help="Reasoning models (Qwen3) need room for <think> "
+                             "+ final answer. 800 covers most cases.")
     parser.add_argument("--temperature", type=float, default=0.7)
     # method-specific HP
     parser.add_argument("--sliding-k", type=int, default=20)
@@ -136,6 +153,19 @@ def main() -> None:
         "--ltm-root", default=str(REPO_ROOT / "data/ltm/longmemeval"),
         help="(Wiped per question to keep LTMs isolated; only used when method=hi-em)",
     )
+    # concurrency
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Concurrent question workers (LLM I/O bound). 1=sequential. "
+             "Tune to vLLM endpoint capacity (default safe 8 for sanity).",
+    )
+    # wandb (optional — skipped if WANDB_API_KEY missing)
+    parser.add_argument("--wandb-project", default="hi-em-phase4")
+    parser.add_argument("--wandb-group", default=None,
+                        help="Default: dataset stem + UTC timestamp")
+    parser.add_argument("--no-token-count", action="store_true",
+                        help="Skip prefill_tokens computation (faster, only if "
+                             "tokenizer download is undesirable).")
     args = parser.parse_args()
 
     load_dotenv()
@@ -147,7 +177,18 @@ def main() -> None:
 
     print(f"[load] {args.data}")
     questions = json.loads(Path(args.data).read_text())
-    if args.limit:
+    if args.stratify:
+        from collections import defaultdict as _dd
+        by_type: dict[str, list] = _dd(list)
+        for q in questions:
+            by_type[q["question_type"]].append(q)
+        if args.limit:
+            k_per = max(1, args.limit // len(by_type))
+            questions = [q for qs in by_type.values() for q in qs[:k_per]]
+        else:
+            questions = [q for qs in by_type.values() for q in qs]
+        print(f"  stratified: {len(by_type)} types × ~{len(questions)//len(by_type)}/type = {len(questions)}")
+    elif args.limit:
         questions = questions[: args.limit]
     print(f"  {len(questions)} questions")
 
@@ -171,55 +212,136 @@ def main() -> None:
             shutil.rmtree(ltm_base)
         ltm_base.mkdir(parents=True)
 
-    t_start = time.perf_counter()
-    with out_path.open("w") as f:
-        for i, entry in enumerate(questions, 1):
-            qid = entry["question_id"]
-            question = entry["question"]
-            history = flatten_history(entry["haystack_sessions"])
-
-            t0 = time.perf_counter()
-            try:
-                if args.method == "sliding":
-                    hyp = run_sliding(history, question, llm, args.model,
-                                      k_turns=args.sliding_k, **llm_kwargs)
-                elif args.method == "full":
-                    hyp = run_full(history, question, llm, args.model, **llm_kwargs)
-                elif args.method == "rag":
-                    hyp = run_rag(history, question, llm, args.model,
-                                  encoder=encoder, k=args.rag_k, **llm_kwargs)
-                elif args.method == "hi-em":
-                    conv_id = qid.replace("/", "_")
-                    hyp = run_hi_em(
-                        history, question, llm, args.model,
-                        encoder=encoder,
-                        ltm_root=Path(args.ltm_root) / conv_id,
-                        conv_id=conv_id,
-                        k_topics=args.k_topics,
-                        k_turns_per_topic=args.k_turns_per_topic,
-                        alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
-                        **llm_kwargs,
-                    )
-                else:
-                    raise ValueError(args.method)
-                # caller-side cleanup of <think> for non-hi-em methods too
-                hyp_clean = strip_think_tags(hyp)
-            except Exception as e:
-                print(f"  [{i}/{len(questions)}] {qid}: ERROR {e}")
-                hyp_clean = ""
-
+    def process(entry: dict) -> dict:
+        """Process one question → per-q record (thread-safe, no shared state)."""
+        qid = entry["question_id"]
+        question = entry["question"]
+        history = flatten_history(entry["haystack_sessions"])
+        t0 = time.perf_counter()
+        try:
+            if args.method == "sliding":
+                hyp, msgs, extras = run_sliding(
+                    history, question, llm, args.model,
+                    k_turns=args.sliding_k, **llm_kwargs)
+            elif args.method == "full":
+                hyp, msgs, extras = run_full(
+                    history, question, llm, args.model, **llm_kwargs)
+            elif args.method == "rag":
+                hyp, msgs, extras = run_rag(
+                    history, question, llm, args.model,
+                    encoder=encoder, k=args.rag_k, **llm_kwargs)
+            elif args.method == "hi-em":
+                conv_id = qid.replace("/", "_")
+                hyp, msgs, extras = run_hi_em(
+                    history, question, llm, args.model,
+                    encoder=encoder,
+                    ltm_root=Path(args.ltm_root) / conv_id,
+                    conv_id=conv_id,
+                    k_topics=args.k_topics,
+                    k_turns_per_topic=args.k_turns_per_topic,
+                    alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
+                    **llm_kwargs,
+                )
+            else:
+                raise ValueError(args.method)
+            hyp_clean = strip_think_tags(hyp)
             elapsed = time.perf_counter() - t0
-            print(f"  [{i}/{len(questions)}] {qid} ({entry['question_type']}) "
-                  f"hist={len(history)} turns / {elapsed:.1f}s")
-            f.write(json.dumps({
+            tokens = (count_prefill_tokens(msgs, args.model)
+                      if not args.no_token_count else None)
+            rec: dict[str, object] = {
                 "question_id": qid,
                 "hypothesis": hyp_clean,
+                "question_type": entry["question_type"],
+                "history_n_turns": len(history),
+                "prefill_n_msgs": len(msgs),
+                "latency_sec": elapsed,
+                "is_empty": not bool(hyp_clean.strip()),
+                "error": None,
+                **extras,
+            }
+            if tokens is not None:
+                rec["prefill_tokens"] = tokens
+            return rec
+        except Exception as e:
+            return {
+                "question_id": qid,
+                "hypothesis": "",
+                "question_type": entry["question_type"],
+                "history_n_turns": len(history),
+                "latency_sec": time.perf_counter() - t0,
+                "is_empty": True,
+                "error": str(e),
+            }
+
+    # wandb (optional, no-op if WANDB_API_KEY missing)
+    from datetime import datetime, timezone
+    group = args.wandb_group or (
+        f"{Path(args.data).stem}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+    )
+    config = {
+        "method": args.method, "model": args.model, "dataset": args.data,
+        "limit": args.limit, "workers": args.workers,
+        "sliding_k": args.sliding_k, "rag_k": args.rag_k,
+        "k_topics": args.k_topics, "k_turns_per_topic": args.k_turns_per_topic,
+        "alpha": args.alpha, "lmda": args.lmda, "sigma0_sq": args.sigma0_sq,
+        "temperature": args.temperature, "max_tokens": args.max_tokens,
+    }
+    sidecar = Path(str(out_path) + ".wandb-run-id")
+    wb = WandbRun(project=args.wandb_project, name=args.method,
+                  group=group, config=config, sidecar_path=sidecar)
+    if wb.enabled:
+        print(f"[wandb] project={args.wandb_project} group={group} name={args.method}")
+
+    t_start = time.perf_counter()
+    write_lock = threading.Lock()
+    counter = itertools.count(1)
+    total = len(questions)
+    per_q_records: list[dict] = []
+
+    def write_result(rec: dict) -> None:
+        with write_lock:
+            i = next(counter)
+            tag = ("ERROR " + rec["error"]) if rec.get("error") else (
+                "EMPTY" if rec["is_empty"] else "ok"
+            )
+            tok = f" tok={rec['prefill_tokens']}" if "prefill_tokens" in rec else ""
+            print(f"  [{i}/{total}] {rec['question_id']} ({rec['question_type']}) "
+                  f"hist={rec['history_n_turns']} msgs={rec.get('prefill_n_msgs', '?')}{tok} "
+                  f"/ {rec['latency_sec']:.1f}s  {tag}")
+            f.write(json.dumps({
+                "question_id": rec["question_id"],
+                "hypothesis": rec["hypothesis"],
                 "method": args.method,
                 "model": args.model,
             }) + "\n")
             f.flush()
+            per_q_records.append(rec)
+            log_payload = {k: v for k, v in rec.items()
+                           if k in {"prefill_n_msgs", "prefill_tokens",
+                                    "latency_sec", "history_n_turns",
+                                    "topic_revisit_hit"}}
+            log_payload["is_empty"] = int(rec["is_empty"])
+            wb.log(log_payload, step=i)
 
-    print(f"\ntotal {time.perf_counter() - t_start:.1f}s → {out_path}")
+    with out_path.open("w") as f:
+        if args.workers <= 1:
+            for entry in questions:
+                write_result(process(entry))
+        else:
+            print(f"[concurrency] workers={args.workers}")
+            with ThreadPoolExecutor(max_workers=args.workers) as ex:
+                futures = [ex.submit(process, e) for e in questions]
+                for fut in as_completed(futures):
+                    write_result(fut.result())
+
+    runtime = time.perf_counter() - t_start
+    print(f"\ntotal {runtime:.1f}s → {out_path}")
+    summary = aggregate_summary(per_q_records)
+    summary["total_runtime_sec"] = runtime
+    wb.summary(**summary)
+    if wb.enabled:
+        print(f"[wandb] summary: {summary}")
+    wb.finish()
 
 
 if __name__ == "__main__":
