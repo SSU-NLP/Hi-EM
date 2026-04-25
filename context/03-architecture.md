@@ -49,9 +49,12 @@ scripts/
 #   tests/test_llm.py            ✅ 5 tests (mock OpenAI client)
 #   tests/test_orchestrator.py   ✅ 10 tests (FakeEncoder + mock LLM, 토픽 복귀 + response_filter 검증)
 #   scripts/smoke_test_orchestrator.py ✅ Step 3-3 (실 LLM A→B→A; vLLM Qwen3-8B PASS, outputs/phase-3-smoke.md)
+#   scripts/run_longmemeval.py   ✅ Step 4-3 (4 baseline: sliding/full/rag/hi-em → hypothesis jsonl)
+#   scripts/judge_longmemeval.py ✅ Step 4-4 (LongMemEval prompt 인용, Qwen judge)
+#   src/hi_em/orchestrator.py    ✅ Step 4-2 (preload_history 메서드 추가, 51/51 tests)
 #   .env.example                 ✅ 협업자 안내 (.env는 gitignored, python-dotenv)
-# Phase 4+에서 추가 예정:
-#   Step 4-N: scripts/run_longmemeval.py, scripts/run_locomo.py (4-way baseline)
+# Phase 4 진행 중 — Step 4-5/4-6 사용자 실행 대기 (subset → 전체)
+# 추가 예정:
 #   Step 2-4: importance / merge / adaptive K_window (Phase 4 결과 후 튜닝)
 # LTM 데이터 위치: data/ltm/<conv_id>.{jsonl,state.json} (gitignored)
 # LLM 백엔드: memory/project_llm_backend.md (OpenAI-compatible, OpenRouter/vLLM)

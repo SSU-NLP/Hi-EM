@@ -164,7 +164,43 @@
 
 ## Phase 4: 전체 평가 — QA accuracy 4-way baseline 비교
 
-**실제 downstream 유용성 평가**. Hi-EM이 단순 retrieval보다 낫다는 증거 수집.
+**실제 downstream 유용성 평가**. Hi-EM이 단순 retrieval보다 낫다는 증거 수집. **Phase 1-6 reframing의 정량 검증 단계** — boundary F1·ARI 모두 cosine에 패배했어도 downstream QA에서 우위면 Phase 5 진입.
+
+### 4-1. LongMemEval 데이터 (사용자 다운로드)
+- benchmark clone (2026-04-25): `benchmarks/LongMemEval/` (gitignored)
+- HF data 다운로드 명령 사용자에게 전달, oracle 우선 (subset sanity)
+
+### 4-2. `HiEM.preload_history` (2026-04-25 완료)
+- [x] orchestrator에 메서드 추가 — history user/assistant 미리 LTM 주입 (segmenter는 user만 통과, assistant는 직전 user의 topic 상속)
+- [x] `tests/test_orchestrator.py` 2 tests 추가 (preload + preload→handle_turn 통합) → **51/51 PASS**
+
+### 4-3. 4-baseline 통합 스크립트 (2026-04-25 완료)
+- [x] `scripts/run_longmemeval.py --method {sliding,full,rag,hi-em}`
+  - sliding: 직전 K turn (default K=20)
+  - full: 전체 history 그대로
+  - rag: bge cosine top-K (default K=10), chronological 정렬
+  - hi-em: `preload_history` + `handle_turn`, persistence HP (α=1, λ=10, σ²=0.01)
+- [x] `<think>` strip 적용 (Qwen3-8B 등 reasoning model 대응)
+- [x] 출력: hypothesis jsonl `{question_id, hypothesis, method, model}`
+
+### 4-4. Judge 스크립트 (2026-04-25 완료)
+- [x] `scripts/judge_longmemeval.py` — LongMemEval 6 prompt template 인용 (MIT License Copyright 2024 Di Wu, `benchmarks/LongMemEval/LICENSE`)
+- [x] **Judge model = Qwen/Qwen3-8B** (응답 생성과 동일 vLLM endpoint, 비용 0)
+- [x] `temperature=0`, `max_tokens=20`, judge raw에서 `<think>` strip 후 첫 token이 `yes`면 정답
+- [x] question_type별 + abstention별 accuracy 분리 집계
+
+### 4-5 (대기). Subset sanity (사용자 실행)
+- [ ] 30 questions × 4 method × oracle → 8 명령 (run × 4 + judge × 4)
+- [ ] 응답 형식 확인, judge 정확성 sanity, latency 측정
+
+### 4-6 (대기). 전체 평가 (사용자 실행)
+- [ ] oracle 500 + s/m (필요 시 추가 다운로드) × 4 method
+- [ ] question_type 5축 별 결과 표
+- [ ] `outputs/phase-4-summary.md` 작성
+
+### 4-7 (대기). Phase 5 진입 판정
+- [ ] Hi-EM이 4-baseline 중 우위 (특정 능력에서? 토큰 효율?)
+- [ ] report.md 갱신, 결정 분기 (Phase 5 논문 vs 추가 개선)
 
 4 baseline QA accuracy 비교 (LoCoMo · LongMemEval):
 - **Baseline 1. Sliding window**: 최근 N개 세션만 LLM에 투입. 오래된 정보 놓침.

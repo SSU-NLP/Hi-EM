@@ -197,6 +197,63 @@ def test_response_filter_strips_before_storage_but_returns_raw(tmp_path: Path) -
     assert assistant_turn["text"] == "real answer"
 
 
+def test_preload_history_writes_user_and_assistant_turns(tmp_path: Path) -> None:
+    enc = FakeEncoder()
+    enc.register("u1", [1.0, 0.0, 0.0, 0.0])
+    enc.register("u2", [0.0, 1.0, 0.0, 0.0])  # different topic
+    llm = _llm()
+    hi = _hi_em(tmp_path, enc, llm)
+
+    hi.preload_history([
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+        {"role": "assistant", "content": "a2"},
+    ])
+
+    # No LLM calls during preload
+    assert llm.chat.call_count == 0
+
+    turns = hi._ltm.load_turns("c1")
+    assert [t["role"] for t in turns] == ["user", "assistant", "user", "assistant"]
+    assert [t["text"] for t in turns] == ["u1", "a1", "u2", "a2"]
+
+    # User turns get embeddings; assistants don't.
+    assert turns[0]["embedding"] is not None
+    assert turns[1]["embedding"] is None
+    assert turns[2]["embedding"] is not None
+    assert turns[3]["embedding"] is None
+
+    # Assistant inherits the previous user's topic_id.
+    assert turns[1]["topic_id"] == turns[0]["topic_id"]
+    assert turns[3]["topic_id"] == turns[2]["topic_id"]
+
+    # Two distinct topics formed (u1, u2 are orthogonal).
+    state = hi._ltm.load_state("c1")
+    assert len(state["topics"]) == 2
+
+
+def test_preload_history_then_handle_turn_uses_history(tmp_path: Path) -> None:
+    enc = FakeEncoder()
+    enc.register("seed", [1.0, 0.0, 0.0, 0.0])
+    enc.register("query", [1.0, 0.0, 0.0, 0.0])  # same topic as seed
+    llm = _llm()
+    llm.chat.return_value = "answer"
+    hi = _hi_em(tmp_path, enc, llm, k_topics=1, k_turns_per_topic=10)
+
+    hi.preload_history([
+        {"role": "user", "content": "seed"},
+        {"role": "assistant", "content": "seed_reply"},
+    ])
+    hi.handle_turn("query")
+
+    msgs = llm.chat.call_args.args[0]
+    contents = [m["content"] for m in msgs]
+    assert "seed" in contents
+    assert "seed_reply" in contents
+    assert contents[-1] == "query"
+
+
 def test_ltm_files_created_at_root(tmp_path: Path) -> None:
     enc = FakeEncoder()
     enc.register("hi", [1.0, 0.0, 0.0, 0.0])

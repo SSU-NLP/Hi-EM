@@ -34,8 +34,8 @@
 ## 현재 상태
 
 **마지막 업데이트**: 2026-04-25
-**현재 Phase**: Phase 3 완료 (3-1/3-2/3-3). **Phase 4 진입 대기**.
-**진행률**: Phase 0/1 완료, Phase 2 Step 2-1/2-2/2-3 완료 (2-4는 Phase 4 결과로 튜닝). Phase 3 Step 3-1 (LLM adapter) + 3-2 (orchestrator HiEM) + 3-3 (실 API smoke test, vLLM Qwen3-8B PASS) 완료. 전체 테스트 **49/49 PASS** (response_filter 테스트 추가). 환경 셋업: `.env` (python-dotenv), `.env.example` 협업자 안내.
+**현재 Phase**: Phase 4 — downstream QA 4-way baseline (Step 4-2/4-3/4-4 완료, **4-5 sanity 사용자 실행 대기**).
+**진행률**: Phase 0/1/2/3 완료. Phase 4 Step 4-1 (clone, data 다운로드는 사용자) + 4-2 (preload_history, 2 tests) + 4-3 (run_longmemeval.py 4 method) + 4-4 (judge_longmemeval.py, Qwen judge) 완료. 전체 테스트 **51/51 PASS**. **사용자 실행: subset 30 sanity → 전체 500 → 분석**.
 
 ### 완료된 것
 - 프로젝트 디렉토리 구조 생성
@@ -57,6 +57,7 @@
 - **2026-04-25 Step 3-1 완료**: `src/hi_em/llm.py` — `OpenAIChatLLM(api_key, base_url)` + `chat(messages, model, **kwargs)`. **OpenAI-compatible** (OpenRouter / vLLM / OpenAI 본가 모두 동일 SDK). env var: `OPENAI_API_KEY` + `OPENAI_BASE_URL` (생성자 인자 우선). `requirements.txt` openai>=1.30 활성화 (실제 설치된 버전 2.32.0). `tests/test_llm.py` 5 tests (mock client). 전체 회귀 **39/39 PASS**. 백엔드 결정 근거: `memory/project_llm_backend.md`.
 - **2026-04-25 Step 3-2 완료**: `src/hi_em/orchestrator.py` — `HiEM(conv_id, encoder, llm, model, ltm_root, alpha, lmda, sigma0_sq, k_topics, k_turns_per_topic, system_prompt?, **llm_kwargs).handle_turn(user_text) -> str`. 7단계 파이프라인 (embed → segment → snapshot → memory_window → messages → llm.chat → append user/assistant). 순서: select 시점에 user turn 미저장 → 직전 user 필터링 불요. assistant turn은 embedding=None, 직전 user의 topic_id 상속. `tests/test_orchestrator.py` 9 tests (FakeEncoder + mock LLM). 전체 회귀 **48/48 PASS**. **A→B→A 토픽 복귀 시 첫 A turn 자동 prefill 검증**. §9.1 schema 단순화: first/last_turn_id 제거 (실 사용처 없음). 세션 간 segmenter 상태 복원 미지원 (Phase 5 필요 시 추가).
 - **2026-04-25 Step 3-3 완료**: `scripts/smoke_test_orchestrator.py` 실 LLM 검증. `.env` (python-dotenv) 자격증명 + `.env.example`. 환경: vLLM `http://210.222.65.89:50200/v1` + `Qwen/Qwen3-8B`. **결과 PASS** (`outputs/phase-3-smoke.md`): Turn 1·3 same topic_id=0, Turn 3 응답이 Turn 1 정보(가을 시기) 명시 인지. **`response_filter` 옵션 추가** (caller=raw, LTM=filtered) — Qwen `<think>` 블록 prefill 토큰 절약. test 1개 추가, 전체 **49/49 PASS**.
+- **2026-04-25 Phase 4 진입 + Step 4-2/4-3/4-4 완료**: LongMemEval 벤치마크 평가 인프라 구축. (1) `HiEM.preload_history(turns)` 메서드 추가 — segmenter는 user만 통과, assistant는 직전 user의 topic 상속. 2 tests 추가 → **51/51 PASS**. (2) `scripts/run_longmemeval.py --method {sliding,full,rag,hi-em}` 4 baseline 통합 — sliding K=20 / full / rag bge-cosine top-K=10 / hi-em persistence HP. (3) `scripts/judge_longmemeval.py` — LongMemEval 6 prompt template 인용 (MIT, Copyright 2024 Di Wu), **judge model = Qwen/Qwen3-8B** (응답 생성과 동일 vLLM, 비용 0). question_type 5축 별 + abstention 분리 집계. **다음: 사용자 데이터 다운로드 + subset 30 sanity → 전체 500**.
 - **Phase 2.5 폐기**: LongMemEval session=topic 가정이 잘못된 설계였음 (한 세션 내 subtopic 공존 정상). LongMemEval은 Phase 4 downstream QA용으로 재배치.
 - **종합 보고서 작성**: `report.md` (Phase 0 시작 ~ Phase 1-5 시점, 12 섹션 + 부록).
 
@@ -71,7 +72,35 @@
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### 다음: Phase 4 (downstream QA 4-way baseline 평가)
+### 다음: Phase 4 Step 4-5 sanity 실행 (사용자 명령 실행)
+
+**준비**:
+1. LongMemEval data 다운로드 (oracle 우선):
+```bash
+cd /Users/joseonghyeon/Desktop/Hi-EM/benchmarks/LongMemEval/data
+wget https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json
+cd /Users/joseonghyeon/Desktop/Hi-EM
+```
+
+**Subset sanity (30 questions × 4 method)**:
+```bash
+for m in sliding full rag hi-em; do
+    uv run python scripts/run_longmemeval.py --method $m --limit 30 \
+        --output outputs/phase-4-sanity-$m.jsonl
+done
+```
+
+**Judge 4번**:
+```bash
+for m in sliding full rag hi-em; do
+    uv run python scripts/judge_longmemeval.py outputs/phase-4-sanity-$m.jsonl \
+        --ref benchmarks/LongMemEval/data/longmemeval_oracle.json
+done
+```
+
+→ 결과 4 method × accuracy + question_type별 분리 알려주시면, 다음 단계 (전체 500 실행 또는 sanity 결과로 발견된 이슈 수정) 결정.
+
+### Phase 4 plan (Step 4-1~4-7) — 자세히는 plan.md 참조
 
 **목적**: Hi-EM의 진짜 가치 (boundary F1·ARI 모두 unsupervised metric으론 cosine 우위 → reframing 인정) 정량 검증. 4-way 비교에서 Hi-EM이 baseline 대비 의미 있는 개선을 보여야 Phase 5 (논문 실험) 진입 자격.
 

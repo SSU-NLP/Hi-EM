@@ -113,6 +113,54 @@ class HiEM:
 
         return response
 
+    def preload_history(self, turns: list[dict[str, Any]]) -> None:
+        """Inject pre-existing user/assistant turns into LTM without LLM calls.
+
+        Used for benchmarks (LongMemEval, LoCoMo) where the conversation
+        history is given upfront and only the final question goes through
+        :meth:`handle_turn`. Only user turns are passed through the segmenter
+        so that assistant text does not pollute topic centroids.
+
+        Each input turn is a dict with at least ``{"role", "content"}``.
+        Optional ``ts`` is preserved if present.
+        """
+        last_topic_id = 0
+        for t in turns:
+            role = t["role"]
+            text = t["content"]
+            ts = t.get("ts", datetime.now(timezone.utc).isoformat())
+            if role == "user":
+                q = np.asarray(self._encoder.encode([text])[0])
+                topic_id, is_boundary = self._segmenter.assign(q)
+                last_topic_id = topic_id
+                self._ltm.append_turn(
+                    self.conv_id,
+                    {
+                        "turn_id": self._next_turn_id,
+                        "ts": ts,
+                        "role": "user",
+                        "text": text,
+                        "embedding": q.tolist(),
+                        "topic_id": topic_id,
+                        "is_boundary": is_boundary,
+                    },
+                )
+            else:  # assistant — no embedding, inherit prev user's topic
+                self._ltm.append_turn(
+                    self.conv_id,
+                    {
+                        "turn_id": self._next_turn_id,
+                        "ts": ts,
+                        "role": role,
+                        "text": text,
+                        "embedding": None,
+                        "topic_id": last_topic_id,
+                        "is_boundary": False,
+                    },
+                )
+            self._next_turn_id += 1
+        self._ltm.update_state(self.conv_id, self._snapshot_state())
+
     def _make_turn(
         self,
         turn_id: int,
