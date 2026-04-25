@@ -24,6 +24,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+from sklearn.metrics import v_measure_score, adjusted_rand_score
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -58,6 +59,51 @@ def ground_truth_shifts(conv: list[dict]) -> list[bool]:
     """True iff `Topic` field changed at each transition (len == N-1)."""
     topics = [t["Topic"] for t in conv]
     return [topics[i] != topics[i - 1] for i in range(1, len(topics))]
+
+
+def ground_truth_clusters(conv: list[dict]) -> list[int]:
+    """Cluster id per turn (length == N) from ``Topic`` field equality.
+
+    Each unique Topic string becomes a unique cluster id.
+    """
+    topics = [t["Topic"] for t in conv]
+    seen: dict[str, int] = {}
+    out: list[int] = []
+    for topic in topics:
+        if topic not in seen:
+            seen[topic] = len(seen)
+        out.append(seen[topic])
+    return out
+
+
+def boundaries_to_clusters(n: int, boundaries: list[bool]) -> list[int]:
+    """Convert N-1 binary boundary flags to N cluster ids."""
+    if n == 0:
+        return []
+    out = [0]
+    cur = 0
+    for is_b in boundaries:
+        if is_b:
+            cur += 1
+        out.append(cur)
+    return out
+
+
+def clustering_metrics(
+    gt_per_conv: list[list[int]], pred_per_conv: list[list[int]],
+) -> tuple[float, float]:
+    """Average V-measure and ARI across conversations (per-conv computation).
+
+    Per-conv because cluster ids aren't comparable across conversations.
+    Skips dialogs with fewer than 2 turns.
+    """
+    v_scores, ari_scores = [], []
+    for gt, pred in zip(gt_per_conv, pred_per_conv):
+        if len(gt) < 2:
+            continue
+        v_scores.append(v_measure_score(gt, pred))
+        ari_scores.append(adjusted_rand_score(gt, pred))
+    return float(np.mean(v_scores)), float(np.mean(ari_scores))
 
 
 # --- Metrics -------------------------------------------------------------
@@ -107,7 +153,9 @@ def run_hi_em(
     lmda: float,
     sigma0_sq: float,
 ):
+    """Returns gt, pred, per_conv_cluster_ids, total_sec, n_assigns."""
     gt, pred = [], []
+    per_conv_clusters: list[list[int]] = []
     total_sec = 0.0
     n_assigns = 0
     for conv, emb in zip(convs, embeddings):
@@ -120,7 +168,8 @@ def run_hi_em(
         total_sec += time.perf_counter() - t0
         n_assigns += len(emb)
         pred.extend(a[1] for a in assignments[1:])
-    return gt, pred, total_sec, n_assigns
+        per_conv_clusters.append([a[0] for a in assignments])
+    return gt, pred, per_conv_clusters, total_sec, n_assigns
 
 
 # --- Report --------------------------------------------------------------
@@ -154,14 +203,22 @@ def write_report(out_path: Path, convs, results, args) -> None:
         f"- ground-truth shifts (`Topic` 필드 변화): {n_shifts}",
         f"- shift rate per transition: {shift_rate:.3f}",
         "",
-        "## Topic shift F1 (turn-transition 단위 binary)",
+        "## Topic shift F1 + Clustering quality (V-measure / ARI, per-conv 평균)",
         "",
-        "| Method | Precision | Recall | F1 |",
-        "|---|---|---|---|",
-        f"| (a) all-boundary | {p_ab:.3f} | {r_ab:.3f} | {f1_ab:.3f} |",
+        "| Method | Precision | Recall | F1 | V-measure | ARI |",
+        "|---|---|---|---|---|---|",
+        f"| (a) all-boundary | {p_ab:.3f} | {r_ab:.3f} | {f1_ab:.3f} | "
+        f"{results['all-boundary-v']:.3f} | {results['all-boundary-ari']:.3f} |",
         f"| (b) cosine-threshold (θ={results['cosine-threshold-best-thr']}) | "
-        f"{p_cos:.3f} | {r_cos:.3f} | {f1_cos:.3f} |",
-        f"| (c) Hi-EM (sCRP + option A) | {p_hi:.3f} | {r_hi:.3f} | {f1_hi:.3f} |",
+        f"{p_cos:.3f} | {r_cos:.3f} | {f1_cos:.3f} | "
+        f"{results['cosine-threshold-v']:.3f} | {results['cosine-threshold-ari']:.3f} |",
+        f"| (c) Hi-EM (sCRP + option A) | {p_hi:.3f} | {r_hi:.3f} | {f1_hi:.3f} | "
+        f"{results['hi-em-v']:.3f} | {results['hi-em-ari']:.3f} |",
+        "",
+        "**지표 의미**:",
+        "- **F1**: turn-transition 단위 boundary 정확도 (binary classification)",
+        "- **V-measure**: homogeneity × completeness 조화평균. 0~1, 1=완벽한 클러스터 일치",
+        "- **ARI** (Adjusted Rand Index): chance-corrected pairwise agreement. 1=완벽, 0=random, 음수 가능",
         "",
         f"- cosine-threshold sweep 후보: {args.threshold_sweep}",
         "",
@@ -266,24 +323,50 @@ def main() -> None:
     print("[3/4] baselines + Hi-EM...")
     results: dict = {}
 
+    # GT cluster ids per conversation (Wikipedia Topic 단위)
+    gt_clusters_per_conv = [ground_truth_clusters(c) for c in convs]
+
+    # (a) all-boundary
     gt, pred = baseline_all_boundary(convs)
     results["all-boundary"] = f1_score(gt, pred)
-    print(f"  (a) all-boundary    : F1={results['all-boundary'][2]:.3f}")
+    ab_pred_clusters = [list(range(len(c))) for c in convs]
+    ab_v, ab_ari = clustering_metrics(gt_clusters_per_conv, ab_pred_clusters)
+    results["all-boundary-v"] = ab_v
+    results["all-boundary-ari"] = ab_ari
+    print(
+        f"  (a) all-boundary    : F1={results['all-boundary'][2]:.3f}  "
+        f"V={ab_v:.3f} ARI={ab_ari:.3f}"
+    )
 
+    # (b) cosine threshold sweep — track best by F1, also save its clusters
     best = (0.0, 0.0, -1.0, None)
+    best_pred_clusters: list[list[int]] | None = None
     for thr in args.threshold_sweep:
         gt, pred = baseline_cosine_threshold(convs, embeddings, thr)
         prf = f1_score(gt, pred)
         if prf[2] > best[2]:
             best = (*prf, thr)
+            # rebuild per-conv clusters at this θ
+            cur_clusters = []
+            for conv, emb in zip(convs, embeddings):
+                bnds = [
+                    float(np.dot(emb[i], emb[i - 1])) < thr
+                    for i in range(1, len(conv))
+                ]
+                cur_clusters.append(boundaries_to_clusters(len(conv), bnds))
+            best_pred_clusters = cur_clusters
     results["cosine-threshold"] = best[:3]
     results["cosine-threshold-best-thr"] = best[3]
+    cos_v, cos_ari = clustering_metrics(gt_clusters_per_conv, best_pred_clusters)
+    results["cosine-threshold-v"] = cos_v
+    results["cosine-threshold-ari"] = cos_ari
     print(
         f"  (b) cosine θ={best[3]:.2f}  : F1={best[2]:.3f} "
-        f"(P={best[0]:.3f}, R={best[1]:.3f})"
+        f"(P={best[0]:.3f}, R={best[1]:.3f})  V={cos_v:.3f} ARI={cos_ari:.3f}"
     )
 
-    gt, pred, hi_sec, n_assigns = run_hi_em(
+    # (c) Hi-EM
+    gt, pred, hi_clusters, hi_sec, n_assigns = run_hi_em(
         convs, embeddings, args.alpha, args.lmda, args.sigma0_sq
     )
     results["hi-em"] = f1_score(gt, pred)
@@ -291,9 +374,13 @@ def main() -> None:
     results["hi-em-assign-ms-per-turn"] = hi_sec / n_assigns * 1000 if n_assigns else 0.0
     results["embed-sec"] = embed_sec
     results["embed-ms-per-turn"] = embed_sec / n_turns * 1000 if n_turns else 0.0
+    hi_v, hi_ari = clustering_metrics(gt_clusters_per_conv, hi_clusters)
+    results["hi-em-v"] = hi_v
+    results["hi-em-ari"] = hi_ari
     p_hi, r_hi, f1_hi = results["hi-em"]
     print(
         f"  (c) Hi-EM           : F1={f1_hi:.3f} (P={p_hi:.3f}, R={r_hi:.3f}), "
+        f"V={hi_v:.3f} ARI={hi_ari:.3f}, "
         f"assign={results['hi-em-assign-ms-per-turn']:.3f} ms/turn"
     )
 

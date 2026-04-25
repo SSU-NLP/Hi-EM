@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+from sklearn.metrics import v_measure_score, adjusted_rand_score
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -51,6 +52,34 @@ def gt_shifts(dialog: list[tuple[str, str]]) -> list[bool]:
     return [labels[i] == '1' for i in range(1, len(labels))]
 
 
+def gt_clusters(dialog: list[tuple[str, str]]) -> list[int]:
+    """Cumulative cluster ids derived from shift labels (length = N).
+
+    First turn is cluster 0; each '1' label starts a new cluster.
+    """
+    labels = [t[1] for t in dialog]
+    out = [0]
+    cur = 0
+    for i in range(1, len(labels)):
+        if labels[i] == '1':
+            cur += 1
+        out.append(cur)
+    return out
+
+
+def boundaries_to_clusters(n: int, boundaries: list[bool]) -> list[int]:
+    """Convert N-1 binary boundary flags to N cluster ids."""
+    if n == 0:
+        return []
+    out = [0]
+    cur = 0
+    for is_b in boundaries:
+        if is_b:
+            cur += 1
+        out.append(cur)
+    return out
+
+
 def f1_score(gt: list[bool], pred: list[bool]) -> tuple[float, float, float]:
     tp = fp = fn = 0
     for g, p in zip(gt, pred):
@@ -63,17 +92,38 @@ def f1_score(gt: list[bool], pred: list[bool]) -> tuple[float, float, float]:
     return P, R, F
 
 
+def clustering_metrics(
+    gt_per_dialog: list[list[int]], pred_per_dialog: list[list[int]],
+) -> tuple[float, float]:
+    """Average V-measure and ARI across dialogs (per-dialog computation).
+
+    Per-dialog because cluster ids aren't comparable across dialogs.
+    Skips dialogs with len < 2.
+    """
+    v_scores, ari_scores = [], []
+    for gt, pred in zip(gt_per_dialog, pred_per_dialog):
+        if len(gt) < 2:
+            continue
+        v_scores.append(v_measure_score(gt, pred))
+        ari_scores.append(adjusted_rand_score(gt, pred))
+    return float(np.mean(v_scores)), float(np.mean(ari_scores))
+
+
 def run_hi_em(dialogs, embeddings, alpha, lmda, sigma0_sq):
+    """Returns: (P, R, F), per_dialog_cluster_ids, hi_sec, n_turns."""
     gt_all, pred_all = [], []
+    per_dialog_clusters: list[list[int]] = []
     t0 = time.perf_counter()
     n_turns = 0
     for (cid, dialog), emb in zip(dialogs.items(), embeddings):
         seg = HiEMSegmenter(dim=emb.shape[1], alpha=alpha, lmda=lmda, sigma0_sq=sigma0_sq)
         assignments = [seg.assign(s) for s in emb]
+        cluster_ids = [a[0] for a in assignments]
+        per_dialog_clusters.append(cluster_ids)
         gt_all.extend(gt_shifts(dialog))
         pred_all.extend(a[1] for a in assignments[1:])
         n_turns += len(dialog)
-    return f1_score(gt_all, pred_all), time.perf_counter() - t0, n_turns
+    return f1_score(gt_all, pred_all), per_dialog_clusters, time.perf_counter() - t0, n_turns
 
 
 def main() -> None:
@@ -109,36 +159,58 @@ def main() -> None:
         embeddings.append(emb_flat[idx:idx + len(d)])
         idx += len(d)
 
-    # (a) all-boundary
+    # GT cluster ids per dialog (재사용)
+    gt_clusters_per_dialog = [gt_clusters(d) for d in dialogs.values()]
+
+    # (a) all-boundary — every turn is its own cluster
     gt, pred = [], []
+    ab_pred_clusters_per_dialog = []
     for d in dialogs.values():
         gs = gt_shifts(d)
         gt.extend(gs)
         pred.extend([True] * len(gs))
+        ab_pred_clusters_per_dialog.append(list(range(len(d))))
     ab_prf = f1_score(gt, pred)
-    print(f"(a) all-boundary : P={ab_prf[0]:.3f} R={ab_prf[1]:.3f} F1={ab_prf[2]:.3f}")
+    ab_v, ab_ari = clustering_metrics(gt_clusters_per_dialog, ab_pred_clusters_per_dialog)
+    print(f"(a) all-boundary : P={ab_prf[0]:.3f} R={ab_prf[1]:.3f} F1={ab_prf[2]:.3f}  "
+          f"V={ab_v:.3f} ARI={ab_ari:.3f}")
 
-    # (b) cosine threshold
+    # (b) cosine threshold (sweep, then full pass at best)
     best = (0.0, 0.0, -1.0, None)
+    best_pred_clusters = None
     for thr in args.threshold_sweep:
         gt, pred = [], []
+        cur_pred_clusters = []
         for d, emb in zip(dialogs.values(), embeddings):
             gt.extend(gt_shifts(d))
+            bnds = []
             for i in range(1, len(d)):
-                pred.append(float(np.dot(emb[i], emb[i-1])) < thr)
+                is_b = float(np.dot(emb[i], emb[i-1])) < thr
+                pred.append(is_b)
+                bnds.append(is_b)
+            cur_pred_clusters.append(boundaries_to_clusters(len(d), bnds))
         prf = f1_score(gt, pred)
         if prf[2] > best[2]:
             best = (*prf, float(thr))
-    print(f"(b) cosine θ={best[3]:.3f}: P={best[0]:.3f} R={best[1]:.3f} F1={best[2]:.3f}")
+            best_pred_clusters = cur_pred_clusters
+    cos_v, cos_ari = clustering_metrics(gt_clusters_per_dialog, best_pred_clusters)
+    print(f"(b) cosine θ={best[3]:.3f}: P={best[0]:.3f} R={best[1]:.3f} F1={best[2]:.3f}  "
+          f"V={cos_v:.3f} ARI={cos_ari:.3f}")
 
     # (c) Hi-EM — persistence HP
-    (p, r, f), hi_sec, _ = run_hi_em(dialogs, embeddings, args.alpha, args.lmda, args.sigma0_sq)
+    (p, r, f), hi_clusters, hi_sec, _ = run_hi_em(
+        dialogs, embeddings, args.alpha, args.lmda, args.sigma0_sq)
+    hi_v, hi_ari = clustering_metrics(gt_clusters_per_dialog, hi_clusters)
     print(f"(c) Hi-EM α={args.alpha}, λ={args.lmda}, σ₀²={args.sigma0_sq}: "
-          f"P={p:.3f} R={r:.3f} F1={f:.3f}  (assign {hi_sec*1000/n_turns:.3f} ms/turn)")
+          f"P={p:.3f} R={r:.3f} F1={f:.3f}  V={hi_v:.3f} ARI={hi_ari:.3f}  "
+          f"(assign {hi_sec*1000/n_turns:.3f} ms/turn)")
 
-    # Hi-EM freq-shift HP for comparison
-    (p2, r2, f2), _, _ = run_hi_em(dialogs, embeddings, alpha=10.0, lmda=1.0, sigma0_sq=0.1)
-    print(f"(c') Hi-EM freq-shift: P={p2:.3f} R={r2:.3f} F1={f2:.3f}")
+    # (c') Hi-EM freq-shift HP for comparison
+    (p2, r2, f2), hi_clusters2, _, _ = run_hi_em(
+        dialogs, embeddings, alpha=10.0, lmda=1.0, sigma0_sq=0.1)
+    hi_v2, hi_ari2 = clustering_metrics(gt_clusters_per_dialog, hi_clusters2)
+    print(f"(c') Hi-EM freq-shift: P={p2:.3f} R={r2:.3f} F1={f2:.3f}  "
+          f"V={hi_v2:.3f} ARI={hi_ari2:.3f}")
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -152,14 +224,21 @@ def main() -> None:
 - total turns: {n_turns}
 - topic-shift labels ('1'): {n_shifts} (shift rate {n_shifts/(n_turns-n_convs):.3f} / transition)
 
-## 지표 — topic-shift F1 (turn-transition binary)
+## 지표
 
-| Method | Precision | Recall | F1 |
-|---|---|---|---|
-| (a) all-boundary | {ab_prf[0]:.3f} | {ab_prf[1]:.3f} | {ab_prf[2]:.3f} |
-| (b) cosine-threshold (θ={best[3]:.3f}) | {best[0]:.3f} | {best[1]:.3f} | {best[2]:.3f} |
-| (c) Hi-EM persistence (α={args.alpha}, λ={args.lmda}, σ₀²={args.sigma0_sq}) | {p:.3f} | {r:.3f} | {f:.3f} |
-| (c') Hi-EM freq-shift (α=10, λ=1, σ₀²=0.1) | {p2:.3f} | {r2:.3f} | {f2:.3f} |
+### Topic-shift F1 (turn-transition binary) + Clustering quality (V-measure / ARI, per-dialog 평균)
+
+| Method | Precision | Recall | F1 | V-measure | ARI |
+|---|---|---|---|---|---|
+| (a) all-boundary | {ab_prf[0]:.3f} | {ab_prf[1]:.3f} | {ab_prf[2]:.3f} | {ab_v:.3f} | {ab_ari:.3f} |
+| (b) cosine-threshold (θ={best[3]:.3f}) | {best[0]:.3f} | {best[1]:.3f} | {best[2]:.3f} | {cos_v:.3f} | {cos_ari:.3f} |
+| (c) Hi-EM persistence (α={args.alpha}, λ={args.lmda}, σ₀²={args.sigma0_sq}) | {p:.3f} | {r:.3f} | {f:.3f} | {hi_v:.3f} | {hi_ari:.3f} |
+| (c') Hi-EM freq-shift (α=10, λ=1, σ₀²=0.1) | {p2:.3f} | {r2:.3f} | {f2:.3f} | {hi_v2:.3f} | {hi_ari2:.3f} |
+
+**지표 의미**:
+- **F1**: turn-transition 단위 boundary 정확도 (binary classification)
+- **V-measure**: homogeneity × completeness 조화평균. 0~1, 1=완벽한 클러스터 일치
+- **ARI** (Adjusted Rand Index): chance-corrected pairwise agreement. 1=완벽, 0=random, 음수 가능
 
 ## Latency
 - embed: {enc_sec:.1f}s / {enc_sec/n_turns*1000:.2f} ms/turn
