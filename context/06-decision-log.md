@@ -371,3 +371,44 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 **Phase 5 직전 재검토 트리거**:
 - Phase 4 read 병목 시 → Hybrid/SQLite 교체.
 - 100k turns 이상 시 → Parquet 검토.
+
+---
+
+### 2026-04-25: Phase 3-1 LLM 백엔드 = OpenAI-compatible (OpenRouter + vLLM 기본)
+
+**근거**:
+- Phase 3 orchestrator가 LLM을 호출해야 하므로 어댑터 결정 필요. CLAUDE.md "no fine-tuning" 원칙 + 모델 변수 비교(GPT-4o / Claude / Llama) 위해 외부 API 추상화.
+- 사용자 결정 (2026-04-25): OpenAI Chat Completion API 템플릿 + API key 인증 + 기본 endpoint = OpenRouter / vLLM. 둘 다 OpenAI-compatible이라 어댑터 1개로 충분.
+
+**결정**:
+- 모듈: `src/hi_em/llm.py` — `OpenAIChatLLM(api_key, base_url)` + `chat(messages, model, **kwargs) -> str`
+- 의존성: `openai>=1.30` (requirements.txt 활성화, 설치된 버전 2.32.0)
+- 인증 env var: `OPENAI_API_KEY` + `OPENAI_BASE_URL` (생성자 인자 우선, env fallback)
+- model 인자는 호출 시 명시 (default 없음 — caller 책임)
+- sampling 인자는 `**kwargs` 통과 (temperature, max_tokens 등 OpenAI SDK 그대로)
+- 비-streaming, 에러 처리 최소 (raise as-is)
+- Anthropic SDK·Google SDK 직접 사용 금지 (OpenRouter 경유)
+
+**영향 범위**:
+- `requirements.txt` openai>=1.30 활성화
+- `src/hi_em/llm.py` (신규)
+- `tests/test_llm.py` (5 tests, mock client)
+- `src/hi_em/__init__.py` export
+- `context/03-architecture.md`
+- `plan.md` Phase 3 → Step 3-1/3-2/3-3 분할
+- `handoff.md`
+- `README.md`
+- `memory/project_llm_backend.md` (project memory)
+
+**대안 및 기각 사유**:
+- 함수 1개 (`call_chat(...)`)만 (기각: client config 매번 재생성, env var 읽기 중복).
+- 클래스 생성 시 model 고정 (기각: 한 orchestrator가 여러 model 비교 시 불편).
+- streaming 즉시 지원 (기각: 현 단계 단순성 우선, downstream 평가에 streaming 불필요).
+- `httpx` 직접 호출 (기각: 의존성 줄이는 이득 < 유지비. openai SDK는 안정적).
+- Anthropic SDK 별도 어댑터 (기각: OpenRouter로 충분, scope creep. 필요해지면 future 추가).
+- env var 분리 (`OPENROUTER_API_KEY` / `VLLM_BASE_URL`) (기각: 두 backend 동시 사용 시나리오 없음 — 한 번에 하나 선택. `OPENAI_*` 표준이 OpenAI SDK 자체 default와 정합).
+
+**Phase 4/5 재검토 트리거**:
+- streaming 필요 시 → `chat_stream(...)` 추가.
+- retry/timeout/rate-limit 처리 필요 시 → wrapper 추가.
+- 다른 backend (직접 Anthropic, Google) 필요 시 → 별도 adapter, 단 OpenRouter로 가능한지 먼저 확인.

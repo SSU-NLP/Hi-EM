@@ -23,6 +23,7 @@
 - **2026-04-25 Phase 2 진입 + Step 2-1 LTM 저장 포맷 확정**: per-conversation **JSONL** (turn append-only) + **`<conv_id>.state.json`** (topic 상태 latest snapshot, overwrite). 디렉토리 `data/ltm/` (gitignored). Topic 분할 HP **persistence (α=1, λ=10, σ₀²=0.01)** 채택. 자세한 trade-off: `context/01-hi-em-design.md §9.1`.
 - **2026-04-25 Step 2-2 완료**: `src/hi_em/ltm.py` (LTM API 5 methods) + `tests/test_ltm.py` (8 tests). 전체 테스트 회귀 **26/26 PASS**.
 - **2026-04-25 Step 2-3 완료**: `src/hi_em/memory_window.py` (`select_memory_window`: cosine top-k topics × recency top-k turns/topic) + `tests/test_memory_window.py` (8 tests). 전체 회귀 **34/34 PASS**. Step 2-4 (importance/merge/adaptive K)는 Phase 4 결과로 튜닝 — 현 baseline 정책으로 Phase 3 진입.
+- **2026-04-25 Step 3-1 완료**: `src/hi_em/llm.py` (`OpenAIChatLLM` — OpenRouter / vLLM / OpenAI 본가 모두 OpenAI-compatible) + `tests/test_llm.py` (5 tests, mock OpenAI client). `requirements.txt` openai>=1.30 활성화. 전체 회귀 **39/39 PASS**. 백엔드 결정 근거: `memory/project_llm_backend.md`.
 - 종합 회고 + 다음 행동 후보 5종: `report.md`
 - 결정 이력 (append-only): `context/06-decision-log.md`
 - HP regime split 발견: persistence(α=1, λ=10, σ₀²=0.01) vs frequent-shift(α=10, λ=1, σ₀²=0.1)
@@ -52,20 +53,22 @@ Hi-EM/
 │   ├── 05-open-questions.md      열려있는 질문들
 │   └── 06-decision-log.md        설계 결정 이력 (append-only)
 │
-├── src/hi_em/                코어 구현 (Phase 1 + Phase 2-2/2-3 완료)
+├── src/hi_em/                코어 구현 (Phase 1 + 2-2/2-3 + 3-1 완료)
 │   ├── embedding.py              bge-base-en-v1.5 wrapper (L2 norm, 768dim)
 │   ├── topic.py                  centroid + diag σ² + Welford 온라인 업데이트
 │   ├── scrp.py                   sticky_crp_unnormed (SEM 식 1)
 │   ├── sem_core.py               HiEMSegmenter.assign() — online MAP 루프
 │   ├── ltm.py                    LTM read/write API (per-conv JSONL + state.json, §9.1)
-│   └── memory_window.py          select_memory_window — cosine top-k topics × recency top-k turns
+│   ├── memory_window.py          select_memory_window — cosine top-k topics × recency top-k turns
+│   └── llm.py                    OpenAIChatLLM — OpenRouter / vLLM / OpenAI 본가 (OpenAI-compatible)
 │
-├── tests/                    pytest (Phase 1-2 + 2-2/2-3 완료, 34 tests passing)
+├── tests/                    pytest (39 tests passing)
 │   ├── test_scrp.py              7 tests
 │   ├── test_topic.py             6 tests
 │   ├── test_sem_core.py          5 tests
 │   ├── test_ltm.py               8 tests
-│   └── test_memory_window.py     8 tests
+│   ├── test_memory_window.py     8 tests
+│   └── test_llm.py               5 tests (mock OpenAI client)
 │
 ├── scripts/                  실행/분석 스크립트
 │   ├── check_step_done.py            Step 완료 gate

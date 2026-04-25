@@ -129,9 +129,28 @@
 ---
 
 ## Phase 3: 오케스트레이션
-- [ ] 매 턴 파이프라인: `query → embedding → segment → LTM write`
-- [ ] 매 라운드 파이프라인: `query → Memory window 구성 → LLM 호출 prefill/prefix`
-- [ ] 비동기 라운드 처리(merge · importance 재계산)
+
+### 3-1. LLM adapter (2026-04-25 완료)
+- [x] `src/hi_em/llm.py` — `OpenAIChatLLM(api_key, base_url)` + `chat(messages, model, **kwargs) -> str`
+- [x] OpenAI-compatible (OpenRouter / vLLM / OpenAI 본가 모두 동일 SDK)
+- [x] env var: `OPENAI_API_KEY` + `OPENAI_BASE_URL` (생성자 인자 우선, env fallback)
+- [x] `tests/test_llm.py` — 5 tests passing (mock OpenAI client; 실 API 호출은 Step 3-3 smoke test에서)
+- [x] requirements.txt: `openai>=1.30` 활성화. 백엔드 결정 근거: `memory/project_llm_backend.md`
+
+### 3-2 (대기)
+- [ ] `src/hi_em/orchestrator.py` — 매 턴 파이프라인 묶기:
+  1. `embed(query)` → q
+  2. `segmenter.assign(q)` → (topic_id, is_boundary)
+  3. `ltm.append_turn(...)` (user)
+  4. `ltm.update_state(...)` (segmenter snapshot)
+  5. `select_memory_window(q, ltm, conv_id, k_topics, k_turns_per_topic)` → prefill turns
+  6. prefill → messages 직렬화 → `llm.chat(messages, model)` → response
+  7. `ltm.append_turn(...)` (assistant)
+- [ ] `tests/test_orchestrator.py` — mock LLM으로 7단계 통합 검증
+
+### 3-3 (대기)
+- [ ] end-to-end smoke test (실제 OpenRouter 또는 vLLM 1 conversation trace)
+- [ ] 비동기 라운드 처리(merge · importance 재계산) — Phase 4 결과로 우선순위 결정
 
 ---
 

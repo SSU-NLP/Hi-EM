@@ -42,12 +42,15 @@ scripts/
 # Phase 2 진입 (2026-04-25). 신규 모듈:
 #   src/hi_em/ltm.py             ✅ Step 2-2 (LTM read/write API, per-conv JSONL + state.json, §9.1)
 #   src/hi_em/memory_window.py   ✅ Step 2-3 (select_memory_window: cosine top-k topics × recency top-k turns)
+#   src/hi_em/llm.py             ✅ Step 3-1 (OpenAIChatLLM — OpenRouter/vLLM/OpenAI 본가 OpenAI-compatible)
 #   tests/test_ltm.py            ✅ 8 tests
 #   tests/test_memory_window.py  ✅ 8 tests
+#   tests/test_llm.py            ✅ 5 tests (mock OpenAI client)
 # 추가 예정:
-#   src/hi_em/orchestrator.py  — 매 턴 파이프라인 (Phase 3)
+#   src/hi_em/orchestrator.py  — 매 턴 7단계 파이프라인 (Step 3-2)
 #   Step 2-4: importance / merge / adaptive K_window 정책 (Phase 4 결과 후 튜닝)
 # LTM 데이터 위치: data/ltm/<conv_id>.{jsonl,state.json} (gitignored)
+# LLM 백엔드 결정: memory/project_llm_backend.md
 # Phase 2+ 진입 시 추가 예정: orchestrator/LTM/memory_window 등
 
 ## tests/ (Phase 1 현재 실재, 18 tests passing)
