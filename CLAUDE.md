@@ -39,6 +39,13 @@ python scripts/check_step_done.py
   - Colab 전용 코드가 꼭 필요하면 `IS_COLAB` 분기 안에만 작성한다.
 - 경로는 하드코딩 금지. `git rev-parse --show-toplevel` 또는 상대경로 사용.
 
+## Notebook 실행 정책
+
+- **모든 실험 notebook(`notebooks/*.ipynb`)은 `setup_colab.ipynb` 선행 실행을 가정한다.**
+- 실험 notebook 안에 환경 셋업(repo clone, 벤치마크 clone, 패키지 설치, 데이터 다운로드, 모델 다운로드) 로직을 **중복으로 넣지 않는다.** setup_colab이 단일 책임자.
+- 실험 notebook의 첫 셀들은 `setup_colab` 사전 조건이 만족됐는지 **검증만** 하고, 부족하면 명확한 에러 메시지(`'setup_colab.ipynb 먼저 실행'`)로 실패시킨다.
+- 이유: 환경 셋업 로직이 여러 notebook에 흩어지면 동기화 부담 + 혼란. setup_colab만 유지·업데이트하면 모든 실험이 따라옴.
+
 ## 코딩 스타일
 
 - Python 3.10+ (match statement, union types 활용)
