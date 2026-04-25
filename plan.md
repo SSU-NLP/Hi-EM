@@ -115,11 +115,16 @@
 - [x] `tests/test_ltm.py` — 8 tests passing (missing/append-order/topic-filter/state-overwrite/state-turns-independence/conv-isolation/list/lazy-mkdir)
 - [x] 전체 테스트 회귀 26/26 PASS
 
-### 2-3~2-N (대기)
-- [ ] Memory window 구성 로직: 현재 query → 관련 topic 선별 → 해당 topic의 턴을 prefill prefix로 배열 — `src/hi_em/memory_window.py`
-- [ ] Topic importance 계산 (Memory window 승격 우선순위; 사용 빈도·최근성·cross-reference)
+### 2-3. Memory window 구성 (2026-04-25 완료)
+- [x] `src/hi_em/memory_window.py` — `select_memory_window(q, ltm, conv_id, k_topics, k_turns_per_topic)` baseline policy: cosine top-k topics × recency top-k turns/topic, flatten by turn_id
+- [x] `tests/test_memory_window.py` — 8 tests passing (empty/no-topics/single/top-k cosine/recency truncation/k>available/cross-topic order/topic isolation)
+- [x] 전체 테스트 회귀 34/34 PASS
+
+### 2-4 (대기, 우선순위 낮음 — Phase 4 결과로 튜닝)
+- [ ] Topic importance 계산 (사용 빈도·최근성·cross-reference 가중치)
 - [ ] Topic merge 로직 (centroid cosine threshold 기반, LTM 압축)
 - [ ] Memory window 크기 정책 $K_{\text{window}}$ (고정 vs 적응적)
+- 이유: 현재 baseline policy(cosine + recency)가 단순해 보일 수 있으나, **Hi-EM의 진짜 차별화는 Phase 4 downstream QA에서 4-way baseline 비교(Sliding/Full/RAG/Hi-EM) 시 측정**. 미리 importance/merge 튜닝하면 over-engineering. Phase 4 결과로 어떤 정책 조정이 ROI 높은지 판단 후 진행.
 
 ---
 
