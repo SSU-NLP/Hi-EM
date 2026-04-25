@@ -4,6 +4,8 @@ Franklin, Norman, Ranganath, Zacks, Gershman (2020).
 "Structured Event Memory: A Neuro-Symbolic Model of Event Cognition", *Psychological Review*, 127(3), 327–361.
 doi: 10.1037/rev0000177.
 
+> 식 1~24의 **원본 LaTeX 정의 + 페이지 참조 + Hi-EM 처리 매핑**은 별도 reference 파일 [`context/sem-equations.md`](sem-equations.md)에 영구 보존. 본 파일은 **Hi-EM 관점 정리**(계승/폐기 매핑, SEM2 코드 분석, 검증 미해결 지점)에 집중.
+
 참조 자료
 - `SEM-paper.pdf` — 논문 본문 (35쪽)
 - `sem.txt` — `pdftotext -layout` 추출본 (gitignored)
