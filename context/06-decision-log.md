@@ -129,6 +129,36 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 
 ---
 
+### 2026-04-25: 작업 브랜치를 `feat/sem-v2`로 전환 + setup_colab.ipynb default branch 변경
+
+**근거**:
+- `main`은 origin과 동기화된 안정 브랜치로 유지하되, SEM2 기반 옵션 A 구현·평가 작업은 별도 feature branch에서 진행하기로 결정.
+- `feat/sem-v2` 브랜치를 origin에 push (`git push --set-upstream origin feat/sem-v2`) 했고, 앞으로 모든 Phase 1+ 작업은 이 브랜치에서 수행.
+- Colab 측 `/content/Hi-EM`은 `setup_colab.ipynb` cell 3가 default로 main을 clone하던 흐름에서 feat/sem-v2를 clone하도록 변경 필요.
+
+**결정**:
+- 작업 default branch: **`feat/sem-v2`**.
+- `setup_colab.ipynb` cell 3 (project clone) 업데이트:
+  - 신규 clone 시: `git clone --depth=1 -b feat/sem-v2 ...`
+  - 기존 clone(main 등) 존재 시: `git remote set-branches origin '*'` + `fetch` + `checkout feat/sem-v2` + `pull` 으로 브랜치 전환
+  - `DEFAULT_BRANCH` 상수로 분리해 향후 변경 용이.
+- main은 안정 stage 보존용. 의미 있는 milestone 도달 시에만 feat/sem-v2 → main merge.
+
+**영향 범위**:
+- `notebooks/setup_colab.ipynb` cell 3 (gitignored이라 commit 안 됨, 사용자 로컬 + Colab 업로드본만 갱신됨).
+- 기존 Colab 세션은 사용자가 수동으로 다음 셀 실행해 브랜치 전환 (Option 1):
+  ```python
+  subprocess.run(['git', '-C', PROJECT, 'remote', 'set-branches', 'origin', '*'], check=True)
+  subprocess.run(['git', '-C', PROJECT, 'fetch', 'origin'], check=True)
+  subprocess.run(['git', '-C', PROJECT, 'checkout', 'feat/sem-v2'], check=True)
+  ```
+
+**대안 (기각)**:
+- main에 직접 commit (기각: SEM2 기반 작업이 큰 실험성 변경이라 main 안정 stage를 보존하기 위함).
+- 통째로 다시 clone (Option 2; 기각: 기존 cache·세션 상태 유지가 더 효율적).
+
+---
+
 ### 2026-04-25: Notebook ↔ Script 분리 원칙 명문화 + 파일 cascade 검사 규칙 추가
 
 **근거**:
