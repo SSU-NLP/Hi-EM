@@ -24,7 +24,8 @@
 - **2026-04-25 Step 2-2 완료**: `src/hi_em/ltm.py` (LTM API 5 methods) + `tests/test_ltm.py` (8 tests). 전체 테스트 회귀 **26/26 PASS**.
 - **2026-04-25 Step 2-3 완료**: `src/hi_em/memory_window.py` (`select_memory_window`: cosine top-k topics × recency top-k turns/topic) + `tests/test_memory_window.py` (8 tests). 전체 회귀 **34/34 PASS**. Step 2-4 (importance/merge/adaptive K)는 Phase 4 결과로 튜닝 — 현 baseline 정책으로 Phase 3 진입.
 - **2026-04-25 Step 3-1 완료**: `src/hi_em/llm.py` (`OpenAIChatLLM` — OpenRouter / vLLM / OpenAI 본가 모두 OpenAI-compatible) + `tests/test_llm.py` (5 tests, mock OpenAI client). `requirements.txt` openai>=1.30 활성화. 전체 회귀 **39/39 PASS**. 백엔드 결정 근거: `memory/project_llm_backend.md`.
-- **2026-04-25 Step 3-2 완료**: `src/hi_em/orchestrator.py` — `HiEM.handle_turn(user_text)` 7단계 파이프라인. `tests/test_orchestrator.py` (9 tests, FakeEncoder + mock LLM). 전체 회귀 **48/48 PASS**. **A→B→A 토픽 복귀 시 첫 A turn 자동 prefill 검증** — Hi-EM 핵심 가치 작동 확인. 다음 = Step 3-3 (실 API smoke test) 또는 Phase 4 (downstream QA 4-way baseline).
+- **2026-04-25 Step 3-2 완료**: `src/hi_em/orchestrator.py` — `HiEM.handle_turn(user_text)` 7단계 파이프라인. `tests/test_orchestrator.py` (9 tests, FakeEncoder + mock LLM). 전체 회귀 **48/48 PASS**. **A→B→A 토픽 복귀 시 첫 A turn 자동 prefill 검증** — Hi-EM 핵심 가치 작동 확인.
+- **2026-04-25 Step 3-3 완료**: `scripts/smoke_test_orchestrator.py` (실 LLM A→B→A 시나리오) + `.env`/`.env.example` (python-dotenv). vLLM 로컬 + Qwen3-8B로 **PASS** (`outputs/phase-3-smoke.md`). `response_filter` 옵션 추가 — `<think>` 블록 LTM strip (caller=raw, LTM=filtered). 전체 **49/49 PASS**. **Phase 3 종료, Phase 4 (downstream QA 4-way baseline) 진입 대기**.
 - 종합 회고 + 다음 행동 후보 5종: `report.md`
 - 결정 이력 (append-only): `context/06-decision-log.md`
 - HP regime split 발견: persistence(α=1, λ=10, σ₀²=0.01) vs frequent-shift(α=10, λ=1, σ₀²=0.1)
@@ -64,14 +65,14 @@ Hi-EM/
 │   ├── llm.py                    OpenAIChatLLM — OpenRouter / vLLM / OpenAI 본가 (OpenAI-compatible)
 │   └── orchestrator.py           HiEM.handle_turn — 7단계 파이프라인 (embed→segment→snapshot→MW→llm→append)
 │
-├── tests/                    pytest (48 tests passing)
+├── tests/                    pytest (49 tests passing)
 │   ├── test_scrp.py              7 tests
 │   ├── test_topic.py             6 tests
 │   ├── test_sem_core.py          5 tests
 │   ├── test_ltm.py               8 tests
 │   ├── test_memory_window.py     8 tests
 │   ├── test_llm.py               5 tests (mock OpenAI client)
-│   └── test_orchestrator.py      9 tests (FakeEncoder + mock LLM, A→B→A 토픽 복귀 검증 포함)
+│   └── test_orchestrator.py      10 tests (FakeEncoder + mock LLM, 토픽 복귀 + response_filter 검증)
 │
 ├── scripts/                  실행/분석 스크립트
 │   ├── check_step_done.py            Step 완료 gate

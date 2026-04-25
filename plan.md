@@ -148,8 +148,15 @@
   llm_kwargs forwarding / ltm files at root
 - [x] **48/48 PASS**. 토픽 복귀 prefill이 단위 레벨에서 검증됨 → Hi-EM 핵심 가치(같은 토픽 메모리 호출) 작동 확인.
 
-### 3-3 (대기)
-- [ ] end-to-end smoke test (실제 OpenRouter 또는 vLLM 1 conversation trace) — 사용자 API key 필요
+### 3-3. End-to-end smoke test (2026-04-25 완료)
+- [x] `scripts/smoke_test_orchestrator.py` — A→B→A 시나리오 (Kyoto·pasta·Kyoto), `.env` (python-dotenv) 자격증명, `--model` CLI 인자, `<think>` strip 옵션
+- [x] **vLLM 로컬 + Qwen/Qwen3-8B로 PASS** (`outputs/phase-3-smoke.md`)
+  - Turn 1·3 same topic_id=0, Turn 2 boundary 정확
+  - Turn 3 LLM 응답이 Turn 1 정보(가을 시기) 명시 인지 → memory window 작동 확인
+- [x] **`response_filter` 옵션 추가** (`HiEMSegmenter.handle_turn` → `HiEM.__init__`): caller에 raw 응답, LTM에 filtered 저장. Qwen-style `<think>` 블록이 prefill 토큰 낭비 안 됨. test 1개 추가, 전체 49/49 PASS.
+- [x] tokenizers fork 경고 silence (smoke_test 스크립트에서 `TOKENIZERS_PARALLELISM=false`)
+
+### 3-N (대기)
 - [ ] 비동기 라운드 처리(merge · importance 재계산) — Phase 4 결과로 우선순위 결정
 - [ ] 세션 간 segmenter 상태 복원 (현재 미지원: state.json 쓰기만 하고 읽기는 없음 — Phase 5 필요 시 추가)
 

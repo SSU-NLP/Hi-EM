@@ -22,4 +22,5 @@ pytest>=7.0
 # OpenAI-compatible API (OpenRouter / vLLM / OpenAI 본가 모두 동일 SDK)
 # 백엔드 결정 근거: memory/project_llm_backend.md
 openai>=1.30
+python-dotenv>=1.0           # entry point 스크립트에서 .env 로드 (라이브러리 코드는 사용 안 함)
 # anthropic>=0.30  # 직접 사용 안 함 — OpenRouter 경유

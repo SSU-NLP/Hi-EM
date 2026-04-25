@@ -21,6 +21,9 @@ outputs/tmp/
 # LTM 영속 저장 — per-conversation jsonl + state.json (context/01-hi-em-design.md §9.1)
 data/
 
+# 환경변수 (자격증명) — .env.example는 tracked
+.env
+
 # PDF 텍스트 덤프 (작업 보조)
 sem.txt
 

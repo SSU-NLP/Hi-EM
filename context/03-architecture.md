@@ -43,16 +43,18 @@ scripts/
 #   src/hi_em/ltm.py             ✅ Step 2-2 (LTM read/write API, per-conv JSONL + state.json, §9.1)
 #   src/hi_em/memory_window.py   ✅ Step 2-3 (select_memory_window: cosine top-k topics × recency top-k turns)
 #   src/hi_em/llm.py             ✅ Step 3-1 (OpenAIChatLLM — OpenRouter/vLLM/OpenAI 본가 OpenAI-compatible)
-#   src/hi_em/orchestrator.py    ✅ Step 3-2 (HiEM.handle_turn — 7단계 파이프라인)
+#   src/hi_em/orchestrator.py    ✅ Step 3-2 (HiEM.handle_turn — 7단계 파이프라인 + response_filter 옵션)
 #   tests/test_ltm.py            ✅ 8 tests
 #   tests/test_memory_window.py  ✅ 8 tests
 #   tests/test_llm.py            ✅ 5 tests (mock OpenAI client)
-#   tests/test_orchestrator.py   ✅ 9 tests (FakeEncoder + mock LLM, 토픽 복귀 prefill 검증 포함)
-# 추가 예정:
-#   Step 3-3: end-to-end smoke test (실제 OpenRouter / vLLM 1 conversation trace)
-#   Step 2-4: importance / merge / adaptive K_window 정책 (Phase 4 결과 후 튜닝)
+#   tests/test_orchestrator.py   ✅ 10 tests (FakeEncoder + mock LLM, 토픽 복귀 + response_filter 검증)
+#   scripts/smoke_test_orchestrator.py ✅ Step 3-3 (실 LLM A→B→A; vLLM Qwen3-8B PASS, outputs/phase-3-smoke.md)
+#   .env.example                 ✅ 협업자 안내 (.env는 gitignored, python-dotenv)
+# Phase 4+에서 추가 예정:
+#   Step 4-N: scripts/run_longmemeval.py, scripts/run_locomo.py (4-way baseline)
+#   Step 2-4: importance / merge / adaptive K_window (Phase 4 결과 후 튜닝)
 # LTM 데이터 위치: data/ltm/<conv_id>.{jsonl,state.json} (gitignored)
-# LLM 백엔드 결정: memory/project_llm_backend.md
+# LLM 백엔드: memory/project_llm_backend.md (OpenAI-compatible, OpenRouter/vLLM)
 # Phase 2+ 진입 시 추가 예정: orchestrator/LTM/memory_window 등
 
 ## tests/ (Phase 1 현재 실재, 18 tests passing)

@@ -412,3 +412,37 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 - streaming 필요 시 → `chat_stream(...)` 추가.
 - retry/timeout/rate-limit 처리 필요 시 → wrapper 추가.
 - 다른 backend (직접 Anthropic, Google) 필요 시 → 별도 adapter, 단 OpenRouter로 가능한지 먼저 확인.
+
+---
+
+### 2026-04-25: Step 3-3 smoke test PASS + response_filter (think strip) 옵션 추가
+
+**근거**:
+- vLLM 로컬 + Qwen/Qwen3-8B로 A→B→A 시나리오 실행. 결과: Turn 1·3 same `topic_id=0`, Turn 2 boundary 정확, Turn 3 LLM 응답이 Turn 1 정보(가을 시기) 명시 인지 → **memory window가 정확히 Turn 1을 prefill로 승격, LLM이 사용**.
+- Qwen3-8B는 reasoning model — 응답에 `<think>...</think>` 블록 포함. 그대로 LTM에 저장하면 **다음 turn prefill 토큰 낭비**.
+- 환경변수 관리: `.env` (gitignored) + `.env.example` (tracked, 협업자 안내) + `python-dotenv`. 라이브러리 코드 (`hi_em/*.py`)는 환경 변경 안 함, entry point 스크립트에서만 `load_dotenv()`.
+
+**결정**:
+- `HiEM.__init__`에 `response_filter: Callable[[str], str] | None` 옵션 추가:
+  - **caller에 raw 응답 반환** (사용자가 thinking 보고 싶다면 그대로)
+  - **LTM에는 filtered 응답 저장** (다음 prefill 토큰 절약)
+- smoke_test 스크립트에 `strip_think_tags` helper + `--no-strip-think` 플래그.
+- `TOKENIZERS_PARALLELISM=false` setdefault (HF tokenizers fork 경고 silence).
+- 환경변수: `.env` 파일 + python-dotenv, entry point에서만 load.
+
+**영향 범위**:
+- `src/hi_em/orchestrator.py` (response_filter 인자)
+- `tests/test_orchestrator.py` (test 1개 추가, 49/49)
+- `scripts/smoke_test_orchestrator.py` (신규)
+- `outputs/phase-3-smoke.md` (실 LLM trace)
+- `.env.example` (신규), `.gitignore` (.env 추가), `requirements.txt` (python-dotenv 추가)
+- `plan.md` Step 3-3 [x], `handoff.md`, `README.md`, `context/03-architecture.md`
+
+**대안 및 기각 사유**:
+- `strip_think: bool` 단순 flag (기각: thinking 형식이 model마다 다름 — `<think>` / `<thinking>` / `<reasoning>` 등. callable 주입이 더 일반적).
+- 라이브러리에서 자동 think strip (기각: 라이브러리는 기본적으로 데이터 변형 안 하는 게 안전. 명시적 opt-in).
+- `python-dotenv` 라이브러리 코드에서 자동 load (기각: 라이브러리는 환경 변경 부작용 없어야. entry point 책임).
+- `.env`를 git tracked (기각: API key 유출 위험).
+- direnv 사용 (기각: 추가 도구 학습 비용, python-dotenv가 더 보편적).
+
+**Phase 4 진입 자격 충족** — 모든 단위 테스트 통과 + 실 LLM end-to-end trace 검증.

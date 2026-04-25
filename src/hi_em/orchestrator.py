@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -39,6 +39,7 @@ class HiEM:
         k_topics: int = 3,
         k_turns_per_topic: int = 5,
         system_prompt: str | None = None,
+        response_filter: Callable[[str], str] | None = None,
         **llm_kwargs: Any,
     ) -> None:
         self.conv_id = conv_id
@@ -52,6 +53,7 @@ class HiEM:
         self._k_topics = k_topics
         self._k_turns_per_topic = k_turns_per_topic
         self._system_prompt = system_prompt
+        self._response_filter = response_filter
         self._llm_kwargs = llm_kwargs
         self._next_turn_id = 0
 
@@ -89,8 +91,11 @@ class HiEM:
         messages.extend({"role": t["role"], "content": t["text"]} for t in prefill)
         messages.append({"role": "user", "content": user_text})
 
-        # 6. LLM call
+        # 6. LLM call (raw response returned to caller; filtered version goes to LTM)
         response = self._llm.chat(messages, model=self._model, **self._llm_kwargs)
+        stored_response = (
+            self._response_filter(response) if self._response_filter else response
+        )
 
         # 7. persist user + assistant turns
         user_turn_id = self._next_turn_id
@@ -102,7 +107,7 @@ class HiEM:
         assistant_turn_id = self._next_turn_id
         self._ltm.append_turn(
             self.conv_id,
-            self._make_turn(assistant_turn_id, "assistant", response, None, topic_id, False),
+            self._make_turn(assistant_turn_id, "assistant", stored_response, None, topic_id, False),
         )
         self._next_turn_id += 1
 

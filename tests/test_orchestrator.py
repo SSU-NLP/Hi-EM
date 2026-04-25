@@ -175,6 +175,28 @@ def test_llm_kwargs_forwarded(tmp_path: Path) -> None:
     assert kwargs["max_tokens"] == 64
 
 
+def test_response_filter_strips_before_storage_but_returns_raw(tmp_path: Path) -> None:
+    """response_filter applies to LTM-stored text only; caller still gets raw response."""
+    enc = FakeEncoder()
+    enc.register("hi", [1.0, 0.0, 0.0, 0.0])
+    llm = _llm()
+    llm.chat.return_value = "<think>internal reasoning</think>real answer"
+
+    def strip_think(s: str) -> str:
+        import re
+        return re.sub(r"<think>.*?</think>\s*", "", s, flags=re.DOTALL).strip()
+
+    hi = _hi_em(tmp_path, enc, llm, response_filter=strip_think)
+    raw = hi.handle_turn("hi")
+
+    # caller sees raw response (so they can display thinking if they want)
+    assert raw == "<think>internal reasoning</think>real answer"
+
+    # LTM stores filtered version (so next-turn prefill stays compact)
+    assistant_turn = [t for t in hi._ltm.load_turns("c1") if t["role"] == "assistant"][0]
+    assert assistant_turn["text"] == "real answer"
+
+
 def test_ltm_files_created_at_root(tmp_path: Path) -> None:
     enc = FakeEncoder()
     enc.register("hi", [1.0, 0.0, 0.0, 0.0])
