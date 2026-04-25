@@ -30,6 +30,28 @@ python scripts/check_step_done.py
 
 - self-audit 건너뛰고 곧장 `check_step_done.py`만 돌려 통과시키기 금지. 스크립트 통과는 **필요조건이지 충분조건이 아니다.**
 
+## 파일 수정 시 최신성 cascade 검사 (필수)
+
+Claude Code가 파일 1개를 수정·생성·삭제할 때마다 **다른 파일에 영향 가능성이 있는지 즉시 검사**한다. 영향받을 가능성이 있는 파일은 **사용자에게 한꺼번에 제시하고 같이 업데이트할지 묻는다**.
+
+확인 대상 (최소):
+- `README.md` — 디렉토리 구조, 외부 레포, gitignored 목록, 현재 상태
+- `plan.md` — 체크박스, Phase 진행률, 결과 수치
+- `handoff.md` — 현재 상태, 다음 할 일, 마지막 업데이트 날짜
+- `context/04-benchmarks.md` — 데이터 / 평가 축 변경 시
+- `context/03-architecture.md` — 모듈·파일 추가/삭제·이름 변경 시
+- `context/06-decision-log.md` — 설계 결정 변경 시 (append-only)
+- `context/sem-equations.md` — SEM 식 관련 작업 시
+- `report.md` — Phase 결과·미해결 사항 변경 시
+- `.gitignore` — 새 파일 패턴 추가/제거 시
+
+검사 방법:
+- 변경 키워드(파일명/모듈명/Step 번호/Phase 결과)를 `grep -rn` 으로 다른 docs에서 검색
+- 발견된 파일 + 무엇이 stale해 보이는지 사용자에게 보고
+- 사용자 응답 (전체 / 일부 / skip) 받은 후 일괄 수정
+
+목적: docs 간 불일치 누적 방지. 한 파일만 고치고 다른 곳 잊으면 다음 세션 / 협업자가 잘못된 정보로 작업.
+
 ## 환경 분리
 
 - `setup_colab.ipynb`는 항상 `.gitignore` 유지. git에 커밋하지 않는다.
@@ -45,6 +67,18 @@ python scripts/check_step_done.py
 - 실험 notebook 안에 환경 셋업(repo clone, 벤치마크 clone, 패키지 설치, 데이터 다운로드, 모델 다운로드) 로직을 **중복으로 넣지 않는다.** setup_colab이 단일 책임자.
 - 실험 notebook의 첫 셀들은 `setup_colab` 사전 조건이 만족됐는지 **검증만** 하고, 부족하면 명확한 에러 메시지(`'setup_colab.ipynb 먼저 실행'`)로 실패시킨다.
 - 이유: 환경 셋업 로직이 여러 notebook에 흩어지면 동기화 부담 + 혼란. setup_colab만 유지·업데이트하면 모든 실험이 따라옴.
+
+### Notebook ↔ Script 분리 원칙 (portability)
+
+- **모든 실험 로직은 `scripts/*.py`에 둔다.** notebook은 그 스크립트를 `subprocess.run(['python', 'scripts/X.py', ...])`로 호출하는 **얇은 wrapper**일 뿐이다.
+- `notebooks/` 디렉토리 통째로 삭제해도 프로젝트가 그대로 동작해야 한다 — 로컬 GPU·다른 환경 전환 시 `python scripts/X.py` 직접 실행으로 모든 실험 가능.
+- notebook이 추가로 갖는 가치: Colab kernel 연동, IPython 출력 렌더링(`display(Markdown(...))`), 셀 단위 인터랙티브 디버깅. 이 가치 외엔 `.py` 스크립트로 옮긴다.
+- `setup_colab.ipynb`만 예외 — 환경 셋업은 본질적으로 노트북 형식이 자연스러워 그대로 둠 + `.gitignore`로 제외.
+
+### Tracking 정책
+
+- `setup_colab.ipynb`: **gitignored** (Colab 전용 환경 셋업, 일회성 도구)
+- `notebooks/*.ipynb` 그 외 모두: **git tracked** (연구 기록, 협업자 공유). 단 위 portability 원칙 위반 시 무효 → script로 분리.
 
 ## 코딩 스타일
 

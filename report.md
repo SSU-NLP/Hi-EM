@@ -379,19 +379,24 @@ Hi-EM/
 ├── context/              설계 문서 (검증된 결정)
 ├── src/hi_em/            Phase 1-1 구현
 ├── tests/                pytest 테스트
-├── scripts/              실험·분석 스크립트
-├── notebooks/            Colab 실험 notebook (setup_colab 선행 가정)
+├── scripts/              실험·분석 스크립트 (모든 실험 로직의 단일 소스)
+├── notebooks/            얇은 wrapper — Colab 인터랙티브 실행 편의용
+│   ├── setup_colab.ipynb     Colab 환경 셋업 (gitignored)
+│   └── phase-1-tiage.ipynb   TIAGE 평가 + Phase 1-6 종합 Gate
 ├── outputs/              실험 결과 .md / .json
 ├── benchmarks/*          외부 benchmark repo (gitignored, 각자 clone)
-├── SEM/                  SEM2 참조 (nicktfranklin/SEM2)
-└── setup_colab.ipynb     Colab 환경 셋업 (gitignored)
+└── SEM/                  SEM2 참조 (nicktfranklin/SEM2)
 ```
 
+**Portability 원칙**: `notebooks/` 디렉토리 통째로 삭제해도 프로젝트가 그대로 동작한다. 모든 실험 로직은 `scripts/*.py`에 있고 notebook은 `subprocess.run(['python', 'scripts/X.py'])` 호출하는 wrapper. 로컬 GPU 환경 전환 시 notebooks/ 무시 + 직접 `python scripts/X.py` 실행으로 모든 실험 가능.
+
 ### 9.3 협업 정책 (CLAUDE.md 영구 규칙)
-- **Claude는 git add/commit/push 직접 실행 금지** — 명령어만 제시, 사용자가 실행
-- **모든 실험 notebook은 setup_colab.ipynb 선행 가정** — 환경 셋업 로직 중복 금지
+- **Claude는 git add/commit/push 직접 실행 금지** — 명령어만 제시, 사용자가 실행 (예외: 사용자 explicit override 시)
+- **모든 실험 notebook은 setup_colab.ipynb 선행 가정 + 얇은 wrapper만** — 환경 셋업 로직 중복 금지, 실험 로직은 scripts/*.py로 분리
 - **Step 완료 직전 3-angle self-audit** (구조/동작/설계 각도 최소 3 Q&A) → 그 다음 `python scripts/check_step_done.py` exit 0 받아야 [x]
 - **모든 설계 결정은 `context/06-decision-log.md`에 append-only 기록** (번복도 새 entry로)
+- **파일 수정 시 cascade 검사** — 다른 docs(README, plan, handoff 등)에 영향 가능성 있으면 사용자에게 일괄 업데이트 여부 확인
+- **`.ipynb` tracking**: `setup_colab.ipynb`만 gitignored. 그 외 `notebooks/*.ipynb`는 git tracked (연구 기록, 협업자 공유). 단 portability 원칙 위반 시 무효 → script로 분리
 
 ### 9.4 Phase 진행 추적
 - 검증 게이트: `scripts/check_step_done.py` (Step별 산출물 존재·내용 길이·키워드 검증)

@@ -69,8 +69,13 @@ Hi-EM/
 │   ├── run_topiocqa_contextualized.py Context window K∈{0..all}
 │   └── run_tiage_segmentation.py     Phase 1-5 main 측정
 │
-├── notebooks/                Colab 실험 notebook (setup_colab 선행 가정)
+├── notebooks/                얇은 wrapper — Colab 인터랙티브 실행 편의용 (선택적)
 │   └── phase-1-tiage.ipynb       TIAGE 평가 + Phase 1-6 종합 Gate
+│   └── setup_colab.ipynb         Colab 환경 셋업 (gitignored)
+│
+│   * Portability 원칙: notebooks/ 통째로 삭제해도 동작.
+│     모든 실험 로직은 scripts/*.py에 있음 → 로컬 환경에선
+│     `python scripts/X.py` 직접 실행으로 진행 가능.
 │
 ├── templates/                반복 사용 템플릿
 │   ├── module-template.py
@@ -93,7 +98,7 @@ Hi-EM/
 ### gitignored (각자 준비)
 
 ```
-notebooks/setup_colab.ipynb   Colab/로컬 공용 환경 세팅 노트북 (위치 변경: notebooks/ 안)
+notebooks/setup_colab.ipynb   Colab 환경 셋업 노트북 (notebooks/ 안의 유일한 gitignored 파일)
 sem.txt                       SEM PDF → pdftotext 덤프 (작업 보조)
 benchmarks/locomo/            아래 "외부 레포" 참조
 benchmarks/topiocqa/
