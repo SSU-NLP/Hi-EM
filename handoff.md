@@ -33,45 +33,51 @@
 
 ## 현재 상태
 
-**마지막 업데이트**: 2026-04-24
-**현재 Phase**: Phase 0 — 자료 분석 및 설계 확정
-**진행률**: Phase 0 종료 → Phase 1 (2/4 Step 완료)
+**마지막 업데이트**: 2026-04-25
+**현재 Phase**: Phase 1 — Topic 경계 감지 코어 + 평가 (1-1~1-5 완료, 1-6 종합 Gate **FAIL** → 사용자 결정 대기)
+**진행률**: Phase 0 완료 + Phase 1 측정 완료, **종합 Gate FAIL로 Phase 2 진입 보류**
 
 ### 완료된 것
 - 프로젝트 디렉토리 구조 생성
-- 벤치마크 레포 3개 clone (`benchmarks/locomo/`, `benchmarks/topiocqa/`, `benchmarks/LongMemEval/`)
-- SEM2 레포 clone (`SEM/` ← `nicktfranklin/SEM2`, 과거 v1에서 교체)
-- 설계 문서 초안 작성 (`context/`)
-- **Step 0-1 완료**: SEM 논문 전 35페이지 정독(pdftotext 산문 + 수식 10페이지 PNG 직독). `SEM/sem/sem.py` 실제 코드 검증(`_calculate_unnormed_sCRP`, `run()` verbatim pseudocode). `context/00-sem-paper.md` 재작성 — 식 1~24 정확한 정의, Hi-EM 계승/대체/폐기 매핑, 검증 미해결 지점 3건 명시 (11940자).
-- **Step 0-2 완료**: LoCoMo(10 conv × 27 sess × 22 turns, topic annotation 없음), TopiOCQA dev(2514 turns, 205 conv, Wiki Topic ground truth, topic shift 3.3/conv), LongMemEval oracle(500 Q, 6 types, 1206자 chat) 실데이터 분석. 옵션 A~F × 3 벤치마크 증거 매트릭스 → `outputs/benchmark-analysis.md` (8239자).
-- **Step 0-3 완료 (Phase 0 종료)**: 사건 모델 **옵션 A (Centroid + diag variance)** 확정 — $P(s_n|e_n=k)=\mathcal{N}(\mu_k,\mathrm{diag}(\sigma_k^2))$. **Markov 확장 철회** (double counting). B~E는 Phase 1/2/4로 위임. `01-hi-em-design.md`, `02-math-model.md`, `06-decision-log.md` 확정본 반영.
-- **Phase 1-1, 1-2 완료**: `src/hi_em/{embedding,topic,scrp,sem_core}.py` 구현 + `tests/{test_scrp,test_topic,test_sem_core}.py` 18 tests passing (0.89s). 옵션 A의 centroid-independence 근거로 SEM2 restart-vs-repeat 분기와 `lmda/2` halving은 미포팅.
-- **Phase 1-3, 1-4 완료**: TopiOCQA dev 실측. Hi-EM F1=0.471 (cosine 0.467), overhead ~20 ms/turn. **Gate PASS (marginal)**. 초기 HP(α=1,λ=10)은 FAIL이라 3 iteration 탐색(`scripts/run_topiocqa_{sweep,variants,multisignal}.py`) 후 SEM2 defaults(α=10,λ=1,σ₀²=0.1)로 PASS 도달. Hi-EM HP는 regime-split(persistence vs frequent-shift)로 운용.
+- 벤치마크 레포 4종 clone (`benchmarks/{locomo, topiocqa, LongMemEval, tiage}/` — 모두 gitignored)
+- SEM2 레포 (`SEM/` ← `nicktfranklin/SEM2`, 과거 v1에서 교체)
+- 설계 문서 (`context/*.md`)
+- **Step 0-1 완료**: SEM 논문 전 35페이지 정독, SEM2 코드 검증, `context/00-sem-paper.md` (Hi-EM 관점 정리) + `context/sem-equations.md` (식 1~24 원본 LaTeX reference) 작성.
+- **Step 0-2 완료**: 4 벤치마크 실데이터 분석 → `outputs/benchmark-analysis.md`. **평가 축 분리 결정** — 토픽 경계 감지(TopiOCQA + TIAGE) vs downstream QA(LongMemEval, LoCoMo).
+- **Step 0-3 완료**: 사건 모델 **옵션 A** 확정, Markov 확장 철회.
+- **Phase 1-1, 1-2 완료**: `src/hi_em/{embedding,topic,scrp,sem_core}.py` 구현 + `tests/` 18 tests passing.
+- **Phase 1-3, 1-4 완료**: TopiOCQA dev. **Gate PASS (marginal)** — Hi-EM F1=0.471 vs cosine 0.467 (HP α=10, λ=1, σ₀²=0.1, SEM2 defaults). 7-iteration 탐색으로 bge intrinsic ceiling ~0.47 확인.
+- **Phase 1-5 완료**: TIAGE test. **Gate FAIL** — Hi-EM persistence F1=0.317 / freq-shift F1=0.377, **둘 다 cosine baseline 0.421에 패배**. Latency 0.73 ms/turn은 PASS.
+- **Phase 1-6 종합 Gate: FAIL** — TopiOCQA PASS + TIAGE FAIL → Phase 2 진입 자격 미충족.
+- **Phase 2.5 폐기**: LongMemEval session=topic 가정이 잘못된 설계였음 (한 세션 내 subtopic 공존 정상). LongMemEval은 Phase 4 downstream QA용으로 재배치.
+- **종합 보고서 작성**: `report.md` (Phase 0 시작 ~ Phase 1-5 시점, 12 섹션 + 부록).
 
 ### 미완료
-- Phase 2 (LTM + Memory window)
-- Phase 1-5 (TIAGE topic-shift F1 측정) + 1-6 (TopiOCQA·TIAGE 종합 Gate)
-- Phase 2 이후
+- **Phase 1-6 FAIL 후 결정 분기** (5 후보) — `report.md §12` 참조
+- Phase 2 (LTM + Memory window) — 1-6 결정 후 진입
+- Phase 3 (오케스트레이션)
+- Phase 4 (4-baseline QA accuracy: Sliding window / Full context / RAG / Hi-EM)
+- Phase 5 (논문 실험)
 
 ---
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### 즉시 시작: Phase 1 Step 1-3 — TopiOCQA dev 측정
+### 즉시 결정 필요: Phase 1-6 Gate FAIL 후 진로 (사용자 결정 대기)
 
-1. `scripts/run_topiocqa_segmentation.py` 작성
-   - 입력: `benchmarks/topiocqa/downloads/data/topiocqa_dataset/dev.json` (205 conv, 2514 turns)
-   - 각 턴의 `Question` 필드를 `QueryEncoder.encode`로 임베딩 → `HiEMSegmenter.assign` → `(k, is_boundary)` 수집
-   - Ground truth: `Topic` 필드 변화를 shift로 간주. `Topic_section` 변화는 noise (Hi-EM이 해당 경계에서 분할 시 FP)
-2. 3 baseline 비교:
-   - (a) all-boundary (lower bound)
-   - (b) cosine threshold (dev에서 sweep)
-   - (c) Hi-EM sCRP + 옵션 A
-3. Latency 측정: 턴당 Hi-EM 추가 시간 (brief.md "+10~20%" 제약)
-4. 결과 → `outputs/phase-1-topiocqa.md`
-5. 한계 명시: TopiOCQA 평균 12턴 → variance 학습 거의 안 됨 (centroid 부분만 실측)
+`report.md §7, §11, §12`를 읽고 5 후보 중 선택:
 
-### Step 1-4 — Gate 판정
+1. **TIAGE HP sweep** (5분, TopiOCQA처럼 grid 100 configs) — HP만으로 PASS 가능한지 확인
+2. **Hi-EM likelihood 교체** (옵션 A 변형) — `cosine(s, last_turn_in_topic)`로 likelihood 형식 변경, sCRP prior 유지
+3. **Phase 2 reframing 진입** — "boundary F1 ≠ Hi-EM 핵심 가치"라 정직 기록 후 LTM/Memory window 설계 → Phase 4 downstream QA로 진짜 가치 검증
+4. **옵션 D escalation** (multi-signal 재설계) — plan.md FAIL 정공법, TopiOCQA에서 효과 약함 전례 있음
+5. **Clustering 품질 추가 측정** (V-measure/ARI) — boundary F1 외 segmentation 가치 측면 검증
+
+**핵심 메타 질문** (`report.md §11`):
+- Topic boundary F1 우위가 Hi-EM의 정의된 contribution인가? Yes → 1, 2, 4 / No → 3
+- Phase 4 downstream QA에서 Hi-EM이 RAG를 이긴다고 합리적으로 기대 가능한가?
+
+### Step 1-4 — Gate 판정 (Phase 1-3 후속, 완료됨)
 
 - **PASS**: `Hi-EM F1 > cosine baseline F1` AND `Hi-EM F1 > 0.4` AND `latency +20% 이내` → Phase 2 진입
 - **FAIL**: `06-decision-log.md` append → 옵션 A "번복됨" 마킹 → 옵션 D로 재시작

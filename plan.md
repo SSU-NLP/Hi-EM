@@ -68,19 +68,31 @@
 
 **근거**: LongMemEval는 turn-level topic label이 없어 topic 경계 감지 평가엔 부적합 (04-benchmarks.md 참조). TopiOCQA는 factoid QA로 편향. **PersonaChat 기반 TIAGE**를 추가 평가해 Hi-EM segmentation의 chit-chat 대화에서의 성능을 독립 벤치마크로 검증한다.
 
-- [ ] `scripts/run_tiage_segmentation.py` — test 100 conv / 1564 turns 예측
-- [ ] **Metric: topic shift F1** — label `'1'` = shift, `'0'` = continue (인간 annotated, Cohen's Kappa 0.48)
-- [ ] **Baseline 3종 비교**: (a) all-boundary / (b) cosine threshold sweep / (c) Hi-EM
-- [ ] **HP 두 regime 병행**: persistence (α=1, λ=10, σ₀²=0.01) vs freq-shift (α=10, λ=1, σ₀²=0.1)
-- [ ] 결과 기록: `outputs/phase-1-tiage.md`
-- [ ] **Gate 조건**: TopiOCQA와 동일 (baseline 대비 우위 AND F1 > 0.4 AND latency +20% 이내)
+- [x] `scripts/run_tiage_segmentation.py` — test 100 conv / 1564 turns 예측
+- [x] **Metric: topic shift F1** — label `'1'` = shift, `'0'` = continue (인간 annotated, Cohen's Kappa 0.48)
+- [x] **Baseline 3종 비교**: (a) all-boundary / (b) cosine threshold sweep / (c) Hi-EM
+- [x] **HP 두 regime 병행**: persistence (α=1, λ=10, σ₀²=0.01) vs freq-shift (α=10, λ=1, σ₀²=0.1)
+- [x] 결과 기록: `outputs/phase-1-tiage.md`
+- [x] **Gate 조건**: TopiOCQA와 동일 (baseline 대비 우위 AND F1 > 0.4 AND latency +20% 이내)
+
+**실측 결과 (2026-04-25, Colab A100)**:
+- all-boundary F1=0.354 / **cosine(θ=0.525) F1=0.421** / Hi-EM persistence F1=**0.317** / Hi-EM freq-shift F1=**0.377**
+- Latency: 0.73 ms/turn (overhead PASS)
+- **Gate FAIL**: Hi-EM 두 HP 모두 cosine baseline에 명확히 패배 (Hi-EM F1 < 0.421, F1 < 0.4)
 
 ### 1-6. Phase 1 종합 Gate
 
-- [ ] TopiOCQA gate: 1-4 기준 PASS/FAIL
-- [ ] TIAGE gate: 1-5 기준 PASS/FAIL
-- [ ] **두 gate 모두 PASS** → Phase 2 진입
-- [ ] 둘 중 하나라도 FAIL → `06-decision-log.md` append, 옵션 A 재검토 or regime-split HP 확장
+- [x] TopiOCQA gate: 1-4 기준 PASS (marginal, F1=0.471 vs cosine 0.467)
+- [x] TIAGE gate: 1-5 기준 **FAIL** (Hi-EM ≤ cosine, F1 < 0.4)
+- [ ] **두 gate 모두 PASS** → Phase 2 진입 — **불충족**
+- [x] 둘 중 하나라도 FAIL → `06-decision-log.md` append, 옵션 A 재검토 or regime-split HP 확장 — **현재 결정 대기 (report.md §7 옵션 A~E 참조)**
+
+**종합 Gate: FAIL.** 다음 행동은 사용자 결정 대기. 후보 5종(`report.md §12`):
+1. TIAGE HP sweep (TopiOCQA 패턴 준용)
+2. Hi-EM likelihood를 cosine-vs-last-turn으로 교체 (옵션 A 변형)
+3. Phase 2 reframing 진입 — boundary F1 ≠ Hi-EM 핵심 가치, downstream QA로 정직 검증
+4. 옵션 D escalation (multi-signal 재설계)
+5. Hi-EM clustering 품질 추가 측정 (V-measure / ARI)
 
 ---
 

@@ -9,66 +9,100 @@
 
 ---
 
-## 현재 상태
+## 현재 상태 (2026-04-25)
 
-**Phase 0 완료** (2026-04-23). 다음은 Phase 1 (코어 모듈 구현) — 사용자 승인 후 진행.
+**Phase 1 측정 완료, 종합 Gate FAIL — 결정 분기 대기.**
 
-- 사건 모델 확정: **옵션 A (Centroid + diag variance)** — $P(\mathbf{s}_n \mid e_n=k) = \mathcal{N}(\mu_k, \mathrm{diag}(\sigma_k^2))$
-- Prior: sticky-CRP, $\alpha=1.0$, $\lambda=10.0$
-- Scene embedding: `bge-base-en-v1.5` (L2 normalize, 768dim)
-- 세부 결정 이력: `context/06-decision-log.md`
-- Phase 진행: `plan.md`, 다음 할 일: `handoff.md`
+- **Phase 0 완료**: 자료 분석, 사건 모델 옵션 A 확정 ($P(\mathbf{s}_n \mid e_n=k) = \mathcal{N}(\mu_k, \mathrm{diag}(\sigma_k^2))$)
+- **Phase 1-1, 1-2 완료**: `src/hi_em/` 구현 + 18 unit tests passing
+- **Phase 1-3, 1-4 (TopiOCQA)**: Hi-EM F1=0.471 vs cosine 0.467 → **Gate PASS (marginal)**
+- **Phase 1-5 (TIAGE)**: Hi-EM 두 HP 모두 cosine 0.421에 패배 → **Gate FAIL**
+- **Phase 1-6 종합 Gate**: TopiOCQA PASS + TIAGE FAIL → **Phase 2 진입 보류**
+- 종합 회고 + 다음 행동 후보 5종: `report.md`
+- 결정 이력 (append-only): `context/06-decision-log.md`
+- HP regime split 발견: persistence(α=1, λ=10, σ₀²=0.01) vs frequent-shift(α=10, λ=1, σ₀²=0.1)
 
 ---
 
-## 레포 구조
+## 레포 구조 (현 시점)
 
 ```
 Hi-EM/
 ├── brief.md                  프로젝트 한 줄 요약, 목표, 제약, 벤치마크 우선순위
 ├── plan.md                   구현 로드맵 (Phase 0 → 5, 체크박스)
 ├── handoff.md                세션 진입점 — 지금 무엇을 해야 하는지
-├── CLAUDE.md                 Claude Code 작업 규칙 (환경 분리, 커밋, Step 완료 프로토콜)
+├── CLAUDE.md                 Claude Code 작업 규칙 (환경 분리, 커밋, Notebook 정책, Step 완료 프로토콜)
 ├── README.md                 이 파일
+├── report.md                 Phase 0~1-5 종합 회고 + 다음 결정 분기
 ├── requirements.txt          로컬/git 환경 Python 의존성 (Colab과 분리 관리)
 ├── .gitignore
 │
 ├── context/                  확립된 설계 문서 (세션 시작 시 읽기)
-│   ├── 00-sem-paper.md           SEM 논문(Franklin 2020) + SEM2 정리, 식 1~24 검증본
+│   ├── 00-sem-paper.md           SEM 논문 정리 (Hi-EM 관점: 계승/대체/폐기 매핑, SEM2 코드 분석)
+│   ├── sem-equations.md          SEM 식 1~24 원본 LaTeX reference + 페이지 + 변수 의미
 │   ├── 01-hi-em-design.md        Hi-EM 설계 확정본 + Phase 1/2/4로 위임된 결정
-│   ├── 02-math-model.md          수식 확정본 + Phase 4 튜닝 대상 하이퍼파라미터
+│   ├── 02-math-model.md          수식 확정본 + HP regime split 표
 │   ├── 03-architecture.md        모듈 구조, 파일 레이아웃
-│   ├── 04-benchmarks.md          벤치마크 메타 정보
+│   ├── 04-benchmarks.md          벤치마크 메타 (평가 축: 토픽 경계 vs downstream QA)
 │   ├── 05-open-questions.md      열려있는 질문들
 │   └── 06-decision-log.md        설계 결정 이력 (append-only)
 │
-├── templates/                반복 사용 템플릿
-│   ├── module-template.py        새 모듈 작성 시 시작점
-│   └── experiment-log.md         실험 시작 시 복사해서 사용
+├── src/hi_em/                코어 구현 (Phase 1-1 완료)
+│   ├── embedding.py              bge-base-en-v1.5 wrapper (L2 norm, 768dim)
+│   ├── topic.py                  centroid + diag σ² + Welford 온라인 업데이트
+│   ├── scrp.py                   sticky_crp_unnormed (SEM 식 1)
+│   └── sem_core.py               HiEMSegmenter.assign() — online MAP 루프
+│
+├── tests/                    pytest (Phase 1-2 완료, 18 tests passing)
+│   ├── test_scrp.py              7 tests
+│   ├── test_topic.py             6 tests
+│   └── test_sem_core.py          5 tests
 │
 ├── scripts/                  실행/분석 스크립트
-│   └── check_step_done.py        Step 완료 gate (plan.md 체크박스 [x] 전 필수)
+│   ├── check_step_done.py            Step 완료 gate
+│   ├── run_topiocqa_segmentation.py  Phase 1-3 main 측정
+│   ├── run_topiocqa_sweep.py         HP grid sweep (108 configs)
+│   ├── run_topiocqa_variants.py      구조 변형 5종
+│   ├── run_topiocqa_multisignal.py   Multi-signal 564 configs
+│   ├── run_topiocqa_anchors.py       Anchor 4종
+│   ├── run_topiocqa_bigencoder.py    bge-large 비교
+│   ├── run_topiocqa_contextualized.py Context window K∈{0..all}
+│   └── run_tiage_segmentation.py     Phase 1-5 main 측정
 │
-├── outputs/                  실험 결과, 분석 문서
-│   └── benchmark-analysis.md     Phase 0 Step 0-2 벤치마크 분석 (LoCoMo / TopiOCQA / LongMemEval)
+├── notebooks/                Colab 실험 notebook (setup_colab 선행 가정)
+│   └── phase-1-tiage.ipynb       TIAGE 평가 + Phase 1-6 종합 Gate
 │
-├── SEM-paper.pdf             Franklin et al. 2020 원본 논문 (Psychological Review)
+├── templates/                반복 사용 템플릿
+│   ├── module-template.py
+│   └── experiment-log.md
 │
-└── (Phase 1 이후 추가)
-    ├── src/hi_em/                코어 구현
-    └── tests/                    pytest 테스트
+├── outputs/                  실험 결과
+│   ├── benchmark-analysis.md             Phase 0-2 4 벤치마크 분석
+│   ├── phase-1-topiocqa.md               Phase 1-3/1-4 결과 + 7-iter 탐색 이력
+│   ├── phase-1-topiocqa-sweep.json       (탐색 결과 raw)
+│   ├── phase-1-topiocqa-variants.json
+│   ├── phase-1-topiocqa-multisignal.json
+│   ├── phase-1-topiocqa-anchors.json
+│   ├── phase-1-topiocqa-encoder.json
+│   ├── phase-1-topiocqa-contextualized.json
+│   └── phase-1-tiage.md                  Phase 1-5 결과
+│
+└── SEM-paper.pdf             Franklin et al. 2020 원본 논문 (Psychological Review)
 ```
 
 ### gitignored (각자 준비)
 
 ```
-setup_colab.ipynb             Colab/로컬 공용 환경 세팅 노트북 (레포에 없음)
+notebooks/setup_colab.ipynb   Colab/로컬 공용 환경 세팅 노트북 (위치 변경: notebooks/ 안)
 sem.txt                       SEM PDF → pdftotext 덤프 (작업 보조)
-benchmarks/locomo/            LoCoMo 레포 (아래 "외부 레포" 참조)
+benchmarks/locomo/            아래 "외부 레포" 참조
 benchmarks/topiocqa/
 benchmarks/LongMemEval/
-SEM/                          SEM2 레포 (주: 현재 tracked이나 참조 전용)
+benchmarks/tiage/
+SEM/                          SEM2 레포 (현재 tracked, 참조 전용)
 outputs/*.npy|*.pkl|*.log     대용량 실험 산출물
+outputs/tmp/
+.claude/                      Claude Code 로컬 settings
 .venv/
 ```
 
@@ -82,14 +116,19 @@ outputs/*.npy|*.pkl|*.log     대용량 실험 산출물
 git clone --depth=1 https://github.com/nicktfranklin/SEM2 SEM && rm -rf SEM/.git
 ```
 
-**벤치마크 — Phase 0 이후 실험용**
+**벤치마크 — Phase 1+ 평가용 4종**
 ```bash
 mkdir -p benchmarks && cd benchmarks
-git clone --depth=1 https://github.com/snap-research/locomo
-git clone --depth=1 https://github.com/McGill-NLP/topiocqa
-git clone --depth=1 https://github.com/xiaowu0162/LongMemEval
+git clone --depth=1 https://github.com/snap-research/locomo       # Phase 4 QA
+git clone --depth=1 https://github.com/McGill-NLP/topiocqa        # Phase 1 topic 경계 (factoid)
+git clone --depth=1 https://github.com/xiaowu0162/LongMemEval     # Phase 4 QA (5 abilities)
+git clone --depth=1 https://github.com/HuiyuanXie/tiage           # Phase 1 topic 경계 (chit-chat)
 cd ..
 ```
+
+**평가 축 분리** (`context/04-benchmarks.md`):
+- **Topic 경계 감지** (Phase 1) — TopiOCQA, TIAGE: turn-transition F1
+- **Downstream QA** (Phase 4) — LoCoMo, LongMemEval: QA accuracy. **session 경계를 topic 경계로 쓰면 안 됨.**
 
 **데이터 다운로드** — Phase 0 Step 0-2 실행 이력 참고:
 - LoCoMo: `benchmarks/locomo/data/locomo10.json` (레포 내 포함)
