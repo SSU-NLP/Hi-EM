@@ -446,3 +446,37 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 - direnv 사용 (기각: 추가 도구 학습 비용, python-dotenv가 더 보편적).
 
 **Phase 4 진입 자격 충족** — 모든 단위 테스트 통과 + 실 LLM end-to-end trace 검증.
+
+---
+
+### 2026-04-25: 환경 관리 uv-native 마이그레이션 (`pyproject.toml` + `uv sync`)
+
+**근거**:
+- 현재 `requirements.txt` + `uv pip install` 방식은 (a) 버전 잠금 없음 → 재현성 약함, (b) deps 추가 시 `requirements.txt` 수동 갱신 필요, (c) `conftest.py` sys.path hack 의존.
+- uv-native (`pyproject.toml` + `uv.lock` + `uv sync`)는 (a) lock 파일로 정확한 버전 재현, (b) `uv add X`로 자동 lock+pyproject 갱신, (c) editable install로 `hi_em` 모듈 자연 import.
+- 협업자 onboarding: `uv sync` 한 줄로 모든 환경 복원.
+
+**결정**:
+- `pyproject.toml` 작성 (project metadata + dependencies + dev group + hatchling build + tool.pytest)
+- `uv sync` 실행 → `.venv` 재생성 + `uv.lock` (406KB) 자동 생성
+- `requirements.txt` **삭제** (uv 단일 source-of-truth)
+- `conftest.py` **삭제** (editable install로 sys.path hack 불필요)
+- `uv.lock` git tracked (재현성), `.venv`는 그대로 gitignored
+- `[tool.uv]` `python-preference = "only-managed"` — uv-managed Python 강제 (lzma 등 stdlib 빌드 누락 회피)
+
+**영향 범위**:
+- `pyproject.toml` (신규)
+- `uv.lock` (신규, git tracked)
+- `requirements.txt` (삭제)
+- `conftest.py` (삭제 — editable install로 `hi_em` 자동 import)
+- `README.md` 빠른 시작 / 디렉토리 구조
+- `handoff.md` 환경 셋업 섹션
+- 향후 deps 추가는 `uv add X` (`pyproject.toml` + `uv.lock` 자동 갱신)
+
+**검증**: `uv sync` 후 전체 테스트 회귀 **51/51 PASS** (2.80s).
+
+**대안 및 기각 사유**:
+- `requirements.txt` 유지 (기각: 두 source 동기화 부담, 단일 source가 정공법).
+- `conftest.py` 유지 (기각: editable install로 자연 해결되는데 hack 유지할 이유 없음).
+- `[project.optional-dependencies]` (기각: PEP 735 `[dependency-groups]`가 더 modern, uv 권장).
+- `pyproject.toml` 라이브러리 mode 안 함 (기각: `[build-system]` + hatchling으로 editable install이 깨끗).

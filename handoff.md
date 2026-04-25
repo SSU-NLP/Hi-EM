@@ -209,9 +209,7 @@ cat benchmarks/LongMemEval/README.md
 cd /home/namchailin/Hi-EM
 
 python --version  # 3.10+ 확인
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync   # .venv 생성 + deps 설치 + hi_em editable install (한 줄)
 python -m spacy download en_core_web_sm
 
 # 환경 검증

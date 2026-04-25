@@ -43,7 +43,8 @@ Hi-EM/
 ├── CLAUDE.md                 Claude Code 작업 규칙 (환경 분리, 커밋, Notebook 정책, Step 완료 프로토콜)
 ├── README.md                 이 파일
 ├── report.md                 Phase 0~1-5 종합 회고 + 다음 결정 분기
-├── requirements.txt          로컬/git 환경 Python 의존성 (Colab과 분리 관리)
+├── pyproject.toml            project metadata + deps (uv-native, hatchling build)
+├── uv.lock                   잠금 파일 (재현성 — `uv sync`가 정확히 같은 버전 설치)
 ├── .gitignore
 │
 ├── context/                  확립된 설계 문서 (세션 시작 시 읽기)
@@ -167,13 +168,13 @@ cd ..
 ## 빠른 시작
 
 ```bash
-# 0. 로컬 환경 의존성 설치 (Colab 사용자는 setup_colab.ipynb 실행, 아래 무시)
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+# 0. 환경 셋업 (uv 0.8+ 필요. uv 자체 설치: https://docs.astral.sh/uv/)
+uv sync                                        # .venv 생성 + deps 설치 + hi_em editable install
+# (Colab 사용자는 setup_colab.ipynb 실행)
 
 # 1. Step 진행 중 언제든 상태 검증
-python scripts/check_step_done.py             # 현재 Step 자동 감지
-python scripts/check_step_done.py --step 0-3  # 특정 Step
+uv run python scripts/check_step_done.py             # 현재 Step 자동 감지
+uv run python scripts/check_step_done.py --step 0-3  # 특정 Step
 
 # 2. Step 완료 처리 (CLAUDE.md "Step 완료 프로토콜" 참조)
 #    - 3-angle self-audit (구조/동작/설계)
