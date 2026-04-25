@@ -34,8 +34,8 @@
 ## 현재 상태
 
 **마지막 업데이트**: 2026-04-25
-**현재 Phase**: Phase 3 — 오케스트레이션 (Step 3-1 완료, Step 3-2 시작 대기).
-**진행률**: Phase 0/1 완료, Phase 2 Step 2-1/2-2/2-3 완료 (2-4는 Phase 4 결과로 튜닝). Phase 3 Step 3-1 (LLM adapter, 5 tests) 완료. 전체 테스트 39/39 PASS.
+**현재 Phase**: Phase 3 — 오케스트레이션 (Step 3-1, 3-2 완료. Step 3-3 (실 API smoke test) 대기 + Phase 4 진입 가능).
+**진행률**: Phase 0/1 완료, Phase 2 Step 2-1/2-2/2-3 완료 (2-4는 Phase 4 결과로 튜닝). Phase 3 Step 3-1 (LLM adapter) + 3-2 (orchestrator HiEM, 9 tests) 완료. 전체 테스트 **48/48 PASS**. **토픽 복귀 prefill (A→B→A 시 첫 A turn 호출)이 단위 레벨에서 검증** — Hi-EM 핵심 가치 작동 확인.
 
 ### 완료된 것
 - 프로젝트 디렉토리 구조 생성
@@ -55,6 +55,7 @@
 - **2026-04-25 Step 2-2 완료**: `src/hi_em/ltm.py` (LTM API) + `tests/test_ltm.py` (8 tests). API: `append_turn / update_state / load_turns(topic_id?) / load_state / list_conversations`. validation 없음 (내부 모듈, schema는 §9.1 참조). 전체 테스트 회귀 **26/26 PASS**.
 - **2026-04-25 Step 2-3 완료**: `src/hi_em/memory_window.py` — `select_memory_window(q, ltm, conv_id, k_topics, k_turns_per_topic)` baseline policy: cosine top-k topics × recency top-k turns/topic, flatten by turn_id ascending. `tests/test_memory_window.py` 8 tests. 전체 회귀 **34/34 PASS**. Step 2-4 (importance/merge/adaptive K)는 Phase 4 downstream 결과로 튜닝 — 미리 구현하면 over-engineering.
 - **2026-04-25 Step 3-1 완료**: `src/hi_em/llm.py` — `OpenAIChatLLM(api_key, base_url)` + `chat(messages, model, **kwargs)`. **OpenAI-compatible** (OpenRouter / vLLM / OpenAI 본가 모두 동일 SDK). env var: `OPENAI_API_KEY` + `OPENAI_BASE_URL` (생성자 인자 우선). `requirements.txt` openai>=1.30 활성화 (실제 설치된 버전 2.32.0). `tests/test_llm.py` 5 tests (mock client). 전체 회귀 **39/39 PASS**. 백엔드 결정 근거: `memory/project_llm_backend.md`.
+- **2026-04-25 Step 3-2 완료**: `src/hi_em/orchestrator.py` — `HiEM(conv_id, encoder, llm, model, ltm_root, alpha, lmda, sigma0_sq, k_topics, k_turns_per_topic, system_prompt?, **llm_kwargs).handle_turn(user_text) -> str`. 7단계 파이프라인 (embed → segment → snapshot → memory_window → messages → llm.chat → append user/assistant). 순서: select 시점에 user turn 미저장 → 직전 user 필터링 불요. assistant turn은 embedding=None, 직전 user의 topic_id 상속. `tests/test_orchestrator.py` 9 tests (FakeEncoder + mock LLM). 전체 회귀 **48/48 PASS**. **A→B→A 토픽 복귀 시 첫 A turn 자동 prefill 검증**. §9.1 schema 단순화: first/last_turn_id 제거 (실 사용처 없음). 세션 간 segmenter 상태 복원 미지원 (Phase 5 필요 시 추가).
 - **Phase 2.5 폐기**: LongMemEval session=topic 가정이 잘못된 설계였음 (한 세션 내 subtopic 공존 정상). LongMemEval은 Phase 4 downstream QA용으로 재배치.
 - **종합 보고서 작성**: `report.md` (Phase 0 시작 ~ Phase 1-5 시점, 12 섹션 + 부록).
 
@@ -69,39 +70,22 @@
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### Phase 3 Step 3-2: orchestrator (LTM + MW + Segmenter + LLM 통합)
+### 다음 후보 (사용자 결정)
 
-Step 3-1 (LLM adapter) 완료 → 이제 매 턴 7단계 파이프라인 묶기.
+**A. Step 3-3 (실 API smoke test)** — OpenRouter 또는 vLLM 1 conversation trace
+- 사용자 API key 필요 (`OPENAI_API_KEY` + `OPENAI_BASE_URL` env var 또는 직접 인자)
+- model slug 결정 (예: `anthropic/claude-3.5-sonnet`, `openai/gpt-4o`, 로컬 vLLM model)
+- 짧은 시나리오 (3~5 turn, A→B→A 같은 토픽 복귀 trace) 수동 검증
+- 산출물: `outputs/phase-3-smoke.md` (입출력 trace + LTM 상태)
 
-**대상 모듈**: `src/hi_em/orchestrator.py` (신규)
+**B. Phase 4 진입 (downstream QA 4-way baseline 평가)** — 진짜 가치 검증
+- LongMemEval / LoCoMo 벤치마크
+- 4-way 비교: Sliding window / Full context / RAG / Hi-EM
+- Hi-EM의 토픽 ID·centroid가 단순 RAG에 비해 어떤 가치 더하는가 정량 측정
+- 산출물: `outputs/phase-4-*.md`
+- A 없이 바로 가도 가능 (단위 48 tests로 통합 검증됨), 그러나 실 LLM 동작 미검증 → 대규모 실행 전 A 거치는 게 안전
 
-**최소 API**:
-```python
-class HiEM:
-    def __init__(self, conv_id: str, llm: OpenAIChatLLM, model: str,
-                 ltm_root: Path, alpha=1.0, lmda=10.0, sigma0_sq=0.01,
-                 k_topics=3, k_turns_per_topic=5, **llm_kwargs): ...
-    def handle_turn(self, user_text: str) -> str: ...
-```
-
-`handle_turn` 내부 7단계 (`plan.md` Phase 3-2 spec 그대로):
-1. q = self._embed(user_text)
-2. (topic_id, is_boundary) = self._segmenter.assign(q)
-3. self._ltm.append_turn (user)
-4. self._ltm.update_state (segmenter snapshot)
-5. prefill = select_memory_window(q, self._ltm, conv_id, k_topics, k_turns_per_topic)
-6. messages = [{"role": t["role"], "content": t["text"]} for t in prefill] + [{"role": "user", "content": user_text}]
-7. response = self._llm.chat(messages, model=self._model, **llm_kwargs)
-8. self._ltm.append_turn (assistant)
-9. return response
-
-**미정 (Step 3-2에서 결정)**:
-- system message 추가 여부 + 형식 (turn 1 생성 시?)
-- Topic state snapshot이 매 턴 LTM에 쓰여야 하나, boundary 시에만? — 매 턴 단순함 우선 (Phase 4에서 IO 측정 후 결정).
-- response의 embedding/topic 분리: assistant turn도 same segmenter에 assign? 또는 user turn만? → user 턴만 segmenter에 들어가고 assistant는 LTM에 raw로 저장 (assigned topic = 직전 user turn의 topic_id).
-
-**기준**:
-- `tests/test_orchestrator.py` — mock LLM + 임시 LTM root로 통합 검증 (handle_turn 1회 / 다회 / 토픽 복귀 시 prefill 정확성)
+**권고**: A 먼저 (30분~1시간), 그 다음 B. A 결과로 model 선택·prompt 형식 sanity check 후 B에서 본격 평가.
 
 ### Phase 1-6 결정 분기 진행 상황 (참고)
 

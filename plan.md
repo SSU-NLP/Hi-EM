@@ -137,20 +137,21 @@
 - [x] `tests/test_llm.py` — 5 tests passing (mock OpenAI client; 실 API 호출은 Step 3-3 smoke test에서)
 - [x] requirements.txt: `openai>=1.30` 활성화. 백엔드 결정 근거: `memory/project_llm_backend.md`
 
-### 3-2 (대기)
-- [ ] `src/hi_em/orchestrator.py` — 매 턴 파이프라인 묶기:
-  1. `embed(query)` → q
-  2. `segmenter.assign(q)` → (topic_id, is_boundary)
-  3. `ltm.append_turn(...)` (user)
-  4. `ltm.update_state(...)` (segmenter snapshot)
-  5. `select_memory_window(q, ltm, conv_id, k_topics, k_turns_per_topic)` → prefill turns
-  6. prefill → messages 직렬화 → `llm.chat(messages, model)` → response
-  7. `ltm.append_turn(...)` (assistant)
-- [ ] `tests/test_orchestrator.py` — mock LLM으로 7단계 통합 검증
+### 3-2. orchestrator (2026-04-25 완료)
+- [x] `src/hi_em/orchestrator.py` — `HiEM(conv_id, encoder, llm, model, ltm_root, alpha=1, lmda=10, sigma0_sq=0.01, k_topics=3, k_turns_per_topic=5, system_prompt=None, **llm_kwargs)`
+- [x] `handle_turn(user_text) -> str` 7단계: embed → segment → snapshot → memory_window → messages → llm.chat → append user/assistant
+- [x] 순서 결정: select 시점에 user turn은 LTM에 미저장 → 직전 user 필터링 불필요. user/assistant turn은 LLM 응답 후 함께 append. assistant는 embedding=None, 직전 user의 topic_id 상속.
+- [x] system_prompt 옵션 인자 (caller가 매 턴 messages에 끼우지 않아도 됨)
+- [x] `tests/test_orchestrator.py` — 9 tests passing (FakeEncoder + mock LLM):
+  single-turn write / topic-change boundary / state snapshot / first-turn messages /
+  system_prompt prepend / second-turn prefill includes first / **A→B→A 토픽 복귀 시 첫 A turn 복귀** /
+  llm_kwargs forwarding / ltm files at root
+- [x] **48/48 PASS**. 토픽 복귀 prefill이 단위 레벨에서 검증됨 → Hi-EM 핵심 가치(같은 토픽 메모리 호출) 작동 확인.
 
 ### 3-3 (대기)
-- [ ] end-to-end smoke test (실제 OpenRouter 또는 vLLM 1 conversation trace)
+- [ ] end-to-end smoke test (실제 OpenRouter 또는 vLLM 1 conversation trace) — 사용자 API key 필요
 - [ ] 비동기 라운드 처리(merge · importance 재계산) — Phase 4 결과로 우선순위 결정
+- [ ] 세션 간 segmenter 상태 복원 (현재 미지원: state.json 쓰기만 하고 읽기는 없음 — Phase 5 필요 시 추가)
 
 ---
 

@@ -107,14 +107,14 @@ data/ltm/
       "topic_id": 0,
       "centroid": [768 floats],
       "variance": [768 floats],
-      "count": 7,
-      "last_turn_id": 41,
-      "first_turn_id": 0
+      "count": 7
     },
     ...
   ]
 }
 ```
+
+**스키마 단순화 (Step 3-2, 2026-04-25)**: `first_turn_id` / `last_turn_id` 필드 제거. 사용처는 importance/merge 가능성뿐인데, importance/merge는 Step 2-4 (Phase 4 결과로 튜닝)로 위임됐고 그때 필요하면 `ltm.load_turns(conv_id, topic_id=t)`에서 derive 가능. 매 턴 state.json에 들고 다닐 가치 없음.
 
 **선택 근거** (대안 trade-off):
 - JSONL inline embedding: 매 턴 append O(1), debug 용이 (cat/grep), 의존성 없음, 10k turns ≈ 50MB (무시 가능). 현 Phase 2 목표는 "동작하는 메모리 시스템 검증" — 최적화 불필요.
