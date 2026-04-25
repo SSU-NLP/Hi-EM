@@ -110,8 +110,12 @@
 - [x] **HP 채택: persistence (α=1, λ=10, σ₀²=0.01)** — 옵션 5 ARI/completeness 우위 근거
 - 자세한 trade-off 분석: `context/01-hi-em-design.md §9.1`
 
-### 2-2~2-N (대기)
-- [ ] LTM write API (매 턴 append, topic 메타 포함) — `src/hi_em/ltm.py`
+### 2-2. LTM write/read API (2026-04-25 완료)
+- [x] `src/hi_em/ltm.py` — `LTM.{append_turn, update_state, load_turns(topic_id?), load_state, list_conversations}`
+- [x] `tests/test_ltm.py` — 8 tests passing (missing/append-order/topic-filter/state-overwrite/state-turns-independence/conv-isolation/list/lazy-mkdir)
+- [x] 전체 테스트 회귀 26/26 PASS
+
+### 2-3~2-N (대기)
 - [ ] Memory window 구성 로직: 현재 query → 관련 topic 선별 → 해당 topic의 턴을 prefill prefix로 배열 — `src/hi_em/memory_window.py`
 - [ ] Topic importance 계산 (Memory window 승격 우선순위; 사용 빈도·최근성·cross-reference)
 - [ ] Topic merge 로직 (centroid cosine threshold 기반, LTM 압축)

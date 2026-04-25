@@ -39,11 +39,12 @@ scripts/
 ├── run_tiage_sweep.py             # Phase 1-6 TIAGE 108-config grid (TopiOCQA sweep mirror)
 └── run_clustering_quality.py      # Phase 1-6 옵션 5: V-measure/NMI/ARI 측정 (cosine vs Hi-EM 두 HP)
 
-# Phase 2 진입 (2026-04-25), 추가 예정:
-#   src/hi_em/ltm.py           — LTM read/write API (per-conv JSONL + state.json, §9.1)
-#   src/hi_em/memory_window.py — 현재 query → topic 선별 → prefill prefix
+# Phase 2 진입 (2026-04-25). 신규 모듈:
+#   src/hi_em/ltm.py           ✅ Step 2-2 (LTM read/write API, per-conv JSONL + state.json, §9.1)
+#   tests/test_ltm.py          ✅ 8 tests passing
+# 추가 예정:
+#   src/hi_em/memory_window.py — Step 2-3+: 현재 query → topic 선별 → prefill prefix
 #   src/hi_em/orchestrator.py  — 매 턴 파이프라인 (Phase 3)
-#   tests/test_ltm.py
 #   tests/test_memory_window.py
 # LTM 데이터 위치: data/ltm/<conv_id>.{jsonl,state.json} (gitignored)
 # Phase 2+ 진입 시 추가 예정: orchestrator/LTM/memory_window 등

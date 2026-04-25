@@ -34,8 +34,8 @@
 ## 현재 상태
 
 **마지막 업데이트**: 2026-04-25
-**현재 Phase**: Phase 2 — 메모리 계층 (Step 2-1 완료, Step 2-2 시작 대기). Phase 1-6 종합 Gate FAIL은 옵션 3 reframing으로 인정 + downstream QA로 가치 검증 경로 채택.
-**진행률**: Phase 0 완료, Phase 1 측정 완료 (Gate FAIL reframing), Phase 2 Step 2-1 (LTM 저장 포맷) 확정.
+**현재 Phase**: Phase 2 — 메모리 계층 (Step 2-1, 2-2 완료, Step 2-3 시작 대기).
+**진행률**: Phase 0 완료, Phase 1 측정 완료 (Gate FAIL reframing), Phase 2 Step 2-1 (포맷) + 2-2 (LTM API + 8 tests) 완료. 전체 테스트 26/26 PASS.
 
 ### 완료된 것
 - 프로젝트 디렉토리 구조 생성
@@ -52,6 +52,7 @@
 - **2026-04-25 환경 복구 + TIAGE sweep 완료**: 로컬 `.venv` (uv-managed Python 3.11) 셋업, TopiOCQA F1=0.471 / TIAGE F1=0.317·0.377 재현 검증. **TIAGE 108-config grid sweep 신규 실행** (`run_tiage_sweep.py`) → **best Hi-EM F1=0.383 (α=10, λ=3, σ₀²=0.1), cosine 0.421 미달 + 0.4 floor 미달, Gate 두 조건 모두 FAIL**. "TopiOCQA만 sweep best, TIAGE는 두 점만"의 비대칭 해소 → 옵션 1(TIAGE HP sweep) 사실상 종료.
 - **2026-04-25 옵션 5 (clustering quality) 완료**: V-measure/NMI/ARI 측정 (`run_clustering_quality.py`). **모든 metric에서 cosine 우위** — 원래 가설(Hi-EM 토픽 ID 묶기 우위) 반박. **새 발견**: Boundary F1 ↔ ARI **trade-off** — freq-shift HP (α=10): F1↑ ARI=0.187·0.314 / persistence HP (α=1): F1↓ ARI=0.398·0.397. **메모리 시스템엔 persistence HP가 적합** (completeness↑, 같은 토픽 복귀 cluster 보존 우선) → Phase 2 HP 선택 근거. `outputs/phase-1-clustering-quality.md`
 - **2026-04-25 Phase 2 진입 + Step 2-1 완료**: LTM 저장 포맷 확정 — **per-conversation JSONL (turn append-only) + `<conv_id>.state.json` (topic 상태 latest snapshot, overwrite)**. 디렉토리 `data/ltm/` (gitignored). Topic 분할 HP **persistence (α=1, λ=10, σ₀²=0.01)** 채택. 자세한 내용·trade-off: `context/01-hi-em-design.md §9.1` + `06-decision-log.md` 2026-04-25 entry.
+- **2026-04-25 Step 2-2 완료**: `src/hi_em/ltm.py` (LTM API) + `tests/test_ltm.py` (8 tests). API: `append_turn / update_state / load_turns(topic_id?) / load_state / list_conversations`. validation 없음 (내부 모듈, schema는 §9.1 참조). 전체 테스트 회귀 **26/26 PASS**.
 - **Phase 2.5 폐기**: LongMemEval session=topic 가정이 잘못된 설계였음 (한 세션 내 subtopic 공존 정상). LongMemEval은 Phase 4 downstream QA용으로 재배치.
 - **종합 보고서 작성**: `report.md` (Phase 0 시작 ~ Phase 1-5 시점, 12 섹션 + 부록).
 
@@ -66,21 +67,30 @@
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### Phase 2 Step 2-2: LTM write/read API 구현
+### Phase 2 Step 2-3: Memory window 선별 로직 구현
 
-**대상 모듈**: `src/hi_em/ltm.py` (신규)
+**대상 모듈**: `src/hi_em/memory_window.py` (신규)
+
+**책임**: 현재 query embedding `q` + LTM 상태(`<conv_id>.state.json`의 topic centroids) 가 주어지면, **prefill prefix로 승격할 turn 집합**을 선별.
 
 **최소 API**:
-- `LTM.append_turn(conv_id, turn)` — `<conv_id>.jsonl`에 1 row append
-- `LTM.update_state(conv_id, topics)` — `<conv_id>.state.json` overwrite (topic 상태 snapshot)
-- `LTM.load_turns(conv_id, topic_id=None)` — JSONL 전체 읽기 (선택적 topic 필터)
-- `LTM.load_state(conv_id)` — state.json 읽기 → `dict[topic_id → TopicState]`
-- 단위 테스트 `tests/test_ltm.py` (생성·append·read·state overwrite·존재하지 않는 conv 처리)
+- `MemoryWindow.select(q, ltm, conv_id, k_topics, k_turns_per_topic)` → `list[turn_dict]`
+  1. `ltm.load_state(conv_id)` 로 topic centroid 읽기
+  2. `q` vs 각 centroid cosine 계산, top-`k_topics` 선택
+  3. 선택된 topic 각각 `ltm.load_turns(conv_id, topic_id=t)` 호출 → recency 기반 마지막 `k_turns_per_topic`개 추림
+  4. 결과를 turn_id 오름차순으로 평탄화
+
+**미정 (Step 2-4+에서 결정)**:
+- Topic importance 가중치 (현재는 cosine만 — usage·recency·cross-reference는 미적용)
+- $K_\text{window}$ 적응적 vs 고정 (현재 인자로 노출만)
+- Prefill prefix 형식 (role·text 직렬화) → Phase 3 orchestrator 책임
 
 **기준**:
-- 스키마는 `context/01-hi-em-design.md §9.1` 그대로
-- `pathlib.Path` 사용, 경로는 함수 인자로 주입 가능 (테스트 격리)
-- write 후 즉시 fsync 안 함 (현 단계 단순성 우선, 필요 시 Step 2-N에서 추가)
+- LTM은 인자로 주입 (테스트 격리, mock 불요)
+- numpy float 연산
+- 단위 테스트 `tests/test_memory_window.py`: 빈 LTM·단일 topic·다중 topic·top-k 잘림·turn_id 정렬·k_topics > 실제 topic 수 처리
+
+### Phase 1-6 결정 분기 진행 상황 (참고)
 
 ### Phase 1-6 결정 분기 진행 상황 (참고)
 

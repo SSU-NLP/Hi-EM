@@ -21,6 +21,7 @@
 - **2026-04-25 TIAGE 108-config sweep 종료**: best F1=0.383 (α=10, λ=3, σ₀²=0.1) < cosine 0.421, 두 Gate 조건 모두 FAIL → **어떤 HP로도 baseline 못 넘음** 결정적 증거 확보.
 - **2026-04-25 옵션 5 (clustering quality) 완료**: V-measure/NMI/ARI 측정 — 모든 metric에서 cosine 우위. **Boundary F1 ↔ ARI trade-off** 발견 — persistence HP (α=1) ARI=0.398·0.397 vs freq-shift HP (α=10) ARI=0.187·0.314. **메모리 시스템 관점에선 persistence HP 적합** (cluster 보존성↑) → **Phase 2 LTM/Memory window HP 채택 근거**.
 - **2026-04-25 Phase 2 진입 + Step 2-1 LTM 저장 포맷 확정**: per-conversation **JSONL** (turn append-only) + **`<conv_id>.state.json`** (topic 상태 latest snapshot, overwrite). 디렉토리 `data/ltm/` (gitignored). Topic 분할 HP **persistence (α=1, λ=10, σ₀²=0.01)** 채택. 자세한 trade-off: `context/01-hi-em-design.md §9.1`.
+- **2026-04-25 Step 2-2 완료**: `src/hi_em/ltm.py` (LTM API 5 methods) + `tests/test_ltm.py` (8 tests). 전체 테스트 회귀 **26/26 PASS**.
 - 종합 회고 + 다음 행동 후보 5종: `report.md`
 - 결정 이력 (append-only): `context/06-decision-log.md`
 - HP regime split 발견: persistence(α=1, λ=10, σ₀²=0.01) vs frequent-shift(α=10, λ=1, σ₀²=0.1)
@@ -50,16 +51,18 @@ Hi-EM/
 │   ├── 05-open-questions.md      열려있는 질문들
 │   └── 06-decision-log.md        설계 결정 이력 (append-only)
 │
-├── src/hi_em/                코어 구현 (Phase 1-1 완료)
+├── src/hi_em/                코어 구현 (Phase 1-1 + Phase 2-2 완료)
 │   ├── embedding.py              bge-base-en-v1.5 wrapper (L2 norm, 768dim)
 │   ├── topic.py                  centroid + diag σ² + Welford 온라인 업데이트
 │   ├── scrp.py                   sticky_crp_unnormed (SEM 식 1)
-│   └── sem_core.py               HiEMSegmenter.assign() — online MAP 루프
+│   ├── sem_core.py               HiEMSegmenter.assign() — online MAP 루프
+│   └── ltm.py                    LTM read/write API (per-conv JSONL + state.json, §9.1)
 │
-├── tests/                    pytest (Phase 1-2 완료, 18 tests passing)
+├── tests/                    pytest (Phase 1-2 + 2-2 완료, 26 tests passing)
 │   ├── test_scrp.py              7 tests
 │   ├── test_topic.py             6 tests
-│   └── test_sem_core.py          5 tests
+│   ├── test_sem_core.py          5 tests
+│   └── test_ltm.py               8 tests
 │
 ├── scripts/                  실행/분석 스크립트
 │   ├── check_step_done.py            Step 완료 gate
