@@ -137,6 +137,11 @@ def main() -> None:
         help="Concurrent judge workers (LLM I/O bound). 1=sequential.",
     )
     parser.add_argument("--wandb-project", default="hi-em-phase4")
+    parser.add_argument("--no-thinking", action="store_true",
+                        default=os.environ.get("HIEM_NO_THINKING", "").lower()
+                                in {"1", "true", "yes", "on"},
+                        help="Same as run_longmemeval.py: disables Qwen <think>. "
+                             "Default: $HIEM_NO_THINKING.")
     args = parser.parse_args()
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -183,12 +188,16 @@ def main() -> None:
         qtype = ref["question_type"]
         is_abs = "_abs" in qid
         prompt = get_prompt(qtype, ref["question"], ref["answer"], h["hypothesis"], is_abs)
-        raw = llm.chat(
-            [{"role": "user", "content": prompt}],
-            model=args.judge_model,
-            temperature=0.0,
-            max_tokens=args.max_tokens,
-        )
+        chat_kwargs: dict = {
+            "model": args.judge_model,
+            "temperature": 0.0,
+            "max_tokens": args.max_tokens,
+        }
+        if args.no_thinking:
+            chat_kwargs["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": False}
+            }
+        raw = llm.chat([{"role": "user", "content": prompt}], **chat_kwargs)
         label = parse_judge_yes_no(raw)
         bucket = "abstention" if is_abs else qtype
         row = {**h, "question_type": qtype, "abstention": is_abs,

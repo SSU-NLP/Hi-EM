@@ -153,6 +153,12 @@ def main() -> None:
                         help="Encoder device: cuda / mps / cpu. "
                              "None = auto (cuda → mps → cpu). "
                              "Default: $HIEM_DEVICE (.env) or auto.")
+    parser.add_argument("--no-thinking", action="store_true",
+                        default=os.environ.get("HIEM_NO_THINKING", "").lower()
+                                in {"1", "true", "yes", "on"},
+                        help="Disable Qwen3-style <think> blocks via "
+                             "chat_template_kwargs={'enable_thinking': False}. "
+                             "Default: $HIEM_NO_THINKING (.env) or off.")
     # method-specific HP
     parser.add_argument("--sliding-k", type=int, default=20)
     parser.add_argument("--rag-k", type=int, default=10)
@@ -226,7 +232,13 @@ def main() -> None:
             args.no_token_count = True
 
     llm = OpenAIChatLLM()
-    llm_kwargs = {"temperature": args.temperature, "max_tokens": args.max_tokens}
+    llm_kwargs: dict = {"temperature": args.temperature, "max_tokens": args.max_tokens}
+    if args.no_thinking:
+        # vLLM honors chat_template_kwargs forwarded via OpenAI SDK extra_body.
+        llm_kwargs["extra_body"] = {
+            "chat_template_kwargs": {"enable_thinking": False}
+        }
+        print("[args] thinking disabled (chat_template_kwargs.enable_thinking=False)")
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)

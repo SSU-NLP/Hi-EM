@@ -52,6 +52,9 @@ def main() -> None:
     parser.add_argument("--stratify", action="store_true",
                         help="Pass --stratify to run_longmemeval.py "
                              "(question_type별 균등 sample). sanity 시 권장.")
+    parser.add_argument("--no-thinking", action="store_true",
+                        help="Pass --no-thinking to run + judge "
+                             "(Qwen3 enable_thinking=False).")
     args = parser.parse_args()
 
     if args.prefix is None:
@@ -59,13 +62,14 @@ def main() -> None:
 
     workers_args = ["--workers", str(args.workers)] if args.workers > 1 else []
     stratify_args = ["--stratify"] if args.stratify else []
+    nothink_args = ["--no-thinking"] if args.no_thinking else []
 
     for m in args.methods:
         out = f"outputs/{args.prefix}-{m}.jsonl"
         run_cmd = [
             "uv", "run", "python", "scripts/run_longmemeval.py",
             "--method", m, "--data", args.data, "--output", out,
-            *workers_args, *stratify_args,
+            *workers_args, *stratify_args, *nothink_args,
         ]
         if args.limit:
             run_cmd += ["--limit", str(args.limit)]
@@ -75,7 +79,7 @@ def main() -> None:
             judge_cmd = [
                 "uv", "run", "python", "scripts/judge_longmemeval.py", out,
                 "--ref", args.data,
-                *workers_args,
+                *workers_args, *nothink_args,
             ]
             run(judge_cmd, f"JUDGE {m}")
 
