@@ -38,6 +38,7 @@ from dotenv import load_dotenv
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from hi_em.config import load_config  # noqa: E402
 from hi_em.embedding import QueryEncoder  # noqa: E402
 from hi_em.eval_logging import (  # noqa: E402
     WandbRun, aggregate_summary, count_prefill_tokens,
@@ -124,6 +125,12 @@ def main() -> None:
     # .env first so HIEM_* defaults below pick up overrides.
     load_dotenv()
 
+    # Algorithm HP defaults from configs/hiem.json (CLI > config > module defaults).
+    cfg = load_config()
+    seg_cfg = cfg["segmenter"]
+    mw_cfg = cfg["memory_window"]
+    eval_cfg = cfg["evaluation"]
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--method", required=True, choices=["sliding", "full", "rag", "hi-em"])
     parser.add_argument(
@@ -159,15 +166,16 @@ def main() -> None:
                         help="Disable Qwen3-style <think> blocks via "
                              "chat_template_kwargs={'enable_thinking': False}. "
                              "Default: $HIEM_NO_THINKING (.env) or off.")
-    # method-specific HP
-    parser.add_argument("--sliding-k", type=int, default=20)
-    parser.add_argument("--rag-k", type=int, default=10)
-    parser.add_argument("--k-topics", type=int, default=3)
-    parser.add_argument("--k-turns-per-topic", type=int, default=5)
-    # Hi-EM persistence HP (옵션 5 결과: cluster 보존성 우위)
-    parser.add_argument("--alpha", type=float, default=1.0)
-    parser.add_argument("--lmda", type=float, default=10.0)
-    parser.add_argument("--sigma0-sq", type=float, default=0.01)
+    # method-specific HP — defaults from configs/hiem.json
+    parser.add_argument("--sliding-k", type=int, default=eval_cfg["sliding_k"])
+    parser.add_argument("--rag-k", type=int, default=eval_cfg["rag_k"])
+    parser.add_argument("--k-topics", type=int, default=mw_cfg["k_topics"])
+    parser.add_argument("--k-turns-per-topic", type=int,
+                        default=mw_cfg["k_turns_per_topic"])
+    # sCRP segmenter HP (configs/hiem.json:segmenter)
+    parser.add_argument("--alpha", type=float, default=seg_cfg["alpha"])
+    parser.add_argument("--lmda", type=float, default=seg_cfg["lmda"])
+    parser.add_argument("--sigma0-sq", type=float, default=seg_cfg["sigma0_sq"])
     # output
     parser.add_argument("--output", required=True, help="hypothesis jsonl")
     parser.add_argument(

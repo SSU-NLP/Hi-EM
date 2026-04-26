@@ -18,6 +18,36 @@ def test_wandb_run_disabled_when_explicitly_off(monkeypatch, tmp_path) -> None:
     assert not (tmp_path / "sidecar").exists()
 
 
+def test_resume_does_not_overwrite_name_or_group(monkeypatch, tmp_path) -> None:
+    """When resuming a run, only project+id+resume+config are passed to wandb.init.
+    Re-sending name/group would flip the original run's identity (run name
+    `hi-em` would become `judge` after the judge step joins).
+    """
+    monkeypatch.delenv("WANDB_MODE", raising=False)
+    import hi_em.eval_logging as m
+    if m.wandb is None:
+        return  # wandb not installed in this env
+
+    captured: dict = {}
+
+    class _StubWandb:
+        @staticmethod
+        def init(**kwargs):
+            captured.update(kwargs)
+            class _R:
+                id = "stub"
+                def define_metric(self, *a, **k): pass
+            return _R()
+
+    monkeypatch.setattr(m, "wandb", _StubWandb)
+    WandbRun(project="p", name="should-be-ignored", group="also-ignored",
+             config={"k": 1}, resume_id="abc123")
+    assert captured.get("id") == "abc123"
+    assert captured.get("resume") == "allow"
+    assert "name" not in captured
+    assert "group" not in captured
+
+
 def test_wandb_run_falls_back_when_init_throws(monkeypatch, tmp_path) -> None:
     """Auth failure (no WANDB_API_KEY and no `wandb login`) → no-op, no crash."""
     monkeypatch.delenv("WANDB_MODE", raising=False)

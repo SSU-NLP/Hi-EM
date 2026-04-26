@@ -104,12 +104,21 @@ class WandbRun:
         # Defer auth to wandb itself — it accepts WANDB_API_KEY env,
         # `wandb login` (~/.netrc), or interactive prompt (CI: throws).
         # If auth fails for any reason, fall back to no-op.
-        kwargs: dict[str, Any] = {
-            "project": project, "name": name, "group": group, "config": config,
-        }
         if resume_id:
-            kwargs["id"] = resume_id
-            kwargs["resume"] = "allow"
+            # Resuming an existing run: only project + id + resume.
+            # Re-sending name/group would overwrite the originals (the run
+            # started under name=<method> in run_longmemeval.py would flip to
+            # name="judge"). Config additions are allowed — wandb merges them.
+            kwargs: dict[str, Any] = {
+                "project": project,
+                "id": resume_id,
+                "resume": "allow",
+                "config": config,
+            }
+        else:
+            kwargs = {
+                "project": project, "name": name, "group": group, "config": config,
+            }
         try:
             self._run = wandb.init(**kwargs)
         except Exception as e:  # noqa: BLE001 — broad catch is intentional
