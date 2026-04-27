@@ -9,9 +9,11 @@
 
 ---
 
-## 현재 상태 (2026-04-25)
+## 현재 상태 (2026-04-27)
 
-**Phase 2 진입 (옵션 3 reframing 채택), Step 2-1 LTM 저장 포맷 확정. Phase 1-6 Gate FAIL은 boundary F1·ARI 모두 Hi-EM의 진짜 가치 지표가 아니라는 reframing으로 인정 → Phase 4 downstream QA로 가치 검증.**
+**Phase 4-Re — research-experiment-infrastructure 적용 (R-1~R-9 완료, R-10 docs cascade, R-11 재현성 검증 대기). Phase 4 baseline (Hi-EM 0.562 < 모든 baseline) → archive 보존 후 새 인프라 위에서 후속 실험 (HP sweep / 다른 dataset).**
+
+- **2026-04-27 Phase 4-Re**: `src/hi_em/{atomic_io, experiment}.py` + `scripts/run_experiment.py` + `tests/test_{experiment, run_experiment}.py` (22 tests 추가). archive 분리 + atomic checkpoint + resume + session. 전체 **100/100 PASS**. 자세히는 `plan.md` Phase 4-Re 섹션 + `context/06-decision-log.md` 2026-04-27 entry.
 
 - **Phase 0 완료**: 자료 분석, 사건 모델 옵션 A 확정 ($P(\mathbf{s}_n \mid e_n=k) = \mathcal{N}(\mu_k, \mathrm{diag}(\sigma_k^2))$)
 - **Phase 1-1, 1-2 완료**: `src/hi_em/` 구현 + 18 unit tests passing
@@ -102,7 +104,17 @@ Hi-EM/
 │   ├── module-template.py
 │   └── experiment-log.md
 │
-├── outputs/                  실험 결과
+├── archive/                  영구 보존 (2026-04-26 baseline raw 결과 + ltm)
+│   └── 2026-04-26-baseline/
+│       ├── README.md             (4 HP × sanity/full 표 + lost 측정 명시, tracked)
+│       ├── outputs/              (raw jsonl, untracked)
+│       └── ltm/                  (per-conv state, untracked)
+│
+├── results/                  Phase 4-Re 새 인프라 (2026-04-27~)
+│   ├── experiments/{exp_id}/   (gitignored — round/checkpoint/summary 누적)
+│   └── sessions/{session_id}/  (HP sweep/multi-method 묶음, tracked common config)
+│
+├── outputs/                  legacy (Phase 0~3 산출물)
 │   ├── benchmark-analysis.md             Phase 0-2 4 벤치마크 분석
 │   ├── phase-1-topiocqa.md               Phase 1-3/1-4 결과 + 7-iter 탐색 이력
 │   ├── phase-1-topiocqa-sweep.json       (탐색 결과 raw)

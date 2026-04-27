@@ -3,9 +3,9 @@
 
   "segmenter": {
     "_doc": "sCRP + Gaussian likelihood (option A). persistence vs freq-shift regime.",
-    "alpha": 10.0,
-    "lmda": 1.0,
-    "sigma0_sq": 0.1,
+    "alpha": 1.0,
+    "lmda": 10.0,
+    "sigma0_sq": 0.01,
     "_regime": "persistence — Phase 4 sweep으로 freq-shift(α=10, λ=1, σ²=0.1) 비교 예정"
   },
 

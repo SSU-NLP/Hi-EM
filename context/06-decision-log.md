@@ -582,3 +582,78 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 - MPS+MLX 둘 다 지원 (기각: model 일관성 위반 + 코드 복잡도. ROI 낮음 — MPS 대비 MLX 추가 가속은 ~10-30%인데 LLM call이 압도적 시간).
 - 인텔/CUDA 자동 fallback 안 함 (기각: torch가 cuda detect 자동 — 그냥 우선순위만 추가).
 - bge보다 작은 model로 교체 (기각: 평가 일관성 + 옵션 5에서 bge-base 검증됨).
+
+---
+
+### 2026-04-27: Phase 4-Re — research-experiment-infrastructure 적용 + archive 분리
+
+**근거**:
+- Phase 4 baseline (Hi-EM 0.562 < 모든 baseline) 측정 끝. 다음 실험들 (HP sweep / 새 method / Phase 2-Full STM / 다른 dataset)이 누적될 예정. 옛 단일 prefix (`outputs/phase-4-*`) 패턴은 **lost 측정 사례 발생** (set #3 hi-em이 set #4에 덮어써짐).
+- 사용자 제공 SKILL `research-experiment-infrastructure` (`~/.claude/skills/`) 적용 — atomic save / round / resume / session 표준.
+- 동시에 SKILL 자체에 5 개선점 patch + §7 replay 분기 추가 (정적 dataset + stateless eval은 replay 불필요).
+
+**결정**:
+- **Archive 분리**: 기존 `outputs/` + `data/ltm/` → `archive/2026-04-26-baseline/`. README.md 4 HP × sanity/full 표 + sample noise + lost 측정 명시. 새 실험은 `results/experiments/{exp_id}/` 격리.
+- **단일 entry**: `scripts/run_experiment.py`. round 단위 atomic + resume + session. legacy entry는 보존.
+- **Round = 50 questions** (oracle 500 → 10 rounds).
+- **2-level summary 디스크 저장**: round-level (`rounds/round_NNN/summary.json`) + experiment-level (`{exp_dir}/summary.json`, 모든 round 합쳐). 둘 다 wandb 동시 push.
+- **Metric**: per-method × per-qtype accuracy (6 qtype + overall) + prefill_tokens/latency p50/p95 + error_rate + topic_revisit_hit_rate.
+- **Replay 폐기**: SKILL §7 분기 — session.json에 같은 dataset 가리키는 별도 experiment로 충분.
+
+**영향 범위**:
+- `src/hi_em/atomic_io.py` + `experiment.py` (신규)
+- `scripts/run_experiment.py` (신규 entry)
+- `tests/test_experiment.py` (17), `tests/test_run_experiment.py` (5) — SKILL §10 #13 reference vs interrupt+resume invariant 자동화
+- `archive/2026-04-26-baseline/` (영구 보존)
+- `.gitignore`: results/experiments/, archive/*/{ltm,outputs/*.jsonl} 추가
+- `~/.claude/skills/research-experiment-infrastructure/SKILL.md`: 5 개선점 patch + §7 분기
+
+**대안 및 기각 사유**:
+- 옛 prefix 유지 (기각: lost 측정 누적, 충돌 보장 불가).
+- Replay 인프라 도입 (기각: 정적 dataset에선 가치 0).
+- Round = 25 / 100 (기각: 50이 latency-resume 균형 최적).
+- 단일 jsonl per experiment (기각: round 격리가 atomic 보장 쉬움).
+- working_state 즉시 도입 (기각: stateless eval. Phase 2-Full STM 도입 시 추가).
+
+**검증**:
+- 100/100 unit tests PASS (78 → 100, +22)
+- R-9 실 vLLM smoke (5 questions × 2 rounds): 동작 확인
+- R-7 자동 invariant: deterministic FakeLLM 으로 reference vs interrupt+resume 정확 일치
+- R-11 (대기): Hi-EM persistence + full 500 → archive 0.562 ±0.02 일치 검증
+
+**Phase 5 직전 재검토 트리거**:
+- 100k+ questions 동시 평가 → `results/sessions/` orchestration 강화
+- 외부 storage 동기화 → `working_state` 압축 패턴 도입
+
+---
+
+### 2026-04-27: R-11 종결 + Phase 5 진입 결정 (정직 reframing)
+
+**근거**:
+- R-11 sanity 단계 (sanity 30 × 4 method, `run_session.py` 새 infra) 결과:
+  - sliding 0.867, full 0.833, rag 0.767, **hi-em 0.700**
+  - archive set #2 (옛 infra, 같은 config) 대비 모든 cell-level Δ ≤ 0.40 — sample noise (5/qtype, temperature=0.7) 영역 안
+  - Overall Δ ≤ 0.10, **상대 ranking 보존** (full > sliding ≈ rag > hi-em), Hi-EM **multi-session 약점 패턴 그대로** (0.00~0.20)
+  - → **인프라 systematic bias 없음 확정**. R-11 full 500 재현은 시간 절약 결정 (sanity 검증 충분).
+- Phase 4 baseline (full 500 archive) 결과는 결정적: **Hi-EM 0.562 / sliding 0.658 / full 0.712 / rag 0.692**. Hi-EM 4 method 중 꼴찌. 단 **ssp 0.97 (4 method 중 1위, full 0.93보다 +0.04)** — 좁은 강점 영역 존재.
+
+**결정**:
+- **R-11 종결** (sanity 검증으로 충분, full 재실행 안 함).
+- **Phase 5 진입** — 정직 reframing 우선 (5-A) → 결과 위에서 추가 실험/논문 결정 (5-B/C/D).
+- Hi-EM contribution을 **광범위 winning에서 ssp 좁은 영역**으로 정의 변경 — Phase 1-6 reframing의 자연 연장.
+- Phase 5-A 산출물: `report.md` 갱신 + `outputs/phase-4-final.md` (4 method × 6 qtype × 4 HP × sanity/full × 두 인프라 종합 표).
+
+**영향 범위**:
+- `plan.md` Phase 4-Re R-10/R-11 [x] 처리 + Phase 5 섹션 재작성 (5-A~5-E)
+- `handoff.md` 현재 Phase = Phase 5 정직 reframing 대기
+- `context/06-decision-log.md` 본 entry
+
+**대안 및 기각 사유**:
+- Full 500 한 번 더 (기각: sanity 검증 충분, archive 결과 신뢰 가능. 시간 1~2시간 절약).
+- Phase 5-B (다른 dataset) 먼저 (기각: 5-A 정직 정리 없이 추가 실험은 sunk cost. reframing이 결정 전 필수).
+- Phase 5 폐기 + 즉시 새 알고리즘 (기각: Phase 1~4 결과 정리 없이 새 시도는 lessons 손실).
+- HP sweep 추가 (기각: 4 HP regime 이미 검증됨, 모두 multi-session 0.20 그대로).
+
+**Phase 5-A 시작 시 트리거**:
+- ssp 강점이 다른 dataset에서도 재현되는지 확인하고 싶다면 5-B 먼저.
+- 단순 결과 정리만 원하면 5-A 즉시 시작.

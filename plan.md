@@ -210,6 +210,46 @@
 - [ ] Hi-EM이 4-baseline 중 우위 (특정 능력에서? 토큰 효율?)
 - [ ] report.md 갱신, 결정 분기 (Phase 5 논문 vs 추가 개선)
 
+---
+
+## Phase 4-Re: research-experiment-infrastructure 적용 (2026-04-27)
+
+**목적**: Phase 4 baseline 결과 (Hi-EM 0.562 < baseline) 기반으로 다음 실험들 (HP sweep / 추가 method / 다른 dataset)이 **resumable + atomic** 인프라 위에서 진행되도록. SKILL `research-experiment-infrastructure` (`~/.claude/skills/...`) 적용.
+
+### Skill → Hi-EM 매핑
+- Experiment = (method, HP, dataset) 평가 1회
+- Round = N questions (default 50, oracle 500 → 10 rounds)
+- Phase = (1) run hypothesis, (2) judge accuracy
+- working_state = stateless (Phase 2-Full STM 도입 시 LTM/STM 추가)
+- Replay 인프라 = **폐기** (정적 dataset + stateless eval, SKILL §7 분기 조건으로 불필요)
+
+### R-1 ~ R-11
+
+- [x] **R-1 Archive** — `archive/2026-04-26-baseline/{outputs, ltm, README.md}`. 4 HP × sanity/full 표 + sample noise + lost 측정 명시.
+- [x] **R-2 atomic_io** — `src/hi_em/atomic_io.py` (save_json, load_json, append_jsonl, load_jsonl). utf-8 surrogate-safe.
+- [x] **R-3 experiment lifecycle** — `src/hi_em/experiment.py`. `ExperimentMeta`, `create_experiment` (idempotent), `mark_round_complete` (summary→checkpoint 순서), `mark_experiment_complete`, `find_resumable_experiment`, `sanity_check_summary`, `Session`. 17 unit tests.
+- [x] **R-4 resume** — `find_resumable_experiment` + `completed.json` 체크 분리. SKILL §5/§9.7 따름.
+- [x] **R-5 run_experiment.py** — 단일 entry. round 단위 atomic + resume + session 지원 + experiment-level summary 디스크 저장 + wandb sidecar resume + sanity check 자동.
+- [x] ~~**R-6 replay**~~ — 폐기 (SKILL §7 분기로 정적 dataset에선 불필요).
+- [x] **R-7 자동 resume invariant test** — `tests/test_run_experiment.py` 5 tests. **SKILL §10 #13 reference vs interrupt+resume primary_metric 정확 일치 invariant 자동화**.
+- [x] **R-9 실 vLLM smoke test** — `--exp-id smoke-resume-kill` 5 questions × 2 rounds. round 사이클 + idempotent 재호출 + wandb sidecar 동작 확인.
+- [x] **R-10 docs cascade** — handoff/plan/README/decision-log/03-architecture 갱신.
+- [x] **R-11 인프라 재현성 검증** (2026-04-27 sanity 단계 통과) — sanity 30 × 4 method 결과 archive set #2와 모든 cell-level Δ가 sample noise (`temperature=0.7`, 5/qtype) 영역 안. Overall Δ ≤ -0.10. 4 method **상대 ranking 그대로** (full > sliding ≈ rag > hi-em) + Hi-EM **multi-session 약점 패턴 그대로** (0.00~0.20). 인프라 systematic bias 없음 확정. Full 500 재현은 시간 절약 (sanity 검증 충분 판정).
+
+### Metric 수집 정책 (Phase 4-Re)
+
+매 experiment 종료 시 디스크에 **2 level summary 저장**:
+1. **Round level**: `rounds/round_NNN/summary.json` (그 round의 questions만 aggregate, sanity_check 자동 호출)
+2. **Experiment level**: `{exp_dir}/summary.json` (모든 round의 judged 합쳐 aggregate, wandb summary와 동일)
+
+User 비교 표 형식 그대로 stdout 출력 (Overall + 6 question_type accuracy + token/latency p50/p95 + topic_revisit_hit_rate).
+
+### W&B 통합 (SKILL §8 sidecar pattern)
+- run name = exp_id (sidecar `wandb-run-id.txt`로 resume 시 같은 run 이어짐)
+- name/group은 resume 시 다시 보내지 않음 (덮어쓰기 회피)
+- step axis = round_num (define_metric 처리)
+- 자격증명: WANDB_API_KEY env or `wandb login` (~/.netrc) 둘 다 인정
+
 4 baseline QA accuracy 비교 (LoCoMo · LongMemEval):
 - **Baseline 1. Sliding window**: 최근 N개 세션만 LLM에 투입. 오래된 정보 놓침.
 - **Baseline 2. Full context**: 모든 세션 투입. Context length 초과·비용 폭발.
@@ -223,9 +263,49 @@
 
 ---
 
-## Phase 5: 논문 실험
-- [ ] Ablation study (sCRP prior 기여도, centroid vs centroid+variance, 옵션 D 비교 등)
-- [ ] Baseline 비교 (MemGPT, RAG, sliding window)
+## Phase 5: 논문 실험 + 정직 reframing
+
+**현재 상황 요약** (2026-04-27 R-11 종결 후):
+- Phase 1: boundary F1 → cosine baseline에 패배
+- Phase 1-6 (옵션 5): ARI/V-measure → cosine baseline에 패배
+- Phase 4: downstream QA (LongMemEval oracle 500 nothink) → **Hi-EM 0.562, 4 method 중 꼴찌** (sliding 0.658 / full 0.712 / rag 0.692)
+- Phase 4 sanity (×2 새 infra 재현) → 결과 일관, 인프라 검증 ✓
+- Hi-EM **유일 강점**: ssp (single-session-preference) **0.97** — 4 method 중 1위 (full 0.93보다 +0.04)
+- Hi-EM 약점: multi-session 0.23, knowledge-update 0.51, temporal 0.46
+
+→ Hi-EM의 **광범위 contribution 가설 반증 완료**. 남은 길은 (a) **좁은 contribution으로 정직 정리** + (b) **다른 시나리오 (긴 history, 다른 도메인) 탐색**.
+
+### 5-A. 정직 reframing 보고서 (시급, 1~2일)
+- [ ] `report.md` 갱신 — Phase 0~Phase 4 종합 결론. "Hi-EM의 contribution은 ssp 정도. 다른 axis는 baseline 못 넘음" 정직 기록
+- [ ] `outputs/phase-4-final.md` (신규, archive로 이동 가능) — 4 method × 6 qtype × 4 HP × sanity/full 모든 결과 종합 표 + 분석
+- [ ] decision-log: Hi-EM 가치 정의 좁히기 결정 entry
+- [ ] 논문 plan 결정: (a) ssp 좁은 contribution으로 short paper, (b) 추가 실험 필요, (c) negative result 보고서
+
+### 5-B. 다른 dataset 탐색 (선택, 사용자 결정)
+LongMemEval oracle은 짧은 history (evidence sessions only). Hi-EM의 진짜 시나리오는 긴 history + 토픽 복귀. 측정 안 한 곳:
+- [ ] LongMemEval s_cleaned (115k token history) — 다운로드 명령 `wget .../longmemeval_s_cleaned.json -P benchmarks/LongMemEval/data/`
+- [ ] LongMemEval m_cleaned (500 sessions) — Hi-EM 가장 빛날 시나리오
+- [ ] LoCoMo (snap-research) — 197 QA/conv, 다른 도메인
+
+각 dataset에 새 session으로 4 method 비교 — `scripts/run_session.py --data ... --session-id ...`. ±2~6시간/dataset.
+
+### 5-C. Ablation studies (Phase 5-A 후 결정)
+- [ ] sCRP prior 기여도 (uniform prior로 교체 vs sticky-CRP)
+- [ ] centroid + variance vs centroid-only (variance 기여도)
+- [ ] memory_window selection (cosine top-k vs random top-k vs recency only)
+- [ ] response_filter (`<think>` strip 효과 정량)
+
+### 5-D. Baseline 비교 (선택, scope creep 위험)
+- [ ] MemGPT 비교 (시간 큼)
+- [ ] LongMemEval 논문 baseline 재현
+- [ ] 우리 4 method (sliding/full/rag/hi-em) 만으로 충분할 수 있음
+
+### 5-E. 결정 분기
+Phase 5-A 정직 reframing 후:
+- **(a) Short paper / workshop**: ssp 좁은 contribution으로 작성. 빠름.
+- **(b) 추가 실험 필요**: 5-B (다른 dataset) → 새 winning region 발견 시 long paper.
+- **(c) Negative result + alternative**: Hi-EM은 보류, 다른 algorithm 탐색 (Phase 2-Full STM, 알고리즘 변경 등).
+- **(d) Hi-EM 폐기 + insights only**: Phase 1~4 lessons → workshop 또는 thesis chapter
 
 ---
 

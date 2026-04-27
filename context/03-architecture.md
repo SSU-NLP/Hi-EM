@@ -76,3 +76,36 @@ response = hi_em.handle_turn(user_query="...")
 ```
 
 `orchestrator.handle_turn`은 context 구성만, LLM 호출은 주입된 callable에 위임.
+
+---
+
+## Phase 4-Re 인프라 (2026-04-27 추가, research-experiment-infrastructure skill 적용)
+
+```
+src/hi_em/
+├── atomic_io.py         # save_json / load_json / append_jsonl / load_jsonl (utf-8 surrogate-safe)
+└── experiment.py        # ExperimentMeta · create_experiment · mark_round_complete
+                         #   · find_resumable_experiment · sanity_check_summary · Session
+
+scripts/
+├── run_experiment.py    # 신규 단일 entry. round 단위 atomic checkpoint + resume + session
+└── (legacy) run_longmemeval.py / judge_longmemeval.py / run_phase4_all.py — 점진 deprecation
+
+configs/
+└── hiem.json            # 모든 알고리즘 HP single source-of-truth (segmenter / memory_window /
+                         # topic_importance / stm / round / evaluation 6 섹션)
+
+archive/2026-04-26-baseline/   # 기존 결과 영구 보존 (outputs/ + ltm/ + README.md)
+results/
+├── experiments/{exp_id}/      # 새 실험: rounds/ + checkpoints/ + experiment.json + summary.json
+└── sessions/{session_id}/     # HP sweep / multi-method 묶음 (tracked, common config)
+
+tests/
+├── test_experiment.py        # 17 tests — atomic / lifecycle / sanity_check / Session
+└── test_run_experiment.py    # 5 tests — round cycle / mid-crash / resume / idempotent /
+                              # SKILL §10 #13 reference vs interrupt+resume invariant
+```
+
+**Round = 50 questions** (oracle 500 → 10 rounds). Resume granularity.
+**Phase**: (1) run hypothesis (2) judge accuracy. atomic save per phase, checkpoint after both.
+**Metric**: per-method × per-qtype accuracy + prefill_tokens/latency p50/p95 + error_rate + topic_revisit_hit_rate.

@@ -1,25 +1,30 @@
-"""Memory window selection.
+"""Memory window — two implementations.
 
-Given the current query embedding and the LTM state of a conversation, pick
-the turns to promote into the LLM prefill prefix. Phase 2 baseline policy:
+(a) ``select_memory_window`` (Phase 2 baseline, stateless): given current
+    query and LTM state, picks ``cosine top-k_topics × recency top-k_turns``
+    fresh on every call. Used by Phase 4 baseline measurements.
 
-    1. Compute cosine(q, topic.centroid) for every topic in the state.
-    2. Pick top-``k_topics`` topics by cosine.
-    3. For each selected topic, take the last ``k_turns_per_topic`` turns
-       (recency by ``turn_id``).
-    4. Flatten and sort by ``turn_id`` so the LLM sees turns in chronological
-       order.
+(b) ``MemoryWindow`` class (Phase 2-Full STM, stateful, RAM cache): persistent
+    across turns, importance-based promote/evict, **topic-level atomic** (no
+    turn-level slicing — a topic is either fully present or fully absent).
+    Capacity:
+        max_topics : hard cap on number of distinct topics in cache
+        max_turns  : soft cap on total turn count. Eviction targets
+                     lowest-importance topics one at a time. A single topic
+                     larger than ``max_turns`` is rejected on promote (rare).
 
-Importance weighting (usage / cross-reference), adaptive ``k``, and merge
-policy are deferred to Step 2-4+ (see ``context/01-hi-em-design.md §A``).
+Use one or the other per experiment via ``HiEM(..., use_stm=True/False)``.
 """
 
 from __future__ import annotations
 
+import threading
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from hi_em.atomic_io import load_json, save_json
 from hi_em.ltm import LTM
 
 

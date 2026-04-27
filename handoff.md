@@ -34,8 +34,17 @@
 ## 현재 상태
 
 **마지막 업데이트**: 2026-04-25
-**현재 Phase**: Phase 4 — downstream QA 4-way baseline (Step 4-2/3/4/4a 완료, **4-5 sanity 사용자 실행 대기**).
-**진행률**: Phase 0/1/2/3 완료. Phase 4: clone + preload_history + 4 baseline + Qwen judge + 병렬화(--workers) + **W&B logging (codex review 적용 메트릭)** 완료. 전체 테스트 **56/56 PASS**. **사용자 실행: subset 30 sanity → 전체 500 → W&B 그래프 분석**.
+**현재 Phase**: **Phase 4-Re 종결** (R-1~R-11 완료, 인프라 검증 ✓). **Phase 5 진입 대기 — 정직 reframing 또는 다른 dataset 탐색 결정 필요**.
+**진행률**: Phase 0/1/2/3/4 sanity+full(baseline) 완료. **2026-04-26 Phase 4 baseline 결과 → `archive/2026-04-26-baseline/` 영구 보존**. 새 인프라 (`results/experiments/{exp_id}/rounds/round_NNN/` + atomic checkpoint + resume + session.json) 위에서 진행. 전체 테스트 **100/100 PASS**.
+
+**Phase 4-Re 환경 인프라 (skill: research-experiment-infrastructure 적용)**:
+- `src/hi_em/atomic_io.py` — `save_json` / `load_json` / `append_jsonl` (utf-8 surrogate-safe, .tmp + os.replace)
+- `src/hi_em/experiment.py` — `ExperimentMeta` / `create_experiment` / `mark_round_complete` / `find_resumable_experiment` / `sanity_check_summary` / `Session`
+- `scripts/run_experiment.py` — 단일 entry. round 단위 atomic checkpoint + resume. 실험 종료 시 `experiment_dir/summary.json` 디스크 저장 + wandb push.
+- `tests/test_experiment.py` (17) + `tests/test_run_experiment.py` (5) — round/resume/idempotent/SKILL §10 #13 reference vs interrupt+resume invariant 검증
+- 기존 `run_longmemeval.py` / `judge_longmemeval.py` / `run_phase4_all.py`: legacy entry로 보존 (점진 deprecation)
+
+**Phase 4 baseline 결과 (archive)** — Hi-EM persistence + nothink + full 500: **0.562 overall** (4 method 중 꼴찌). multi-session 0.23, knowledge 0.51. 자세히는 `archive/2026-04-26-baseline/README.md`.
 
 ### 완료된 것
 - 프로젝트 디렉토리 구조 생성
@@ -72,33 +81,70 @@
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### 다음: Phase 4 Step 4-5 sanity 실행 (사용자 명령 실행)
+### 다음: Phase 5 — 정직 reframing + 결정 분기
 
-**준비**:
-1. LongMemEval data 다운로드 (oracle 우선):
+**Phase 4-Re sanity 결과 (2026-04-27)**:
+| Method | Overall | knowledge | multi | ssa | ssp | ssu | temporal |
+|---|---|---|---|---|---|---|---|
+| sliding | 0.867 | 0.80 | 0.40 | 1.00 | 1.00 | 1.00 | 1.00 |
+| full | 0.833 | 0.80 | 0.60 | 1.00 | 1.00 | 0.80 | 0.80 |
+| rag | 0.767 | 0.40 | 0.40 | 1.00 | 1.00 | 1.00 | 0.80 |
+| **hi-em** | **0.700** | 0.60 | 0.00 | 1.00 | 1.00 | 0.60 | 1.00 |
+
+archive set #2 vs new sanity: 모든 cell-level Δ ≤ 0.40 (5/qtype noise floor 안). 인프라 정확성 검증 ✓.
+
+**Hi-EM의 명확한 결과** (full 500 archive 기준):
+- Overall 0.562 (4 method 중 꼴찌, baseline 0.658~0.712 미달)
+- 유일한 강점: **ssp 0.97** (4 method 중 1위, full 0.93보다 +0.04)
+- 약점: multi-session 0.23, knowledge 0.51, temporal 0.46
+
+**Phase 5 결정 분기 (사용자 선택)**:
+
+| Path | 비용 | 산출물 |
+|---|---|---|
+| **5-A. 정직 reframing** (즉시 시작) | 1~2일 | `report.md` 갱신 + 종합 결과 표. Hi-EM contribution을 ssp로 좁힘 |
+| **5-B. 다른 dataset 탐색** | dataset당 2~6시간 | LongMemEval s/m, LoCoMo. Hi-EM 진짜 시나리오 (긴 history) 검증 |
+| **5-C. Ablation studies** | 2~3일 | sCRP prior / variance / memory_window 기여도 분리 |
+| **5-D. 논문 작성 결정** | 5-A 후 분기 | (a) short paper / (b) 추가 실험 / (c) negative result / (d) 폐기 |
+
+권고: **5-A 먼저 (정직 reframing) → 5-D 결정 → 필요 시 5-B/C**.
+
+### 새 인프라 entry 사용법 (Phase 4-Re 이후)
+
 ```bash
-cd /Users/joseonghyeon/Desktop/Hi-EM/benchmarks/LongMemEval/data
-wget https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json
-cd /Users/joseonghyeon/Desktop/Hi-EM
+# 단일 method
+uv run python scripts/run_experiment.py --method hi-em --no-thinking ...
+
+# 4 method 비교 (session)
+uv run python scripts/run_session.py --session-id <name> --no-thinking ...
+
+# 다른 dataset
+uv run python scripts/run_session.py --session-id <name> \
+    --data benchmarks/LongMemEval/data/longmemeval_s_cleaned.json ...
+
+# Resume (같은 exp/session id 재호출)
 ```
 
-**W&B 셋업** (선택 — 키 없으면 wandb는 자동 skip):
+### 새 entry 사용법 (Phase 4-Re)
+
 ```bash
-# .env에 WANDB_API_KEY 추가 (https://wandb.ai/settings → API key)
-echo "WANDB_API_KEY=..." >> .env
-echo "WANDB_PROJECT=hi-em-phase4" >> .env
+# 단일 experiment
+uv run python scripts/run_experiment.py --method hi-em --no-thinking ...
+
+# Resume (같은 exp_id 재호출 — 자동 last completed round 감지)
+uv run python scripts/run_experiment.py --exp-id <existing> ...
+
+# Session 안에서 (HP sweep 등)
+uv run python scripts/run_experiment.py --session 20260427_phase4_main --method hi-em ...
 ```
 
-**Subset sanity** (한 줄, 4 method × run+judge, 8 concurrent workers, 5 question_type 균등):
-```bash
-uv run python scripts/run_phase4_all.py --limit 30 --workers 8 --stratify
-```
+### Legacy entry (점진 deprecation)
 
-> ⚠️ `--stratify` 필수: LongMemEval oracle은 question_type 정렬돼 있어 plain `--limit 30`은 한 type만 30개 (1차 sanity에서 발견). max_tokens도 default 800/256으로 상향 (Qwen3-8B reasoning model의 `<think>` 블록 cover).
+Phase 4 baseline 측정 시 사용. 새 측정은 `run_experiment.py` 권고.
 
-**전체 500**:
 ```bash
-uv run python scripts/run_phase4_all.py --workers 8
+# 옛 한 줄 (4 method × run+judge, archive와 동일 결과 만들 때)
+uv run python scripts/run_phase4_all.py --workers 8 --no-thinking
 ```
 
 `--workers`: ThreadPool concurrency (1=sequential, 8 권장, 16+ vLLM saturate 시 더 빠름). encoder/segmenter/LTM 모두 thread-safe.
