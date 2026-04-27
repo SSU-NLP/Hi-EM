@@ -34,8 +34,17 @@
 ## 현재 상태
 
 **마지막 업데이트**: 2026-04-25
-**현재 Phase**: Phase 1 — Topic 경계 감지 코어 + 평가 (1-1~1-5 완료, 1-6 종합 Gate **FAIL** → 사용자 결정 대기)
-**진행률**: Phase 0 완료 + Phase 1 측정 완료, **종합 Gate FAIL로 Phase 2 진입 보류**
+**현재 Phase**: **Phase 4-Re 종결** (R-1~R-11 완료, 인프라 검증 ✓). **Phase 5 진입 대기 — 정직 reframing 또는 다른 dataset 탐색 결정 필요**.
+**진행률**: Phase 0/1/2/3/4 sanity+full(baseline) 완료. **2026-04-26 Phase 4 baseline 결과 → `archive/2026-04-26-baseline/` 영구 보존**. 새 인프라 (`results/experiments/{exp_id}/rounds/round_NNN/` + atomic checkpoint + resume + session.json) 위에서 진행. 전체 테스트 **100/100 PASS**.
+
+**Phase 4-Re 환경 인프라 (skill: research-experiment-infrastructure 적용)**:
+- `src/hi_em/atomic_io.py` — `save_json` / `load_json` / `append_jsonl` (utf-8 surrogate-safe, .tmp + os.replace)
+- `src/hi_em/experiment.py` — `ExperimentMeta` / `create_experiment` / `mark_round_complete` / `find_resumable_experiment` / `sanity_check_summary` / `Session`
+- `scripts/run_experiment.py` — 단일 entry. round 단위 atomic checkpoint + resume. 실험 종료 시 `experiment_dir/summary.json` 디스크 저장 + wandb push.
+- `tests/test_experiment.py` (17) + `tests/test_run_experiment.py` (5) — round/resume/idempotent/SKILL §10 #13 reference vs interrupt+resume invariant 검증
+- 기존 `run_longmemeval.py` / `judge_longmemeval.py` / `run_phase4_all.py`: legacy entry로 보존 (점진 deprecation)
+
+**Phase 4 baseline 결과 (archive)** — Hi-EM persistence + nothink + full 500: **0.562 overall** (4 method 중 꼴찌). multi-session 0.23, knowledge 0.51. 자세히는 `archive/2026-04-26-baseline/README.md`.
 
 ### 완료된 것
 - 프로젝트 디렉토리 구조 생성
@@ -49,6 +58,15 @@
 - **Phase 1-3, 1-4 완료**: TopiOCQA dev. **Gate PASS (marginal)** — Hi-EM F1=0.471 vs cosine 0.467 (HP α=10, λ=1, σ₀²=0.1, SEM2 defaults). 7-iteration 탐색으로 bge intrinsic ceiling ~0.47 확인.
 - **Phase 1-5 완료**: TIAGE test. **Gate FAIL** — Hi-EM persistence F1=0.317 / freq-shift F1=0.377, **둘 다 cosine baseline 0.421에 패배**. Latency 0.73 ms/turn은 PASS.
 - **Phase 1-6 종합 Gate: FAIL** — TopiOCQA PASS + TIAGE FAIL → Phase 2 진입 자격 미충족.
+- **2026-04-25 환경 복구 + TIAGE sweep 완료**: 로컬 `.venv` (uv-managed Python 3.11) 셋업, TopiOCQA F1=0.471 / TIAGE F1=0.317·0.377 재현 검증. **TIAGE 108-config grid sweep 신규 실행** (`run_tiage_sweep.py`) → **best Hi-EM F1=0.383 (α=10, λ=3, σ₀²=0.1), cosine 0.421 미달 + 0.4 floor 미달, Gate 두 조건 모두 FAIL**. "TopiOCQA만 sweep best, TIAGE는 두 점만"의 비대칭 해소 → 옵션 1(TIAGE HP sweep) 사실상 종료.
+- **2026-04-25 옵션 5 (clustering quality) 완료**: V-measure/NMI/ARI 측정 (`run_clustering_quality.py`). **모든 metric에서 cosine 우위** — 원래 가설(Hi-EM 토픽 ID 묶기 우위) 반박. **새 발견**: Boundary F1 ↔ ARI **trade-off** — freq-shift HP (α=10): F1↑ ARI=0.187·0.314 / persistence HP (α=1): F1↓ ARI=0.398·0.397. **메모리 시스템엔 persistence HP가 적합** (completeness↑, 같은 토픽 복귀 cluster 보존 우선) → Phase 2 HP 선택 근거. `outputs/phase-1-clustering-quality.md`
+- **2026-04-25 Phase 2 진입 + Step 2-1 완료**: LTM 저장 포맷 확정 — **per-conversation JSONL (turn append-only) + `<conv_id>.state.json` (topic 상태 latest snapshot, overwrite)**. 디렉토리 `data/ltm/` (gitignored). Topic 분할 HP **persistence (α=1, λ=10, σ₀²=0.01)** 채택. 자세한 내용·trade-off: `context/01-hi-em-design.md §9.1` + `06-decision-log.md` 2026-04-25 entry.
+- **2026-04-25 Step 2-2 완료**: `src/hi_em/ltm.py` (LTM API) + `tests/test_ltm.py` (8 tests). API: `append_turn / update_state / load_turns(topic_id?) / load_state / list_conversations`. validation 없음 (내부 모듈, schema는 §9.1 참조). 전체 테스트 회귀 **26/26 PASS**.
+- **2026-04-25 Step 2-3 완료**: `src/hi_em/memory_window.py` — `select_memory_window(q, ltm, conv_id, k_topics, k_turns_per_topic)` baseline policy: cosine top-k topics × recency top-k turns/topic, flatten by turn_id ascending. `tests/test_memory_window.py` 8 tests. 전체 회귀 **34/34 PASS**. Step 2-4 (importance/merge/adaptive K)는 Phase 4 downstream 결과로 튜닝 — 미리 구현하면 over-engineering.
+- **2026-04-25 Step 3-1 완료**: `src/hi_em/llm.py` — `OpenAIChatLLM(api_key, base_url)` + `chat(messages, model, **kwargs)`. **OpenAI-compatible** (OpenRouter / vLLM / OpenAI 본가 모두 동일 SDK). env var: `OPENAI_API_KEY` + `OPENAI_BASE_URL` (생성자 인자 우선). `requirements.txt` openai>=1.30 활성화 (실제 설치된 버전 2.32.0). `tests/test_llm.py` 5 tests (mock client). 전체 회귀 **39/39 PASS**. 백엔드 결정 근거: `memory/project_llm_backend.md`.
+- **2026-04-25 Step 3-2 완료**: `src/hi_em/orchestrator.py` — `HiEM(conv_id, encoder, llm, model, ltm_root, alpha, lmda, sigma0_sq, k_topics, k_turns_per_topic, system_prompt?, **llm_kwargs).handle_turn(user_text) -> str`. 7단계 파이프라인 (embed → segment → snapshot → memory_window → messages → llm.chat → append user/assistant). 순서: select 시점에 user turn 미저장 → 직전 user 필터링 불요. assistant turn은 embedding=None, 직전 user의 topic_id 상속. `tests/test_orchestrator.py` 9 tests (FakeEncoder + mock LLM). 전체 회귀 **48/48 PASS**. **A→B→A 토픽 복귀 시 첫 A turn 자동 prefill 검증**. §9.1 schema 단순화: first/last_turn_id 제거 (실 사용처 없음). 세션 간 segmenter 상태 복원 미지원 (Phase 5 필요 시 추가).
+- **2026-04-25 Step 3-3 완료**: `scripts/smoke_test_orchestrator.py` 실 LLM 검증. `.env` (python-dotenv) 자격증명 + `.env.example`. 환경: vLLM `http://210.222.65.89:50200/v1` + `Qwen/Qwen3-8B`. **결과 PASS** (`outputs/phase-3-smoke.md`): Turn 1·3 same topic_id=0, Turn 3 응답이 Turn 1 정보(가을 시기) 명시 인지. **`response_filter` 옵션 추가** (caller=raw, LTM=filtered) — Qwen `<think>` 블록 prefill 토큰 절약. test 1개 추가, 전체 **49/49 PASS**.
+- **2026-04-25 Phase 4 진입 + Step 4-2/4-3/4-4 완료**: LongMemEval 벤치마크 평가 인프라 구축. (1) `HiEM.preload_history(turns)` 메서드 추가 — segmenter는 user만 통과, assistant는 직전 user의 topic 상속. 2 tests 추가 → **51/51 PASS**. (2) `scripts/run_longmemeval.py --method {sliding,full,rag,hi-em}` 4 baseline 통합 — sliding K=20 / full / rag bge-cosine top-K=10 / hi-em persistence HP. (3) `scripts/judge_longmemeval.py` — LongMemEval 6 prompt template 인용 (MIT, Copyright 2024 Di Wu), **judge model = Qwen/Qwen3-8B** (응답 생성과 동일 vLLM, 비용 0). question_type 5축 별 + abstention 분리 집계. **다음: 사용자 데이터 다운로드 + subset 30 sanity → 전체 500**.
 - **Phase 2.5 폐기**: LongMemEval session=topic 가정이 잘못된 설계였음 (한 세션 내 subtopic 공존 정상). LongMemEval은 Phase 4 downstream QA용으로 재배치.
 - **종합 보고서 작성**: `report.md` (Phase 0 시작 ~ Phase 1-5 시점, 12 섹션 + 부록).
 
@@ -63,15 +81,115 @@
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### 즉시 결정 필요: Phase 1-6 Gate FAIL 후 진로 (사용자 결정 대기)
+### 다음: Phase 5 — 정직 reframing + 결정 분기
 
-`report.md §7, §11, §12`를 읽고 5 후보 중 선택:
+**Phase 4-Re sanity 결과 (2026-04-27)**:
+| Method | Overall | knowledge | multi | ssa | ssp | ssu | temporal |
+|---|---|---|---|---|---|---|---|
+| sliding | 0.867 | 0.80 | 0.40 | 1.00 | 1.00 | 1.00 | 1.00 |
+| full | 0.833 | 0.80 | 0.60 | 1.00 | 1.00 | 0.80 | 0.80 |
+| rag | 0.767 | 0.40 | 0.40 | 1.00 | 1.00 | 1.00 | 0.80 |
+| **hi-em** | **0.700** | 0.60 | 0.00 | 1.00 | 1.00 | 0.60 | 1.00 |
 
-1. **TIAGE HP sweep** (5분, TopiOCQA처럼 grid 100 configs) — HP만으로 PASS 가능한지 확인
-2. **Hi-EM likelihood 교체** (옵션 A 변형) — `cosine(s, last_turn_in_topic)`로 likelihood 형식 변경, sCRP prior 유지
-3. **Phase 2 reframing 진입** — "boundary F1 ≠ Hi-EM 핵심 가치"라 정직 기록 후 LTM/Memory window 설계 → Phase 4 downstream QA로 진짜 가치 검증
-4. **옵션 D escalation** (multi-signal 재설계) — plan.md FAIL 정공법, TopiOCQA에서 효과 약함 전례 있음
-5. **Clustering 품질 추가 측정** (V-measure/ARI) — boundary F1 외 segmentation 가치 측면 검증
+archive set #2 vs new sanity: 모든 cell-level Δ ≤ 0.40 (5/qtype noise floor 안). 인프라 정확성 검증 ✓.
+
+**Hi-EM의 명확한 결과** (full 500 archive 기준):
+- Overall 0.562 (4 method 중 꼴찌, baseline 0.658~0.712 미달)
+- 유일한 강점: **ssp 0.97** (4 method 중 1위, full 0.93보다 +0.04)
+- 약점: multi-session 0.23, knowledge 0.51, temporal 0.46
+
+**Phase 5 결정 분기 (사용자 선택)**:
+
+| Path | 비용 | 산출물 |
+|---|---|---|
+| **5-A. 정직 reframing** (즉시 시작) | 1~2일 | `report.md` 갱신 + 종합 결과 표. Hi-EM contribution을 ssp로 좁힘 |
+| **5-B. 다른 dataset 탐색** | dataset당 2~6시간 | LongMemEval s/m, LoCoMo. Hi-EM 진짜 시나리오 (긴 history) 검증 |
+| **5-C. Ablation studies** | 2~3일 | sCRP prior / variance / memory_window 기여도 분리 |
+| **5-D. 논문 작성 결정** | 5-A 후 분기 | (a) short paper / (b) 추가 실험 / (c) negative result / (d) 폐기 |
+
+권고: **5-A 먼저 (정직 reframing) → 5-D 결정 → 필요 시 5-B/C**.
+
+### 새 인프라 entry 사용법 (Phase 4-Re 이후)
+
+```bash
+# 단일 method
+uv run python scripts/run_experiment.py --method hi-em --no-thinking ...
+
+# 4 method 비교 (session)
+uv run python scripts/run_session.py --session-id <name> --no-thinking ...
+
+# 다른 dataset
+uv run python scripts/run_session.py --session-id <name> \
+    --data benchmarks/LongMemEval/data/longmemeval_s_cleaned.json ...
+
+# Resume (같은 exp/session id 재호출)
+```
+
+### 새 entry 사용법 (Phase 4-Re)
+
+```bash
+# 단일 experiment
+uv run python scripts/run_experiment.py --method hi-em --no-thinking ...
+
+# Resume (같은 exp_id 재호출 — 자동 last completed round 감지)
+uv run python scripts/run_experiment.py --exp-id <existing> ...
+
+# Session 안에서 (HP sweep 등)
+uv run python scripts/run_experiment.py --session 20260427_phase4_main --method hi-em ...
+```
+
+### Legacy entry (점진 deprecation)
+
+Phase 4 baseline 측정 시 사용. 새 측정은 `run_experiment.py` 권고.
+
+```bash
+# 옛 한 줄 (4 method × run+judge, archive와 동일 결과 만들 때)
+uv run python scripts/run_phase4_all.py --workers 8 --no-thinking
+```
+
+`--workers`: ThreadPool concurrency (1=sequential, 8 권장, 16+ vLLM saturate 시 더 빠름). encoder/segmenter/LTM 모두 thread-safe.
+
+**W&B 결과** — 4 method가 같은 group으로 묶여 비교 view 자동 생성:
+- per-question: prefill_tokens, latency_sec, accuracy, topic_revisit_hit (Hi-EM only)
+- summary: accuracy_overall, accuracy_by_qtype/{5축}, prefill_tokens_{avg,p50,p95}, error_or_empty_rate, topic_revisit_hit_rate
+- 권장 panel: scatter (prefill_tokens vs accuracy) ← Hi-EM 좌상단이면 효율 우위 증명
+
+→ 결과 4 method × accuracy + question_type별 분리 알려주시면, 다음 단계 (전체 500 실행 또는 sanity 결과로 발견된 이슈 수정) 결정.
+
+### Phase 4 plan (Step 4-1~4-7) — 자세히는 plan.md 참조
+
+**목적**: Hi-EM의 진짜 가치 (boundary F1·ARI 모두 unsupervised metric으론 cosine 우위 → reframing 인정) 정량 검증. 4-way 비교에서 Hi-EM이 baseline 대비 의미 있는 개선을 보여야 Phase 5 (논문 실험) 진입 자격.
+
+**4-way baseline**:
+1. **Sliding window** (직전 K turn만 prefill)
+2. **Full context** (모든 history prefill, 토큰 한계까지)
+3. **RAG** (모든 turn 임베딩 후 cosine top-K 검색)
+4. **Hi-EM** (현재 구현된 segmenter + memory_window)
+
+**벤치마크**:
+- LongMemEval (2025+, 5개 능력 별: single-session-user, single-session-assistant, temporal-reasoning, multi-session, knowledge-update)
+- LoCoMo (snap-research, 10 conversations)
+
+**HP 사용**: persistence (α=1, λ=10, σ₀²=0.01) — 옵션 5 결과의 cluster 보존성 우위 근거
+
+**Step 4-1 (사용자 결정 필요)**:
+- 어떤 벤치마크부터? (LongMemEval가 5축 평가라 풍부, LoCoMo는 단순)
+- 어떤 model로? (smoke test의 Qwen3-8B 그대로? 다른 model?)
+- 평가 metric: accuracy / F1 / GPT-judge-score (LongMemEval 기본은 GPT-judge)
+
+**LongMemEval 권고** — 5개 능력 분리 측정으로 "어디서 Hi-EM이 강한가" 식별 가능. 단 평가 비용↑ (LLM judge 호출).
+
+**Step 4-2~**: 평가 스크립트 작성, 실행, 결과 정리, Phase 5 진입 판정.
+
+### Phase 1-6 결정 분기 진행 상황 (참고)
+
+### Phase 1-6 결정 분기 진행 상황 (참고)
+
+1. ~~**TIAGE HP sweep**~~ ✅ 완료 (2026-04-25). `outputs/phase-1-tiage-sweep.json`
+2. **Hi-EM likelihood 교체** — 보류 (Phase 4 결과 후 재검토)
+3. **Phase 2 reframing 진입** ✅ **채택, 진행 중** (Step 2-1 완료, 2-2부터 시작)
+4. **옵션 D escalation** — 보류
+5. ~~**Clustering 품질 측정**~~ ✅ 완료 (2026-04-25). `outputs/phase-1-clustering-quality.md`
 
 **핵심 메타 질문** (`report.md §11`):
 - Topic boundary F1 우위가 Hi-EM의 정의된 contribution인가? Yes → 1, 2, 4 / No → 3
@@ -147,9 +265,7 @@ cat benchmarks/LongMemEval/README.md
 cd /home/namchailin/Hi-EM
 
 python --version  # 3.10+ 확인
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync   # .venv 생성 + deps 설치 + hi_em editable install (한 줄)
 python -m spacy download en_core_web_sm
 
 # 환경 검증

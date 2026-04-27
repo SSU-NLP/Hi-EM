@@ -9,15 +9,26 @@
 
 ---
 
-## 현재 상태 (2026-04-25)
+## 현재 상태 (2026-04-27)
 
-**Phase 1 측정 완료, 종합 Gate FAIL — 결정 분기 대기.**
+**Phase 4-Re — research-experiment-infrastructure 적용 (R-1~R-9 완료, R-10 docs cascade, R-11 재현성 검증 대기). Phase 4 baseline (Hi-EM 0.562 < 모든 baseline) → archive 보존 후 새 인프라 위에서 후속 실험 (HP sweep / 다른 dataset).**
+
+- **2026-04-27 Phase 4-Re**: `src/hi_em/{atomic_io, experiment}.py` + `scripts/run_experiment.py` + `tests/test_{experiment, run_experiment}.py` (22 tests 추가). archive 분리 + atomic checkpoint + resume + session. 전체 **100/100 PASS**. 자세히는 `plan.md` Phase 4-Re 섹션 + `context/06-decision-log.md` 2026-04-27 entry.
 
 - **Phase 0 완료**: 자료 분석, 사건 모델 옵션 A 확정 ($P(\mathbf{s}_n \mid e_n=k) = \mathcal{N}(\mu_k, \mathrm{diag}(\sigma_k^2))$)
 - **Phase 1-1, 1-2 완료**: `src/hi_em/` 구현 + 18 unit tests passing
 - **Phase 1-3, 1-4 (TopiOCQA)**: Hi-EM F1=0.471 vs cosine 0.467 → **Gate PASS (marginal)**
 - **Phase 1-5 (TIAGE)**: Hi-EM 두 HP 모두 cosine 0.421에 패배 → **Gate FAIL**
 - **Phase 1-6 종합 Gate**: TopiOCQA PASS + TIAGE FAIL → **Phase 2 진입 보류**
+- **2026-04-25 TIAGE 108-config sweep 종료**: best F1=0.383 (α=10, λ=3, σ₀²=0.1) < cosine 0.421, 두 Gate 조건 모두 FAIL → **어떤 HP로도 baseline 못 넘음** 결정적 증거 확보.
+- **2026-04-25 옵션 5 (clustering quality) 완료**: V-measure/NMI/ARI 측정 — 모든 metric에서 cosine 우위. **Boundary F1 ↔ ARI trade-off** 발견 — persistence HP (α=1) ARI=0.398·0.397 vs freq-shift HP (α=10) ARI=0.187·0.314. **메모리 시스템 관점에선 persistence HP 적합** (cluster 보존성↑) → **Phase 2 LTM/Memory window HP 채택 근거**.
+- **2026-04-25 Phase 2 진입 + Step 2-1 LTM 저장 포맷 확정**: per-conversation **JSONL** (turn append-only) + **`<conv_id>.state.json`** (topic 상태 latest snapshot, overwrite). 디렉토리 `data/ltm/` (gitignored). Topic 분할 HP **persistence (α=1, λ=10, σ₀²=0.01)** 채택. 자세한 trade-off: `context/01-hi-em-design.md §9.1`.
+- **2026-04-25 Step 2-2 완료**: `src/hi_em/ltm.py` (LTM API 5 methods) + `tests/test_ltm.py` (8 tests). 전체 테스트 회귀 **26/26 PASS**.
+- **2026-04-25 Step 2-3 완료**: `src/hi_em/memory_window.py` (`select_memory_window`: cosine top-k topics × recency top-k turns/topic) + `tests/test_memory_window.py` (8 tests). 전체 회귀 **34/34 PASS**. Step 2-4 (importance/merge/adaptive K)는 Phase 4 결과로 튜닝 — 현 baseline 정책으로 Phase 3 진입.
+- **2026-04-25 Step 3-1 완료**: `src/hi_em/llm.py` (`OpenAIChatLLM` — OpenRouter / vLLM / OpenAI 본가 모두 OpenAI-compatible) + `tests/test_llm.py` (5 tests, mock OpenAI client). `requirements.txt` openai>=1.30 활성화. 전체 회귀 **39/39 PASS**. 백엔드 결정 근거: `memory/project_llm_backend.md`.
+- **2026-04-25 Step 3-2 완료**: `src/hi_em/orchestrator.py` — `HiEM.handle_turn(user_text)` 7단계 파이프라인. `tests/test_orchestrator.py` (9 tests, FakeEncoder + mock LLM). 전체 회귀 **48/48 PASS**. **A→B→A 토픽 복귀 시 첫 A turn 자동 prefill 검증** — Hi-EM 핵심 가치 작동 확인.
+- **2026-04-25 Step 3-3 완료**: `scripts/smoke_test_orchestrator.py` (실 LLM A→B→A 시나리오) + `.env`/`.env.example` (python-dotenv). vLLM 로컬 + Qwen3-8B로 **PASS** (`outputs/phase-3-smoke.md`). `response_filter` 옵션 추가 — `<think>` 블록 LTM strip (caller=raw, LTM=filtered). 전체 **49/49 PASS**. **Phase 3 종료, Phase 4 (downstream QA 4-way baseline) 진입 대기**.
+- **2026-04-25 Phase 4 진입 + Step 4-2/4-3/4-4 완료**: LongMemEval 평가 인프라 구축. `HiEM.preload_history(turns)` (segmenter는 user만 통과, assistant는 직전 user의 topic 상속, 2 tests 추가 → **51/51 PASS**). `scripts/run_longmemeval.py --method {sliding,full,rag,hi-em}` 4 baseline 통합. `scripts/judge_longmemeval.py` LongMemEval 6 prompt template 인용 (MIT, Copyright 2024 Di Wu) + **Qwen judge** (응답 생성과 동일 vLLM, 비용 0). 사용자 실행 대기: subset 30 sanity → 전체 500.
 - 종합 회고 + 다음 행동 후보 5종: `report.md`
 - 결정 이력 (append-only): `context/06-decision-log.md`
 - HP regime split 발견: persistence(α=1, λ=10, σ₀²=0.01) vs frequent-shift(α=10, λ=1, σ₀²=0.1)
@@ -34,7 +45,8 @@ Hi-EM/
 ├── CLAUDE.md                 Claude Code 작업 규칙 (환경 분리, 커밋, Notebook 정책, Step 완료 프로토콜)
 ├── README.md                 이 파일
 ├── report.md                 Phase 0~1-5 종합 회고 + 다음 결정 분기
-├── requirements.txt          로컬/git 환경 Python 의존성 (Colab과 분리 관리)
+├── pyproject.toml            project metadata + deps (uv-native, hatchling build)
+├── uv.lock                   잠금 파일 (재현성 — `uv sync`가 정확히 같은 버전 설치)
 ├── .gitignore
 │
 ├── context/                  확립된 설계 문서 (세션 시작 시 읽기)
@@ -47,16 +59,25 @@ Hi-EM/
 │   ├── 05-open-questions.md      열려있는 질문들
 │   └── 06-decision-log.md        설계 결정 이력 (append-only)
 │
-├── src/hi_em/                코어 구현 (Phase 1-1 완료)
+├── src/hi_em/                코어 구현 (Phase 1 + 2-2/2-3 + 3-1/3-2 완료)
 │   ├── embedding.py              bge-base-en-v1.5 wrapper (L2 norm, 768dim)
 │   ├── topic.py                  centroid + diag σ² + Welford 온라인 업데이트
 │   ├── scrp.py                   sticky_crp_unnormed (SEM 식 1)
-│   └── sem_core.py               HiEMSegmenter.assign() — online MAP 루프
+│   ├── sem_core.py               HiEMSegmenter.assign() — online MAP 루프
+│   ├── ltm.py                    LTM read/write API (per-conv JSONL + state.json, §9.1)
+│   ├── memory_window.py          select_memory_window — cosine top-k topics × recency top-k turns
+│   ├── llm.py                    OpenAIChatLLM — OpenRouter / vLLM / OpenAI 본가 (OpenAI-compatible)
+│   └── orchestrator.py           HiEM.handle_turn — 7단계 파이프라인 (embed→segment→snapshot→MW→llm→append)
 │
-├── tests/                    pytest (Phase 1-2 완료, 18 tests passing)
+├── tests/                    pytest (56 tests passing)
 │   ├── test_scrp.py              7 tests
 │   ├── test_topic.py             6 tests
-│   └── test_sem_core.py          5 tests
+│   ├── test_sem_core.py          5 tests
+│   ├── test_ltm.py               8 tests
+│   ├── test_memory_window.py     8 tests
+│   ├── test_llm.py               5 tests (mock OpenAI client)
+│   ├── test_orchestrator.py      13 tests (토픽 복귀, response_filter, preload_history, return_debug)
+│   └── test_eval_logging.py      4 tests (WandbRun no-op fallback, aggregate_summary)
 │
 ├── scripts/                  실행/분석 스크립트
 │   ├── check_step_done.py            Step 완료 gate
@@ -67,7 +88,9 @@ Hi-EM/
 │   ├── run_topiocqa_anchors.py       Anchor 4종
 │   ├── run_topiocqa_bigencoder.py    bge-large 비교
 │   ├── run_topiocqa_contextualized.py Context window K∈{0..all}
-│   └── run_tiage_segmentation.py     Phase 1-5 main 측정
+│   ├── run_tiage_segmentation.py     Phase 1-5 main 측정
+│   ├── run_tiage_sweep.py            Phase 1-6 TIAGE 108-config grid (TopiOCQA mirror)
+│   └── run_clustering_quality.py     Phase 1-6 옵션 5: V-measure/NMI/ARI
 │
 ├── notebooks/                얇은 wrapper — Colab 인터랙티브 실행 편의용 (선택적)
 │   └── phase-1-tiage.ipynb       TIAGE 평가 + Phase 1-6 종합 Gate
@@ -81,7 +104,17 @@ Hi-EM/
 │   ├── module-template.py
 │   └── experiment-log.md
 │
-├── outputs/                  실험 결과
+├── archive/                  영구 보존 (2026-04-26 baseline raw 결과 + ltm)
+│   └── 2026-04-26-baseline/
+│       ├── README.md             (4 HP × sanity/full 표 + lost 측정 명시, tracked)
+│       ├── outputs/              (raw jsonl, untracked)
+│       └── ltm/                  (per-conv state, untracked)
+│
+├── results/                  Phase 4-Re 새 인프라 (2026-04-27~)
+│   ├── experiments/{exp_id}/   (gitignored — round/checkpoint/summary 누적)
+│   └── sessions/{session_id}/  (HP sweep/multi-method 묶음, tracked common config)
+│
+├── outputs/                  legacy (Phase 0~3 산출물)
 │   ├── benchmark-analysis.md             Phase 0-2 4 벤치마크 분석
 │   ├── phase-1-topiocqa.md               Phase 1-3/1-4 결과 + 7-iter 탐색 이력
 │   ├── phase-1-topiocqa-sweep.json       (탐색 결과 raw)
@@ -90,7 +123,10 @@ Hi-EM/
 │   ├── phase-1-topiocqa-anchors.json
 │   ├── phase-1-topiocqa-encoder.json
 │   ├── phase-1-topiocqa-contextualized.json
-│   └── phase-1-tiage.md                  Phase 1-5 결과
+│   ├── phase-1-tiage.md                  Phase 1-5 결과
+│   ├── phase-1-tiage-sweep.json          Phase 1-6 TIAGE sweep raw (108 configs)
+│   ├── phase-1-clustering-quality.md     Phase 1-6 옵션 5 분석
+│   └── phase-1-clustering-quality.json   raw
 │
 └── SEM-paper.pdf             Franklin et al. 2020 원본 논문 (Psychological Review)
 ```
@@ -145,13 +181,13 @@ cd ..
 ## 빠른 시작
 
 ```bash
-# 0. 로컬 환경 의존성 설치 (Colab 사용자는 setup_colab.ipynb 실행, 아래 무시)
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+# 0. 환경 셋업 (uv 0.8+ 필요. uv 자체 설치: https://docs.astral.sh/uv/)
+uv sync                                        # .venv 생성 + deps 설치 + hi_em editable install
+# (Colab 사용자는 setup_colab.ipynb 실행)
 
 # 1. Step 진행 중 언제든 상태 검증
-python scripts/check_step_done.py             # 현재 Step 자동 감지
-python scripts/check_step_done.py --step 0-3  # 특정 Step
+uv run python scripts/check_step_done.py             # 현재 Step 자동 감지
+uv run python scripts/check_step_done.py --step 0-3  # 특정 Step
 
 # 2. Step 완료 처리 (CLAUDE.md "Step 완료 프로토콜" 참조)
 #    - 3-angle self-audit (구조/동작/설계)

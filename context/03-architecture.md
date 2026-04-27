@@ -25,21 +25,47 @@ src/hi_em/
 ├── cue_phrase.py        # regex cue detector
 └── question_type.py     # rule-based qtype classifier
 
-## scripts/
+## scripts/ (Phase 1 현재 실재)
 scripts/
-├── analyze_benchmarks.py  # Phase 0 벤치마크 분석
-├── prepare_benchmarks.py  # 데이터 전처리
-├── run_locomo.py
-├── run_topiocqa.py
-├── run_longmemeval.py
-└── analyze_results.py
+├── check_step_done.py             # Step 완료 검증 게이트 (CLAUDE.md "Step 완료 프로토콜" 2단계)
+├── run_topiocqa_segmentation.py   # Phase 1-3 메인 평가 (TopiOCQA dev F1)
+├── run_topiocqa_sweep.py          # 108-config HP grid (α × λ × σ₀²) — Phase 1-4 best HP 탐색
+├── run_topiocqa_variants.py       # 5가지 구조 변형 비교 (gauss-origin/global/self, vMF-origin/const)
+├── run_topiocqa_anchors.py        # 옵션 A 변형: anchor turn 기반 likelihood
+├── run_topiocqa_bigencoder.py     # bge-large 인코더 시도 (Phase 1 추가 탐색)
+├── run_topiocqa_contextualized.py # contextualized embedding 시도
+├── run_topiocqa_multisignal.py    # 옵션 D escalation 탐색 (multi-signal)
+├── run_tiage_segmentation.py      # Phase 1-5 TIAGE test 평가 (persistence + freq-shift 두 점)
+├── run_tiage_sweep.py             # Phase 1-6 TIAGE 108-config grid (TopiOCQA sweep mirror)
+└── run_clustering_quality.py      # Phase 1-6 옵션 5: V-measure/NMI/ARI 측정 (cosine vs Hi-EM 두 HP)
 
-## tests/
+# Phase 2 진입 (2026-04-25). 신규 모듈:
+#   src/hi_em/ltm.py             ✅ Step 2-2 (LTM read/write API, per-conv JSONL + state.json, §9.1)
+#   src/hi_em/memory_window.py   ✅ Step 2-3 (select_memory_window: cosine top-k topics × recency top-k turns)
+#   src/hi_em/llm.py             ✅ Step 3-1 (OpenAIChatLLM — OpenRouter/vLLM/OpenAI 본가 OpenAI-compatible)
+#   src/hi_em/orchestrator.py    ✅ Step 3-2 (HiEM.handle_turn — 7단계 파이프라인 + response_filter 옵션)
+#   tests/test_ltm.py            ✅ 8 tests
+#   tests/test_memory_window.py  ✅ 8 tests
+#   tests/test_llm.py            ✅ 5 tests (mock OpenAI client)
+#   tests/test_orchestrator.py   ✅ 10 tests (FakeEncoder + mock LLM, 토픽 복귀 + response_filter 검증)
+#   scripts/smoke_test_orchestrator.py ✅ Step 3-3 (실 LLM A→B→A; vLLM Qwen3-8B PASS, outputs/phase-3-smoke.md)
+#   scripts/run_longmemeval.py   ✅ Step 4-3 (4 baseline: sliding/full/rag/hi-em → hypothesis jsonl)
+#   scripts/judge_longmemeval.py ✅ Step 4-4 (LongMemEval prompt 인용, Qwen judge)
+#   src/hi_em/orchestrator.py    ✅ Step 4-2 (preload_history 메서드 추가, 51/51 tests)
+#   .env.example                 ✅ 협업자 안내 (.env는 gitignored, python-dotenv)
+# Phase 4 진행 중 — Step 4-5/4-6 사용자 실행 대기 (subset → 전체)
+# 추가 예정:
+#   Step 2-4: importance / merge / adaptive K_window (Phase 4 결과 후 튜닝)
+# LTM 데이터 위치: data/ltm/<conv_id>.{jsonl,state.json} (gitignored)
+# LLM 백엔드: memory/project_llm_backend.md (OpenAI-compatible, OpenRouter/vLLM)
+# Phase 2+ 진입 시 추가 예정: orchestrator/LTM/memory_window 등
+
+## tests/ (Phase 1 현재 실재, 18 tests passing)
 tests/
-├── test_topic.py
-├── test_scrp.py
-├── test_sem_core.py
-└── test_orchestrator.py
+├── test_topic.py        # Topic 클래스 (Welford 온라인 update + Gaussian likelihood)
+├── test_scrp.py         # sticky-CRP prior (SEM2 `_calculate_unnormed_sCRP` 수치 매칭)
+└── test_sem_core.py     # HiEMSegmenter MAP 할당 루프 (prior×likelihood argmax + boundary flag)
+# Phase 2+ 진입 시 추가 예정: test_orchestrator, test_ltm, test_memory_window
 
 ## 진입점 (예상)
 ```python
@@ -50,3 +76,36 @@ response = hi_em.handle_turn(user_query="...")
 ```
 
 `orchestrator.handle_turn`은 context 구성만, LLM 호출은 주입된 callable에 위임.
+
+---
+
+## Phase 4-Re 인프라 (2026-04-27 추가, research-experiment-infrastructure skill 적용)
+
+```
+src/hi_em/
+├── atomic_io.py         # save_json / load_json / append_jsonl / load_jsonl (utf-8 surrogate-safe)
+└── experiment.py        # ExperimentMeta · create_experiment · mark_round_complete
+                         #   · find_resumable_experiment · sanity_check_summary · Session
+
+scripts/
+├── run_experiment.py    # 신규 단일 entry. round 단위 atomic checkpoint + resume + session
+└── (legacy) run_longmemeval.py / judge_longmemeval.py / run_phase4_all.py — 점진 deprecation
+
+configs/
+└── hiem.json            # 모든 알고리즘 HP single source-of-truth (segmenter / memory_window /
+                         # topic_importance / stm / round / evaluation 6 섹션)
+
+archive/2026-04-26-baseline/   # 기존 결과 영구 보존 (outputs/ + ltm/ + README.md)
+results/
+├── experiments/{exp_id}/      # 새 실험: rounds/ + checkpoints/ + experiment.json + summary.json
+└── sessions/{session_id}/     # HP sweep / multi-method 묶음 (tracked, common config)
+
+tests/
+├── test_experiment.py        # 17 tests — atomic / lifecycle / sanity_check / Session
+└── test_run_experiment.py    # 5 tests — round cycle / mid-crash / resume / idempotent /
+                              # SKILL §10 #13 reference vs interrupt+resume invariant
+```
+
+**Round = 50 questions** (oracle 500 → 10 rounds). Resume granularity.
+**Phase**: (1) run hypothesis (2) judge accuracy. atomic save per phase, checkpoint after both.
+**Metric**: per-method × per-qtype accuracy + prefill_tokens/latency p50/p95 + error_rate + topic_revisit_hit_rate.

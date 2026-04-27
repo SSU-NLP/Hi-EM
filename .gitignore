@@ -18,8 +18,30 @@ outputs/tmp/
 *.log
 .venv/
 
+# LTM 영속 저장 — per-conversation jsonl + state.json (context/01-hi-em-design.md §9.1)
+data/
+
+# 환경변수 (자격증명) — .env.example는 tracked
+.env
+
 # PDF 텍스트 덤프 (작업 보조)
 sem.txt
 
 # Claude Code local settings
 .claude/
+
+SEM/
+
+wandb
+
+# Phase 4-Re research-experiment-infrastructure: experiment-level data is local-only.
+# Sessions are tracked (config snapshot is part of the project), but experiments + replays
+# can be huge (per-question jsonl × hundreds of runs).
+results/experiments/
+results/replays/
+
+# Archive 의 raw 결과/LTM 은 untracked (분석 md 는 tracked).
+archive/*/ltm/
+archive/*/outputs/*.jsonl
+archive/*/outputs/*.json
+archive/*/outputs/*.wandb-run-id

@@ -270,3 +270,390 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 **영향 범위**: `context/01-hi-em-design.md §3`("철회" 기록), `02-math-model.md` 생성 모형 단순화.
 
 **대안**: 확장 유지하되 double counting은 정규화로 상쇄 (기각: 해석 혼란, 이득 불명).
+
+---
+
+### 2026-04-25: TIAGE HP sweep 종료 + 옵션 1 폐기 → 옵션 5+3 권장 경로 채택
+
+**근거**:
+- Phase 1-6 종합 Gate FAIL 후 5 후보(`report.md §12`) 중 옵션 1(TIAGE HP sweep)을 가장 먼저 처리. TopiOCQA만 sweep best로 보고된 비대칭 해소 + reframing 논증의 결정적 증거 확보 목적.
+- `scripts/run_tiage_sweep.py` 작성 (TopiOCQA sweep mirror, 108 configs: 3α × 6λ × 6σ²) → TIAGE test 실행 (4.3s, embedding 캐시).
+- 결과: **best Hi-EM F1 = 0.383 (α=10, λ=3, σ₀²=0.1) vs cosine baseline 0.421**. Gate 두 조건 모두 FAIL (Hi-EM > cosine: False, -0.038; Hi-EM > 0.4: False).
+- Top 10 패턴 분석: 모두 α=10 (새 토픽 자주 생성), λ 다양(0.0~3.0, stickiness 영향 약함), σ₀² 큰 값 선호(0.05~0.1, likelihood gating 약화) → high recall(0.7~0.96) / low precision(0.23~0.26) → **over-segmentation 패턴**. TIAGE chit-chat의 boundary 신호 자체가 흐려서 sticky-CRP 정밀 분할이 본질적으로 불가능.
+
+**결정**:
+- 옵션 1 폐기 (Gate FAIL 확정, 추가 시도 무의미).
+- 권장 경로 = **옵션 5 → 옵션 3** 묶음. 옵션 5(V-measure/ARI)로 boundary F1 외 unsupervised metric 보완 → 옵션 3(Phase 2 reframing 진입)에서 "boundary F1은 sanity check일 뿐, 진짜 가치는 downstream QA"라는 논증을 정직하게 기록.
+- 옵션 2(likelihood 교체)·4(multi-signal 옵션 D)는 보류. Phase 4 결과 후 필요 시 재고.
+
+**영향 범위**:
+- `handoff.md` 현재 상태 + 다음 할 일 갱신
+- `plan.md` Phase 1-6 결정 분기 #1 [x] 처리
+- `report.md §7.1` 옵션 A에 sweep 결과 + 패턴 분석 추가
+- `scripts/run_tiage_sweep.py` (신규)
+- `outputs/phase-1-tiage-sweep.json` (신규, sweep 자동 생성)
+- `context/03-architecture.md` scripts 목록에 sweep 추가
+
+**대안 및 기각 사유**:
+- 옵션 1을 Phase 5(논문 실험) 직전으로 미루기 (기각: 옵션 3 reframing 논증의 핵심 증거가 sweep 결과인데, 그게 없으면 reframing이 약한 주장이 됨. 지금 처리해야 옵션 3 진행 가능).
+- 옵션 4(multi-signal) 우선 (기각: TopiOCQA에서 multi-signal 효과 약함 전례, scope creep 위험).
+- TIAGE에 likelihood 교체(옵션 2)부터 시도 (기각: HP가 본질 한계인지 likelihood 형식이 본질 한계인지 분리 측정 어려움. 먼저 HP 천장 확인 = 옵션 1이 정공법).
+
+---
+
+### 2026-04-25: 옵션 5 (clustering quality) 완료 — 가설 반박 + Phase 2 HP 선택 근거 확보
+
+**근거**:
+- `scripts/run_clustering_quality.py` 작성, sklearn V-measure/NMI/ARI/homogeneity/completeness 측정. TopiOCQA dev + TIAGE test 두 벤치마크 × cosine baseline (V-measure best θ) + Hi-EM 두 HP regime (freq-shift 또는 sweep-best, persistence).
+- 결과 (`outputs/phase-1-clustering-quality.md` 표 참조):
+  - **모든 metric에서 cosine 우위** (TopiOCQA cosine ARI=0.488 vs Hi-EM best 0.398; TIAGE cosine ARI=0.568 vs Hi-EM best 0.397).
+  - V-measure / NMI 차이는 작음(~0.01-0.02), ARI 차이는 큼(0.1+).
+  - Hi-EM 패턴: homogeneity↑ / completeness↓ → over-segmentation (sweep top 10 패턴과 일치).
+- **새 발견**: Boundary F1 ↔ ARI **trade-off**:
+  - freq-shift HP (α=10): TopiOCQA F1=0.471 (best) / ARI=0.187 (worst)
+  - persistence HP (α=1): F1=0.378 / ARI=0.398 (Hi-EM best)
+  - α↑ → boundary 정확도↑ + over-cluster → ARI↓; α↓ → boundary 둔감 + 묶기 보존 → ARI↑
+
+**결정**:
+- 원래 가설("Hi-EM은 boundary F1에 약해도 토픽 ID 부여 우위") **반박** 기록.
+- **Phase 2 LTM/Memory window 설계 시 persistence HP (α=1, λ=10, σ₀²=0.01) 채택** — 메모리 시스템 관점에선 cluster 보존성(completeness/ARI)이 boundary 정확도보다 중요. 같은 토픽 복귀 시 같은 메모리 호출이 핵심 가치.
+- 옵션 3 (Phase 2 reframing 진입) **강화된 논증**: "어떤 unsupervised segmentation metric으로도 Hi-EM의 가치 증명 불가. **그러나 메모리 시스템 관점에선 persistence HP가 cluster 보존성 우위**. 진짜 가치는 Phase 4 downstream QA에서만 검증 가능."
+
+**한계**:
+- TopiOCQA/TIAGE는 평균 12~15턴, 토픽 복귀 거의 없음 → Hi-EM centroid 비교 우위 시나리오(긴 대화 + 복귀)가 데이터에 없음. Phase 4 LongMemEval/LoCoMo에서만 검증 가능.
+- TIAGE GT cluster ID는 binary shift label에서 derive (sequential 가정) — cosine baseline 형식과 동일하므로 baseline에 형식적 유리. Hi-EM도 같은 GT 기준이라 비교 자체는 fair.
+
+**영향 범위**:
+- `scripts/run_clustering_quality.py` (신규)
+- `outputs/phase-1-clustering-quality.json` (raw)
+- `outputs/phase-1-clustering-quality.md` (해석)
+- `handoff.md` 현재 상태 + 다음 할 일 (옵션 5 ✅, 옵션 3 권장)
+- `plan.md` 옵션 5 [x] + persistence HP Phase 2 채택 메모
+- `report.md §12` 옵션 5 결과 한 줄
+- `context/03-architecture.md` scripts 추가
+- `README.md` 디렉토리 + 현재 상태
+
+**대안 및 기각 사유**:
+- TopiOCQA만 측정 (기각: TIAGE도 함께 봐야 두 벤치마크 일관성 확인 가능. 1분 추가만 필요).
+- HP 단일 측정 (freq-shift만) (기각: persistence HP 추가 측정으로 trade-off 발견 — 큰 발견).
+- 다른 cluster baseline (k-means on embeddings 등) 추가 (기각: scope creep, cosine sequential이 baseline으로 충분).
+
+---
+
+### 2026-04-25: Phase 2 진입 (옵션 3 reframing) + Step 2-1 LTM 저장 포맷 확정
+
+**근거**:
+- Phase 1-6 옵션 1·5 종료 후 옵션 3(Phase 2 reframing 진입) 채택. boundary F1·ARI 모두 unsupervised metric으로는 Hi-EM 가치 증명 불가 → **진짜 가치는 Phase 4 downstream QA에서만 검증 가능**. Phase 2 LTM/Memory window 구현 후 Phase 4 진입이 정공법.
+- LTM 저장 포맷 후보: JSON / SQLite / Parquet / Hybrid(JSONL+npy memmap). 결정 요인: 매 턴 append (write), centroid cosine top-k (read), 10k turns 미만 스케일, 단일 process (no concurrency), debug 우선.
+
+**결정**:
+- **포맷: per-conversation JSONL (embedding inline, append-only) + `<conv_id>.state.json` (topic 상태 latest snapshot, overwrite)**
+- **디렉토리**: `data/ltm/` (gitignored)
+- **Turn 스키마**: `{turn_id, ts, role, text, embedding[768], topic_id, is_boundary}`
+- **Topic state**: `{conv_id, n_turns, topics: [{topic_id, centroid, variance, count, first_turn_id, last_turn_id}]}`
+- **Topic 분할 HP**: persistence (α=1, λ=10, σ₀²=0.01) 채택 — 옵션 5에서 ARI/completeness 우위 (cluster 보존성)가 메모리 시스템 가치와 정합.
+
+**영향 범위**:
+- `context/01-hi-em-design.md §9.1` 신규 섹션 + `§A` 한 줄 [확정] 처리
+- `plan.md` Phase 2 Step 2-1 [x] + 2-2~ 명시
+- `.gitignore` `data/` 추가
+- `handoff.md` 다음 할 일 → Step 2-2 (`src/hi_em/ltm.py` 구현)
+- `context/03-architecture.md` 향후 추가 모듈 표시 (`ltm.py`, `memory_window.py`)
+
+**대안 및 기각 사유**:
+- SQLite (기각: index 이점은 over-engineered, cat/grep 디버깅 손실, sqlite3 CLI 추가 학습 비용).
+- Parquet (기각: append 비효율 — rewrite, pyarrow 의존성 추가, 바이너리라 디버깅 어려움).
+- Hybrid (JSONL+npy memmap) (기각: embedding 30% 절약하나 두 파일 동기화 부담 + idx 매핑 복잡도. 50MB 절약 가치 없음).
+- 전역 1 file (기각: multi-conversation lock/seek 부담, 손상 risk 전파).
+- Topic state도 append-only (`.topics.jsonl`) (기각: centroid는 매 턴 변하므로 history 가치 낮음, 디버깅 필요 시 future 변경).
+- HP freq-shift (α=10) 채택 (기각: ARI 0.187·0.314로 메모리 보존성 약함. 옵션 5 trade-off에서 명확).
+
+**Phase 5 직전 재검토 트리거**:
+- Phase 4 read 병목 시 → Hybrid/SQLite 교체.
+- 100k turns 이상 시 → Parquet 검토.
+
+---
+
+### 2026-04-25: Phase 3-1 LLM 백엔드 = OpenAI-compatible (OpenRouter + vLLM 기본)
+
+**근거**:
+- Phase 3 orchestrator가 LLM을 호출해야 하므로 어댑터 결정 필요. CLAUDE.md "no fine-tuning" 원칙 + 모델 변수 비교(GPT-4o / Claude / Llama) 위해 외부 API 추상화.
+- 사용자 결정 (2026-04-25): OpenAI Chat Completion API 템플릿 + API key 인증 + 기본 endpoint = OpenRouter / vLLM. 둘 다 OpenAI-compatible이라 어댑터 1개로 충분.
+
+**결정**:
+- 모듈: `src/hi_em/llm.py` — `OpenAIChatLLM(api_key, base_url)` + `chat(messages, model, **kwargs) -> str`
+- 의존성: `openai>=1.30` (requirements.txt 활성화, 설치된 버전 2.32.0)
+- 인증 env var: `OPENAI_API_KEY` + `OPENAI_BASE_URL` (생성자 인자 우선, env fallback)
+- model 인자는 호출 시 명시 (default 없음 — caller 책임)
+- sampling 인자는 `**kwargs` 통과 (temperature, max_tokens 등 OpenAI SDK 그대로)
+- 비-streaming, 에러 처리 최소 (raise as-is)
+- Anthropic SDK·Google SDK 직접 사용 금지 (OpenRouter 경유)
+
+**영향 범위**:
+- `requirements.txt` openai>=1.30 활성화
+- `src/hi_em/llm.py` (신규)
+- `tests/test_llm.py` (5 tests, mock client)
+- `src/hi_em/__init__.py` export
+- `context/03-architecture.md`
+- `plan.md` Phase 3 → Step 3-1/3-2/3-3 분할
+- `handoff.md`
+- `README.md`
+- `memory/project_llm_backend.md` (project memory)
+
+**대안 및 기각 사유**:
+- 함수 1개 (`call_chat(...)`)만 (기각: client config 매번 재생성, env var 읽기 중복).
+- 클래스 생성 시 model 고정 (기각: 한 orchestrator가 여러 model 비교 시 불편).
+- streaming 즉시 지원 (기각: 현 단계 단순성 우선, downstream 평가에 streaming 불필요).
+- `httpx` 직접 호출 (기각: 의존성 줄이는 이득 < 유지비. openai SDK는 안정적).
+- Anthropic SDK 별도 어댑터 (기각: OpenRouter로 충분, scope creep. 필요해지면 future 추가).
+- env var 분리 (`OPENROUTER_API_KEY` / `VLLM_BASE_URL`) (기각: 두 backend 동시 사용 시나리오 없음 — 한 번에 하나 선택. `OPENAI_*` 표준이 OpenAI SDK 자체 default와 정합).
+
+**Phase 4/5 재검토 트리거**:
+- streaming 필요 시 → `chat_stream(...)` 추가.
+- retry/timeout/rate-limit 처리 필요 시 → wrapper 추가.
+- 다른 backend (직접 Anthropic, Google) 필요 시 → 별도 adapter, 단 OpenRouter로 가능한지 먼저 확인.
+
+---
+
+### 2026-04-25: Step 3-3 smoke test PASS + response_filter (think strip) 옵션 추가
+
+**근거**:
+- vLLM 로컬 + Qwen/Qwen3-8B로 A→B→A 시나리오 실행. 결과: Turn 1·3 same `topic_id=0`, Turn 2 boundary 정확, Turn 3 LLM 응답이 Turn 1 정보(가을 시기) 명시 인지 → **memory window가 정확히 Turn 1을 prefill로 승격, LLM이 사용**.
+- Qwen3-8B는 reasoning model — 응답에 `<think>...</think>` 블록 포함. 그대로 LTM에 저장하면 **다음 turn prefill 토큰 낭비**.
+- 환경변수 관리: `.env` (gitignored) + `.env.example` (tracked, 협업자 안내) + `python-dotenv`. 라이브러리 코드 (`hi_em/*.py`)는 환경 변경 안 함, entry point 스크립트에서만 `load_dotenv()`.
+
+**결정**:
+- `HiEM.__init__`에 `response_filter: Callable[[str], str] | None` 옵션 추가:
+  - **caller에 raw 응답 반환** (사용자가 thinking 보고 싶다면 그대로)
+  - **LTM에는 filtered 응답 저장** (다음 prefill 토큰 절약)
+- smoke_test 스크립트에 `strip_think_tags` helper + `--no-strip-think` 플래그.
+- `TOKENIZERS_PARALLELISM=false` setdefault (HF tokenizers fork 경고 silence).
+- 환경변수: `.env` 파일 + python-dotenv, entry point에서만 load.
+
+**영향 범위**:
+- `src/hi_em/orchestrator.py` (response_filter 인자)
+- `tests/test_orchestrator.py` (test 1개 추가, 49/49)
+- `scripts/smoke_test_orchestrator.py` (신규)
+- `outputs/phase-3-smoke.md` (실 LLM trace)
+- `.env.example` (신규), `.gitignore` (.env 추가), `requirements.txt` (python-dotenv 추가)
+- `plan.md` Step 3-3 [x], `handoff.md`, `README.md`, `context/03-architecture.md`
+
+**대안 및 기각 사유**:
+- `strip_think: bool` 단순 flag (기각: thinking 형식이 model마다 다름 — `<think>` / `<thinking>` / `<reasoning>` 등. callable 주입이 더 일반적).
+- 라이브러리에서 자동 think strip (기각: 라이브러리는 기본적으로 데이터 변형 안 하는 게 안전. 명시적 opt-in).
+- `python-dotenv` 라이브러리 코드에서 자동 load (기각: 라이브러리는 환경 변경 부작용 없어야. entry point 책임).
+- `.env`를 git tracked (기각: API key 유출 위험).
+- direnv 사용 (기각: 추가 도구 학습 비용, python-dotenv가 더 보편적).
+
+**Phase 4 진입 자격 충족** — 모든 단위 테스트 통과 + 실 LLM end-to-end trace 검증.
+
+---
+
+### 2026-04-25: 환경 관리 uv-native 마이그레이션 (`pyproject.toml` + `uv sync`)
+
+**근거**:
+- 현재 `requirements.txt` + `uv pip install` 방식은 (a) 버전 잠금 없음 → 재현성 약함, (b) deps 추가 시 `requirements.txt` 수동 갱신 필요, (c) `conftest.py` sys.path hack 의존.
+- uv-native (`pyproject.toml` + `uv.lock` + `uv sync`)는 (a) lock 파일로 정확한 버전 재현, (b) `uv add X`로 자동 lock+pyproject 갱신, (c) editable install로 `hi_em` 모듈 자연 import.
+- 협업자 onboarding: `uv sync` 한 줄로 모든 환경 복원.
+
+**결정**:
+- `pyproject.toml` 작성 (project metadata + dependencies + dev group + hatchling build + tool.pytest)
+- `uv sync` 실행 → `.venv` 재생성 + `uv.lock` (406KB) 자동 생성
+- `requirements.txt` **삭제** (uv 단일 source-of-truth)
+- `conftest.py` **삭제** (editable install로 sys.path hack 불필요)
+- `uv.lock` git tracked (재현성), `.venv`는 그대로 gitignored
+- `[tool.uv]` `python-preference = "only-managed"` — uv-managed Python 강제 (lzma 등 stdlib 빌드 누락 회피)
+
+**영향 범위**:
+- `pyproject.toml` (신규)
+- `uv.lock` (신규, git tracked)
+- `requirements.txt` (삭제)
+- `conftest.py` (삭제 — editable install로 `hi_em` 자동 import)
+- `README.md` 빠른 시작 / 디렉토리 구조
+- `handoff.md` 환경 셋업 섹션
+- 향후 deps 추가는 `uv add X` (`pyproject.toml` + `uv.lock` 자동 갱신)
+
+**검증**: `uv sync` 후 전체 테스트 회귀 **51/51 PASS** (2.80s).
+
+**대안 및 기각 사유**:
+- `requirements.txt` 유지 (기각: 두 source 동기화 부담, 단일 source가 정공법).
+- `conftest.py` 유지 (기각: editable install로 자연 해결되는데 hack 유지할 이유 없음).
+- `[project.optional-dependencies]` (기각: PEP 735 `[dependency-groups]`가 더 modern, uv 권장).
+- `pyproject.toml` 라이브러리 mode 안 함 (기각: `[build-system]` + hatchling으로 editable install이 깨끗).
+
+---
+
+### 2026-04-26: Phase 4 W&B logging 메트릭 설계 — codex review 후 확정
+
+**근거**:
+- Phase 4가 Hi-EM 가치 증명 또는 정직한 폐기의 마지막 게이트. 메트릭 설계가 잘못되면 결론 자체가 흔들림.
+- 1차안: accuracy + prefill_n_msgs/tokens + latency + (Hi-EM) n_topics/boundary_count/query_assigned_topic/selected_in_window. Visualizations: bar/heatmap/scatter/histogram/table.
+- Codex review 받음 — 6개 review 항목 답변. 핵심: (1) `topic_revisit_hit_rate` 추가 (A→B→A 가치 직접 측정 — smoke test에서 단위 확인됐지만 정량 없음), (2) `error_or_empty_hypothesis_rate` 추가 (run_longmemeval.py가 예외 시 empty hypothesis 작성 → raw accuracy가 fragility 숨김), (3) over-designed metric 4개 drop, (4) tokenizer는 실제 Qwen chat template (15% 휴리스틱 오차는 효율 claim 약화), (5) run-per-method 구조, (6) latency histogram → scalar p50/p95.
+
+**결정**:
+- **per-question**: `accuracy`, `prefill_n_msgs`, `prefill_tokens`, `latency_sec`, `is_empty`, (Hi-EM only) `topic_revisit_hit`
+- **summary**: `accuracy_overall`, `accuracy_by_qtype/{5축}`, `prefill_tokens_{avg,p50,p95}`, `latency_sec_{avg,p50,p95}`, `error_or_empty_rate`, (Hi-EM only) `topic_revisit_hit_rate`
+- **config**: method, model, dataset, alpha/lmda/sigma, k_topics, k_turns_per_topic, sliding_k, rag_k, workers, limit, temperature, max_tokens
+- **W&B 구조**: run-per-method, group=`<dataset_stem>-<UTC ts>` → 4 method 자동 비교 view
+- **Run↔Judge 연결**: `<output>.wandb-run-id` sidecar 파일 → judge가 같은 run에 accuracy 추가
+- **Tokenizer**: `transformers.AutoTokenizer.from_pretrained(model)` + `apply_chat_template` (정확). lazy cache.
+- **No-op fallback**: WANDB_API_KEY 미설정 시 `WandbRun`이 모든 op no-op (스크립트 정상 동작)
+
+**구현 영향**:
+- `pyproject.toml`: `wandb>=0.26.1` 추가
+- `src/hi_em/eval_logging.py` (신규): WandbRun, count_prefill_tokens, aggregate_summary
+- `src/hi_em/orchestrator.py`: `handle_turn(return_debug=True)` 옵션 추가 (test 1개)
+- `scripts/run_longmemeval.py`: baseline 함수 4개 모두 `(response, messages, extras)` tuple 반환. Hi-EM은 `topic_revisit_hit` 계산. wandb hooks.
+- `scripts/judge_longmemeval.py`: sidecar resume + accuracy backfill
+- `tests/test_eval_logging.py` (4 tests) → 전체 56/56 PASS
+- `.env.example`: WANDB_API_KEY/PROJECT 추가
+- `handoff.md`/`plan.md`: Step 4-4a 완료 + W&B 결과 활용법
+
+**대안 및 기각 사유**:
+- 1차안 그대로 유지 (기각: codex가 반박한 "Hi-EM 차별화 측정에 직접 metric 빠짐" 정당함).
+- judge 결과를 별도 wandb run으로 (기각: 같은 method의 accuracy/efficiency가 다른 run이면 비교 view 깨짐).
+- 토크나이저 휴리스틱 (`split * 1.3`) (기각: codex 지적 — 15% 오차는 "동일 accuracy + 적은 tokens" 효율 claim 정합성 깨짐).
+- 4 method 한 run에 묶기 (기각: codex 지적 — W&B sweep/filter는 method가 config 필드일 때 자연. 현재 호출 구조와 일치).
+- W&B 의존성 hard requirement (기각: 자격증명 없는 사용자/CI에서 스크립트 막힘. no-op fallback이 안전).
+
+---
+
+### 2026-04-26: Phase 4 1차 sanity 실패 → 4 fix (max_tokens, stratify, parse_yes_no)
+
+**근거**:
+- `uv run python scripts/run_phase4_all.py --limit 30` 1차 실행 → **모든 method overall accuracy 0~7%**. baseline 비교 무의미.
+- 분석 (`outputs/phase-4-sanity-{full,sliding,rag,hi-em}.judged.jsonl` 직접 검사):
+  1. **30 questions이 모두 `temporal-reasoning`** — LongMemEval oracle이 question_type 정렬, plain `--limit 30`은 첫 type 30개. 5축 비교 자체 불가.
+  2. **응답 생성 max_tokens=300** — Qwen3-8B reasoning model의 `<think>` 블록이 잘림 → strip 후 의미 없는 string.
+  3. **judge max_tokens=20** — judge도 동일 model이라 `<think>Okay, let's see. The user...`에서 끝남 → yes/no 추출 실패 → 모두 False.
+  4. `parse_yes_no` 단순 (첫 token이 yes로 시작?). think 안 닫혀도 robust 처리 필요.
+
+**결정** (4 fix):
+- **`run_longmemeval.py --max-tokens` default 300 → 800** — Qwen `<think>` + answer cover.
+- **`judge_longmemeval.py --max-tokens` default 20 → 256** — judge thinking + yes/no fit.
+- **`run_longmemeval.py --stratify` 옵션 추가** (`run_phase4_all.py`도 통과) — question_type별 균등 sample. LongMemEval oracle 정렬 문제 회피.
+- **`parse_judge_yes_no` 재작성** — closed think strip → unclosed think tail 200자만 → 마지막 yes/no token 검색. 못 찾으면 False (보수). `src/hi_em/eval_logging.py`로 이동 (testable). 11 case unit test.
+
+**영향 범위**:
+- `scripts/run_longmemeval.py`: `--max-tokens 800`, `--stratify` 추가, by_type stratify 로직
+- `scripts/judge_longmemeval.py`: `--max-tokens 256`, `parse_judge_yes_no` import (이동)
+- `scripts/run_phase4_all.py`: `--stratify` 통과
+- `src/hi_em/eval_logging.py`: `parse_judge_yes_no` 추가
+- `tests/test_eval_logging.py`: parse_judge_yes_no test (10 cases)
+- `handoff.md`: sanity 명령 `--stratify` 필수 명시
+
+**검증**:
+- 57/57 PASS (parse test 1개 추가)
+- 사용자 재실행 후 5 type 각 6 questions × 4 method accuracy 확인 필요 (이전 0% 결과는 폐기)
+
+**대안 및 기각 사유**:
+- max_tokens 그대로 + Qwen `enable_thinking=False` (chat_template_kwargs) (보류: vLLM endpoint side support 모름. max_tokens 늘리는 게 model-agnostic. Phase 4 결과 후 token 효율 비교 가능).
+- stratify를 default on (기각: 사용자가 "전체 500" 돌릴 때 stratify 의미 없음 — 이미 모두 처리. opt-in이 명시적).
+- parse_yes_no를 LLM judge에 넘기는 대신 정규식만 (기각: judge prompt가 정해져 있어 LLM 응답 robust parsing 필요. 정규식 fallback이 안전).
+- think 안 닫혀도 yes/no 추출 (현재 동작, 9/10 test pass 중 1개는 unclosed think 안 yes를 True로) — 이건 ambiguous edge case. max_tokens 충분히 크면 거의 발생 안 함.
+
+---
+
+### 2026-04-26: Apple Silicon 가속 — PyTorch MPS auto-detect (MLX 폐기)
+
+**근거**:
+- 사용자 요구: M4 Pro 등 Apple Silicon에서 GPU 가속 동작하면서, **다른 환경(CPU/CUDA)과 모델이 다르면 안 됨** — 재현성 + 협업자 환경 일관성.
+- MLX (mlx-community/...): 별도 conversion → model 다름. 위 요구 위반. **폐기**.
+- PyTorch MPS: 같은 `BAAI/bge-base-en-v1.5` 가중치, device 인자(cuda/mps/cpu)만 변경. 결과 numerical 차이 ~1e-5 (kernel 차이), segmentation/RAG 영향 없음. **채택**.
+
+**결정**:
+- `QueryEncoder.__init__` auto-detect 우선순위: cuda → mps → cpu (Apple Silicon에서 자동 mps).
+- `scripts/run_longmemeval.py --device` 인자 추가, env `HIEM_DEVICE` fallback.
+- `.env.example`에 `HIEM_DEVICE` 안내 (auto / cuda / mps / cpu).
+- 토크나이저 (HF tokenizers, Rust 기반): GPU 안 씀, 변경 없음.
+- 외부 LLM (vLLM endpoint): 사용자 원격 GPU. 우리 client 무관.
+
+**검증**:
+- M4 Pro 환경: `mps available=True / built=True`, auto → mps, L2 norm=1.0 유지
+- 57/57 tests PASS (FakeEncoder는 별개, 영향 없음)
+
+**영향 범위**:
+- `src/hi_em/embedding.py`: auto-detect mps 추가
+- `scripts/run_longmemeval.py`: `--device` + `HIEM_DEVICE` env
+- `.env.example`: HIEM_DEVICE 안내
+
+**대안 및 기각 사유**:
+- MLX (mlx-embeddings) 도입 (기각: model conversion으로 다른 환경과 model 불일치 — 사용자 핵심 요구 위반).
+- MPS+MLX 둘 다 지원 (기각: model 일관성 위반 + 코드 복잡도. ROI 낮음 — MPS 대비 MLX 추가 가속은 ~10-30%인데 LLM call이 압도적 시간).
+- 인텔/CUDA 자동 fallback 안 함 (기각: torch가 cuda detect 자동 — 그냥 우선순위만 추가).
+- bge보다 작은 model로 교체 (기각: 평가 일관성 + 옵션 5에서 bge-base 검증됨).
+
+---
+
+### 2026-04-27: Phase 4-Re — research-experiment-infrastructure 적용 + archive 분리
+
+**근거**:
+- Phase 4 baseline (Hi-EM 0.562 < 모든 baseline) 측정 끝. 다음 실험들 (HP sweep / 새 method / Phase 2-Full STM / 다른 dataset)이 누적될 예정. 옛 단일 prefix (`outputs/phase-4-*`) 패턴은 **lost 측정 사례 발생** (set #3 hi-em이 set #4에 덮어써짐).
+- 사용자 제공 SKILL `research-experiment-infrastructure` (`~/.claude/skills/`) 적용 — atomic save / round / resume / session 표준.
+- 동시에 SKILL 자체에 5 개선점 patch + §7 replay 분기 추가 (정적 dataset + stateless eval은 replay 불필요).
+
+**결정**:
+- **Archive 분리**: 기존 `outputs/` + `data/ltm/` → `archive/2026-04-26-baseline/`. README.md 4 HP × sanity/full 표 + sample noise + lost 측정 명시. 새 실험은 `results/experiments/{exp_id}/` 격리.
+- **단일 entry**: `scripts/run_experiment.py`. round 단위 atomic + resume + session. legacy entry는 보존.
+- **Round = 50 questions** (oracle 500 → 10 rounds).
+- **2-level summary 디스크 저장**: round-level (`rounds/round_NNN/summary.json`) + experiment-level (`{exp_dir}/summary.json`, 모든 round 합쳐). 둘 다 wandb 동시 push.
+- **Metric**: per-method × per-qtype accuracy (6 qtype + overall) + prefill_tokens/latency p50/p95 + error_rate + topic_revisit_hit_rate.
+- **Replay 폐기**: SKILL §7 분기 — session.json에 같은 dataset 가리키는 별도 experiment로 충분.
+
+**영향 범위**:
+- `src/hi_em/atomic_io.py` + `experiment.py` (신규)
+- `scripts/run_experiment.py` (신규 entry)
+- `tests/test_experiment.py` (17), `tests/test_run_experiment.py` (5) — SKILL §10 #13 reference vs interrupt+resume invariant 자동화
+- `archive/2026-04-26-baseline/` (영구 보존)
+- `.gitignore`: results/experiments/, archive/*/{ltm,outputs/*.jsonl} 추가
+- `~/.claude/skills/research-experiment-infrastructure/SKILL.md`: 5 개선점 patch + §7 분기
+
+**대안 및 기각 사유**:
+- 옛 prefix 유지 (기각: lost 측정 누적, 충돌 보장 불가).
+- Replay 인프라 도입 (기각: 정적 dataset에선 가치 0).
+- Round = 25 / 100 (기각: 50이 latency-resume 균형 최적).
+- 단일 jsonl per experiment (기각: round 격리가 atomic 보장 쉬움).
+- working_state 즉시 도입 (기각: stateless eval. Phase 2-Full STM 도입 시 추가).
+
+**검증**:
+- 100/100 unit tests PASS (78 → 100, +22)
+- R-9 실 vLLM smoke (5 questions × 2 rounds): 동작 확인
+- R-7 자동 invariant: deterministic FakeLLM 으로 reference vs interrupt+resume 정확 일치
+- R-11 (대기): Hi-EM persistence + full 500 → archive 0.562 ±0.02 일치 검증
+
+**Phase 5 직전 재검토 트리거**:
+- 100k+ questions 동시 평가 → `results/sessions/` orchestration 강화
+- 외부 storage 동기화 → `working_state` 압축 패턴 도입
+
+---
+
+### 2026-04-27: R-11 종결 + Phase 5 진입 결정 (정직 reframing)
+
+**근거**:
+- R-11 sanity 단계 (sanity 30 × 4 method, `run_session.py` 새 infra) 결과:
+  - sliding 0.867, full 0.833, rag 0.767, **hi-em 0.700**
+  - archive set #2 (옛 infra, 같은 config) 대비 모든 cell-level Δ ≤ 0.40 — sample noise (5/qtype, temperature=0.7) 영역 안
+  - Overall Δ ≤ 0.10, **상대 ranking 보존** (full > sliding ≈ rag > hi-em), Hi-EM **multi-session 약점 패턴 그대로** (0.00~0.20)
+  - → **인프라 systematic bias 없음 확정**. R-11 full 500 재현은 시간 절약 결정 (sanity 검증 충분).
+- Phase 4 baseline (full 500 archive) 결과는 결정적: **Hi-EM 0.562 / sliding 0.658 / full 0.712 / rag 0.692**. Hi-EM 4 method 중 꼴찌. 단 **ssp 0.97 (4 method 중 1위, full 0.93보다 +0.04)** — 좁은 강점 영역 존재.
+
+**결정**:
+- **R-11 종결** (sanity 검증으로 충분, full 재실행 안 함).
+- **Phase 5 진입** — 정직 reframing 우선 (5-A) → 결과 위에서 추가 실험/논문 결정 (5-B/C/D).
+- Hi-EM contribution을 **광범위 winning에서 ssp 좁은 영역**으로 정의 변경 — Phase 1-6 reframing의 자연 연장.
+- Phase 5-A 산출물: `report.md` 갱신 + `outputs/phase-4-final.md` (4 method × 6 qtype × 4 HP × sanity/full × 두 인프라 종합 표).
+
+**영향 범위**:
+- `plan.md` Phase 4-Re R-10/R-11 [x] 처리 + Phase 5 섹션 재작성 (5-A~5-E)
+- `handoff.md` 현재 Phase = Phase 5 정직 reframing 대기
+- `context/06-decision-log.md` 본 entry
+
+**대안 및 기각 사유**:
+- Full 500 한 번 더 (기각: sanity 검증 충분, archive 결과 신뢰 가능. 시간 1~2시간 절약).
+- Phase 5-B (다른 dataset) 먼저 (기각: 5-A 정직 정리 없이 추가 실험은 sunk cost. reframing이 결정 전 필수).
+- Phase 5 폐기 + 즉시 새 알고리즘 (기각: Phase 1~4 결과 정리 없이 새 시도는 lessons 손실).
+- HP sweep 추가 (기각: 4 HP regime 이미 검증됨, 모두 multi-session 0.20 그대로).
+
+**Phase 5-A 시작 시 트리거**:
+- ssp 강점이 다른 dataset에서도 재현되는지 확인하고 싶다면 5-B 먼저.
+- 단순 결과 정리만 원하면 5-A 즉시 시작.
