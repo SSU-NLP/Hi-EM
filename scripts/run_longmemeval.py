@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Phase 4: 4-way baseline 평가 (LongMemEval).
+"""Phase 4: 5-way baseline 평가 (LongMemEval).
 
 Methods (--method):
-    sliding   : 직전 K turn (history 끝에서 자르기)
-    full      : 전체 history 그대로 prefill (LLM 토큰 한계는 vLLM이 처리)
-    rag       : 모든 turn 임베딩 → cosine top-K (chronological 정렬 후 prefill)
-    hi-em     : HiEM.preload_history(history) + handle_turn(question)
+    sliding     : 직전 K turn (history 끝에서 자르기)
+    full        : 전체 history 그대로 prefill (LLM 토큰 한계는 vLLM이 처리)
+    rag         : 모든 turn 임베딩 → cosine top-K (chronological 정렬 후 prefill)
+    hi-em       : HiEM stateless — preload_history + handle_turn (Phase 2 baseline)
+    hi-em-full  : HiEM Phase 2-Full — STM (Memory Window) + RoundProcessor + topic importance
 
 Output:
     JSONL per line: {"question_id": ..., "hypothesis": ..., "method": ..., "model": ...}
 
 Usage:
     uv run python scripts/run_longmemeval.py --method sliding --limit 30
-    uv run python scripts/run_longmemeval.py --method hi-em
+    uv run python scripts/run_longmemeval.py --method hi-em-full
 """
 
 from __future__ import annotations
@@ -119,6 +120,51 @@ def run_hi_em(
     return response, debug["messages"], {"topic_revisit_hit": revisit_hit}
 
 
+def run_hi_em_full(
+    history: list[dict], question: str, llm: OpenAIChatLLM, model: str,
+    encoder: QueryEncoder, ltm_root: Path, conv_id: str,
+    *,
+    alpha: float, lmda: float, sigma0_sq: float,
+    round_size: int,
+    stm_max_topics: int, stm_max_turns: int,
+    promotion_threshold: float,
+    importance_alpha: tuple[float, float, float, float],
+    lambda_r: float, lambda_freq: float, min_floor: float,
+    **llm_kwargs,
+) -> tuple[str, list[dict], dict]:
+    """Phase 2-Full: STM-stateful HiEM. Synchronous round processing for
+    determinism in evaluation; preload_history runs one sync round then
+    the question handle_turn reads STM."""
+    hi = HiEM(
+        conv_id=conv_id, encoder=encoder, llm=llm, model=model,
+        ltm_root=ltm_root,
+        alpha=alpha, lmda=lmda, sigma0_sq=sigma0_sq,
+        response_filter=strip_think_tags,
+        use_stm=True,
+        round_size=round_size,
+        stm_max_topics=stm_max_topics,
+        stm_max_turns=stm_max_turns,
+        promotion_threshold=promotion_threshold,
+        importance_alpha=importance_alpha,
+        lambda_r=lambda_r,
+        lambda_freq=lambda_freq,
+        min_floor=min_floor,
+        round_async=False,
+        **llm_kwargs,
+    )
+    hi.preload_history(history)
+    response, debug = hi.handle_turn(question, return_debug=True)
+    revisit_hit = int(any(t["topic_id"] == debug["topic_id"]
+                          for t in debug["prefill_turns"]))
+    extras = {
+        "topic_revisit_hit": revisit_hit,
+        "stm_hit": int(bool(debug.get("stm_hit"))),
+        "stm_topics": len(hi.stm.current_topics()) if hi.stm else 0,
+        "stm_turns": hi.stm.total_turns() if hi.stm else 0,
+    }
+    return response, debug["messages"], extras
+
+
 # --- Driver --------------------------------------------------------------
 
 def main() -> None:
@@ -130,9 +176,13 @@ def main() -> None:
     seg_cfg = cfg["segmenter"]
     mw_cfg = cfg["memory_window"]
     eval_cfg = cfg["evaluation"]
+    imp_cfg = cfg["topic_importance"]
+    stm_cfg = cfg["stm"]
+    round_cfg = cfg["round"]
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--method", required=True, choices=["sliding", "full", "rag", "hi-em"])
+    parser.add_argument("--method", required=True,
+                        choices=["sliding", "full", "rag", "hi-em", "hi-em-full"])
     parser.add_argument(
         "--data",
         default=str(REPO_ROOT / "benchmarks/LongMemEval/data/longmemeval_oracle.json"),
@@ -155,8 +205,11 @@ def main() -> None:
                              "+ final answer.")
     parser.add_argument("--temperature", type=float,
                         default=float(os.environ.get("HIEM_TEMPERATURE", "0.7")))
+    # ``.env`` may carry an inline-comment value (e.g. ``HIEM_DEVICE=  # auto``);
+    # only honor it if it parses to a real device name.
+    _env_device = (os.environ.get("HIEM_DEVICE") or "").strip()
     parser.add_argument("--device",
-                        default=os.environ.get("HIEM_DEVICE"),
+                        default=_env_device if _env_device in {"cuda", "mps", "cpu"} else None,
                         help="Encoder device: cuda / mps / cpu. "
                              "None = auto (cuda → mps → cpu). "
                              "Default: $HIEM_DEVICE (.env) or auto.")
@@ -176,6 +229,20 @@ def main() -> None:
     parser.add_argument("--alpha", type=float, default=seg_cfg["alpha"])
     parser.add_argument("--lmda", type=float, default=seg_cfg["lmda"])
     parser.add_argument("--sigma0-sq", type=float, default=seg_cfg["sigma0_sq"])
+    # hi-em-full HP (configs/hiem.json: stm/round/topic_importance)
+    parser.add_argument("--round-size", type=int,
+                        default=round_cfg["turns_per_round"] // 2,
+                        help="user+assistant pairs per round (turns_per_round/2).")
+    parser.add_argument("--stm-max-topics", type=int, default=stm_cfg["max_topics"])
+    parser.add_argument("--stm-max-turns", type=int, default=stm_cfg["max_turns"])
+    parser.add_argument("--promotion-threshold", type=float,
+                        default=stm_cfg["promotion_threshold"])
+    parser.add_argument("--importance-alpha", type=float, nargs=4,
+                        metavar=("A1", "A2", "A3", "A4"),
+                        default=imp_cfg["alpha"])
+    parser.add_argument("--lambda-r", type=float, default=imp_cfg["lambda_r"])
+    parser.add_argument("--lambda-freq", type=float, default=imp_cfg["lambda_freq"])
+    parser.add_argument("--min-floor", type=float, default=imp_cfg["min_floor"])
     # output
     parser.add_argument("--output", required=True, help="hypothesis jsonl")
     parser.add_argument(
@@ -220,7 +287,7 @@ def main() -> None:
         questions = questions[: args.limit]
     print(f"  {len(questions)} questions")
 
-    needs_encoder = args.method in {"rag", "hi-em"}
+    needs_encoder = args.method in {"rag", "hi-em", "hi-em-full"}
     encoder = None
     if needs_encoder:
         print("[encoder] loading bge-base-en-v1.5 ...")
@@ -252,7 +319,7 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Hi-EM: per-question LTM root for isolation
-    if args.method == "hi-em":
+    if args.method in {"hi-em", "hi-em-full"}:
         ltm_base = Path(args.ltm_root)
         if ltm_base.exists():
             shutil.rmtree(ltm_base)
@@ -286,6 +353,24 @@ def main() -> None:
                     k_topics=args.k_topics,
                     k_turns_per_topic=args.k_turns_per_topic,
                     alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
+                    **llm_kwargs,
+                )
+            elif args.method == "hi-em-full":
+                conv_id = qid.replace("/", "_")
+                hyp, msgs, extras = run_hi_em_full(
+                    history, question, llm, args.model,
+                    encoder=encoder,
+                    ltm_root=Path(args.ltm_root) / conv_id,
+                    conv_id=conv_id,
+                    alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
+                    round_size=args.round_size,
+                    stm_max_topics=args.stm_max_topics,
+                    stm_max_turns=args.stm_max_turns,
+                    promotion_threshold=args.promotion_threshold,
+                    importance_alpha=tuple(args.importance_alpha),
+                    lambda_r=args.lambda_r,
+                    lambda_freq=args.lambda_freq,
+                    min_floor=args.min_floor,
                     **llm_kwargs,
                 )
             else:

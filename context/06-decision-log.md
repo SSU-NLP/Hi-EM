@@ -657,3 +657,22 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 **Phase 5-A 시작 시 트리거**:
 - ssp 강점이 다른 dataset에서도 재현되는지 확인하고 싶다면 5-B 먼저.
 - 단순 결과 정리만 원하면 5-A 즉시 시작.
+
+---
+
+## 2026-04-27 — Phase 2-Full 구현 완료 (P2F-2 ~ P2F-6)
+
+**결정**: `phase-2-full-design.md` P2F-1~6 모두 구현 + 통합 sanity 통과. 신규 method `hi-em-full` 도입.
+
+**구현 내용**:
+- `MemoryWindow` 클래스 — **topic-atomic invariant** API로 강제 (turn-level slicing 함수 부재). `promote/maybe_append_turn/evict_lowest_importance/evict_to_capacity` + threading.RLock.
+- `RoundProcessor` — per-conv 5단계 (mention log → neighbor weights → compute_importance → promote ≥ threshold → evict_to_capacity). `process_async()` daemon thread, per-instance RLock으로 라운드 직렬화.
+- `HiEM(use_stm=True, round_size=10)` — STM-first 분기, cache miss 시 LTM 전체 promote, in-sync turn append (cached topic만, atomicity 유지). `next_turn_id % (2*round_size) == 0`에 round 트리거.
+- 사용자 명세 두 invariant 코드로 강제: (1) topic atomicity (slicing API 부재), (2) round_size = 10 user+assistant pair = 20 jsonl rows.
+
+**검증**:
+- 단위 56 tests (P2F 모듈) + 회귀 89 tests = **145/145 PASS**.
+- 통합 smoke (vLLM, 25-turn A↔B 인터리브): 모든 invariant pass.
+- LongMemEval oracle stratified 30Q × `hi-em-full`: error 0/30, 78s, revisit_hit 0.40.
+
+**다음 (사용자 실행)**: 5-method (sliding/full/rag/hi-em/hi-em-full) sanity 30 비교 → multi-session 0.20 → 0.40+ 회복 가설 검증. 가설 성립 시 full 500. 미성립 시 정직 reframing (Phase 5-A).

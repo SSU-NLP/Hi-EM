@@ -58,7 +58,19 @@ scripts/
 #   Step 2-4: importance / merge / adaptive K_window (Phase 4 결과 후 튜닝)
 # LTM 데이터 위치: data/ltm/<conv_id>.{jsonl,state.json} (gitignored)
 # LLM 백엔드: memory/project_llm_backend.md (OpenAI-compatible, OpenRouter/vLLM)
-# Phase 2+ 진입 시 추가 예정: orchestrator/LTM/memory_window 등
+
+# Phase 2-Full (2026-04-27 구현 완료) 신규 모듈:
+#   src/hi_em/topic_importance.py   ✅ P2F-1 (compute_importance: 4 작용 강화·빈도·망각·연결)
+#   src/hi_em/memory_window.py      ✅ P2F-2 (MemoryWindow class 추가 — topic-atomic STM, threading.RLock)
+#   src/hi_em/round_processor.py    ✅ P2F-3 (RoundProcessor — async daemon thread, mention log + neighbor weights)
+#   src/hi_em/orchestrator.py       ✅ P2F-4 (HiEM.use_stm 옵션 + STM-first + round trigger + in-sync turn append)
+#   src/hi_em/config.py             ✅ configs/hiem.json loader (segmenter / memory_window / topic_importance / stm / round / evaluation)
+#   tests/test_topic_importance.py  ✅ 13 tests
+#   tests/test_memory_window_class.py ✅ 20 tests (atomicity invariant 강제)
+#   tests/test_round_processor.py   ✅ 13 tests
+#   tests/test_orchestrator_stm.py  ✅ 10 tests (STM-first + round trigger + in-sync update)
+#   scripts/smoke_test_full_pipeline.py ✅ P2F-5/6 통합 smoke (vLLM, 25-turn invariant pass)
+#   scripts/run_longmemeval.py / run_experiment.py — `--method hi-em-full` 추가 + STM/round/importance HP CLI
 
 ## tests/ (Phase 1 현재 실재, 18 tests passing)
 tests/

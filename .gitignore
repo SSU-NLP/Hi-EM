@@ -15,6 +15,7 @@ outputs/*.pkl
 outputs/*.npz
 outputs/*.h5
 outputs/tmp/
+outputs/_smoke_*
 *.log
 .venv/
 

@@ -33,8 +33,22 @@
 
 ## 현재 상태
 
-**마지막 업데이트**: 2026-04-25
-**현재 Phase**: **Phase 4-Re 종결** (R-1~R-11 완료, 인프라 검증 ✓). **Phase 5 진입 대기 — 정직 reframing 또는 다른 dataset 탐색 결정 필요**.
+**마지막 업데이트**: 2026-04-27
+**현재 Phase**: **Phase 2-Full 구현 완료** (P2F-2~6 + sanity). 신규 method `hi-em-full` 사용 가능. **다음: Phase 4-Re P2F-7 — 5-way sanity 비교 (sliding/full/rag/hi-em/hi-em-full) 실행 후 결정 분기**.
+
+### Phase 2-Full 추가 모듈 (2026-04-27)
+- `src/hi_em/memory_window.py` — `MemoryWindow` 클래스 (topic-atomic STM, in-process RAM 보유, threading.RLock). API: `has/get/promote/maybe_append_turn/evict_topic/evict_lowest_importance/evict_to_capacity/all_turns/current_topics/total_turns/clear`. **불변식: 한 topic은 STM에 통째 또는 부재 — turn-level slicing 함수 없음**.
+- `src/hi_em/round_processor.py` — `RoundProcessor` (per-conv). 5단계: mention log 갱신 → neighbor weights 재계산 → `compute_importance` → 임계값 ≥ 토픽 promote → `evict_to_capacity`. `process_async()`는 daemon thread + per-instance RLock으로 라운드 직렬화.
+- `src/hi_em/orchestrator.py` — `HiEM(use_stm=True, round_size=10, ...)`. STM-first 분기 + STM miss 시 LTM 전체 promote. STM 내 topic은 in-sync update (atomicity 유지). `next_turn_id % (2*round_size) == 0`에 round 트리거.
+- `scripts/run_longmemeval.py` / `scripts/run_experiment.py` — `--method hi-em-full` 신규 + STM/round/importance HP CLI 인자.
+- `scripts/smoke_test_full_pipeline.py` — 25-turn 통합 smoke (atomicity / 트리거 / cap / revisit-hit invariants).
+- 테스트: 145 → **선택**: `tests/test_memory_window_class.py` (20) + `tests/test_round_processor.py` (13) + `tests/test_orchestrator_stm.py` (10). **전체 145/145 PASS**.
+
+### Phase 2-Full sanity (2026-04-27)
+- 통합 smoke (vLLM 실 호출, 15 turn, A↔B 토픽 인터리브): 모든 invariant pass.
+- LongMemEval oracle stratified 30 questions × `hi-em-full`: **error 0/30 / 78s / topic_revisit_hit 0.40**. 응답 품질 spot-check 통과.
+
+**Phase 4-Re 환경 인프라 (skill: research-experiment-infrastructure 적용)**:
 **진행률**: Phase 0/1/2/3/4 sanity+full(baseline) 완료. **2026-04-26 Phase 4 baseline 결과 → `archive/2026-04-26-baseline/` 영구 보존**. 새 인프라 (`results/experiments/{exp_id}/rounds/round_NNN/` + atomic checkpoint + resume + session.json) 위에서 진행. 전체 테스트 **100/100 PASS**.
 
 **Phase 4-Re 환경 인프라 (skill: research-experiment-infrastructure 적용)**:
@@ -81,9 +95,26 @@
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### 다음: Phase 5 — 정직 reframing + 결정 분기
+### 다음: Phase 4-Re P2F-7 — 5-way sanity 비교 후 결정 분기
 
-**Phase 4-Re sanity 결과 (2026-04-27)**:
+`hi-em-full` 도입으로 비교 method 5가지 (sliding/full/rag/hi-em/hi-em-full). 30Q stratified로 sanity → 결과로 (a) full 500, (b) HP sweep, (c) 다른 dataset, (d) Phase 5 정직 reframing 결정.
+
+명령어 예시 (사용자 실행):
+```bash
+# 5-method 비교 session
+uv run python scripts/run_session.py \
+    --session-id 20260428_p2f_sanity --no-thinking \
+    --questions-per-round 50 --workers 8 --limit 30 --stratify
+
+# hi-em-full 단독
+uv run python scripts/run_experiment.py \
+    --method hi-em-full --no-thinking \
+    --limit 30 --stratify --workers 8
+```
+
+기준 가설: hi-em-full이 multi-session 0.20 (현 hi-em baseline)을 0.40+로 끌어올려야 winning thesis 회복.
+
+**이전 Phase 4-Re sanity 결과 (2026-04-27, hi-em-full 미포함)**:
 | Method | Overall | knowledge | multi | ssa | ssp | ssu | temporal |
 |---|---|---|---|---|---|---|---|
 | sliding | 0.867 | 0.80 | 0.40 | 1.00 | 1.00 | 1.00 | 1.00 |

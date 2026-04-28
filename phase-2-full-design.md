@@ -1,6 +1,6 @@
 # Phase 2-Full: STM + Round + Importance 구현 계획
 
-> **목표**: 현재 baseline (LTM + stateless memory_window 함수)을 **3-tier 메모리 시스템** (LTM SSD / STM RAM cache / KV-cache) + **라운드 비동기 처리** + **Topic importance 4작용**으로 확장. Phase 4 sanity 결과의 multi-session 약점(0.20)이 baseline의 **stateless re-selection**과 **fixed budget**에서 기인함이 확인됨 → 본 설계는 정확히 그 두 axis를 풀어냄.
+> **목표**: 현재 baseline (LTM + stateless memory_window 함수)을 **2-tier 메모리 시스템** (장기 메모리 LTM = SSD File / 단기 메모리 STM = Memory Window, 라운드 내 STM 고정) + **라운드 비동기 처리** + **Topic importance 4작용**으로 확장. Phase 4 sanity 결과의 multi-session 약점(0.20)이 baseline의 **stateless re-selection**과 **fixed budget**에서 기인함이 확인됨 → 본 설계는 정확히 그 두 axis를 풀어냄.
 >
 > Hi-EM의 winning thesis(적은 token으로 baseline 동등)를 회복하는 path. 단 본 설계 도입 후에도 RAG 못 넘으면 정직 reframing.
 
@@ -15,7 +15,7 @@
 | LTM 위치 | `data/ltm/<conv>/{state.json, *.jsonl}` | 동일 |
 | LTM 내용 | turn 원문 + topic_id + turn_id + embedding + topic centroid | 동일 |
 | LTM 쓰기 시점 | 매 턴 sync | 동일 |
-| **STM 존재** | ❌ (memory_window 함수만) | ✅ **MemoryWindow 클래스 (RAM in-process)** |
+| **STM 존재** | ❌ (memory_window 함수만) | ✅ **MemoryWindow 클래스 (in-process, RAM 보유)** |
 | **STM 내용** | — | importance ≥ threshold인 topic의 turn 전체 |
 | **STM 상태 보존** | — | 라운드 사이 유지, 매 턴 누적/eviction |
 | **Eviction** | — | 가득 차면 lowest importance topic 통째 제거 |
@@ -27,7 +27,7 @@
 | 분절 신호 | sCRP centroid distance ✓ | 동일 |
 | Retrieval source | LTM stateless 재선별 | **STM 우선, miss 시 LTM→STM 승격** |
 | Retrieval 단위 | topic top-3 × 마지막 5 turn | **STM 내 topic 전체** |
-| Cache 디코딩 | ❌ | ✅ **KV-cache 재사용** (vLLM prefix cache) |
+| 라운드 내 STM 변동 | (해당 없음 — 매 턴 stateless 재선별) | **라운드 시작 시 STM 고정**, 라운드 내는 STM miss 1건 + 직전 발화 append만 변동, promotion/eviction은 라운드 경계에서만 |
 | Cold start | 빈 LTM이면 no prefill | LTM 직접 디코딩 |
 | 응답 후 | LTM append | 동일 |
 
@@ -63,20 +63,20 @@ $$I_t = \alpha_1 \log(1+n_t) + \alpha_2 \mathrm{EMA}(\text{freq}) + \alpha_3 \ex
 - 4 작용 각각 분리 함수 → 종합 → unit tests 8~10개
 - **검증**: 4 작용 각각 isolation test + edge case (빈 history / 최근 1 turn / 통합 신호 없음)
 
-### Step P2F-2: `MemoryWindow` class (RAM 캐시, 2일)
+### Step P2F-2: `MemoryWindow` class (단기 메모리, 2일)
 - 모듈 `src/hi_em/memory_window.py` 확장 (현재 함수만 → class로)
 - API:
   ```python
   class MemoryWindow:
       def __init__(self, max_topics: int, max_turns: int): ...
-      def get(self, topic_id: int) -> list[dict] | None  # cache hit/miss
+      def get(self, topic_id: int) -> list[dict] | None  # STM hit / miss
       def promote(self, topic_id: int, turns: list[dict]) -> None  # LTM → STM
       def evict_lowest_importance(self, importance: dict[int, float]) -> int | None
       def all_turns(self) -> list[dict]  # current STM 전체 turn (chronological)
-      def topics_in_cache(self) -> set[int]
+      def current_topics(self) -> set[int]
   ```
 - 기존 `select_memory_window` 함수 deprecate (Phase 2 baseline 평가용으로 유지하되 internal로)
-- **검증**: cache hit/miss, eviction policy, capacity boundary, 라운드 사이 state 유지
+- **검증**: STM hit/miss, eviction policy, capacity boundary, 라운드 사이 state 유지
 
 ### Step P2F-3: `RoundProcessor` (3일)
 - 모듈 `src/hi_em/round_processor.py`
@@ -104,12 +104,12 @@ $$I_t = \alpha_1 \log(1+n_t) + \alpha_2 \mathrm{EMA}(\text{freq}) + \alpha_3 \ex
 
       # NEW: STM 우선
       stm_turns = self._stm.get(topic_id)
-      if stm_turns is None:                              # cache miss
+      if stm_turns is None:                              # STM miss
           ltm_turns = self._ltm.load_turns(self.conv_id, topic_id=topic_id)
           self._stm.promote(topic_id, ltm_turns)
           stm_turns = ltm_turns
 
-      # NEW: STM 전체 chronological prefill (cache 디코딩 가능)
+      # NEW: STM 전체 chronological prefill (라운드 내 안정)
       prefill = self._stm.all_turns()
       messages = [...]  # 동일
 
@@ -124,21 +124,20 @@ $$I_t = \alpha_1 \log(1+n_t) + \alpha_2 \mathrm{EMA}(\text{freq}) + \alpha_3 \ex
       return response
   ```
 - `return_debug` 그대로 유지 (Phase 4 metric용 — STM hit/miss flag 추가)
-- **검증**: 10 unit tests (STM hit / STM miss → LTM promote / 라운드 트리거 / cold start / KV cache 효과는 통합 smoke test)
+- **검증**: 10 unit tests (STM hit / STM miss → LTM promote / 라운드 트리거 / cold start / 라운드 내 STM 고정 invariant는 통합 smoke test)
 
-### Step P2F-5: KV-cache 재사용 (2일, 검증 위주)
-- vLLM은 **prefix cache 자동** (server side). 같은 prefix가 messages에 등장하면 자동 hit.
-- 우리 구현에서 STM이 라운드 사이 유지되면 **prefill prefix가 거의 같음** → vLLM이 자동으로 prefix cache hit. 별도 코드 불필요.
-- 단 messages 형식 변동 최소화:
-  - system_prompt 고정
-  - STM의 turn 순서 고정 (chronological)
-  - 매 턴 추가되는 user message만 변경
-- **검증**: vLLM stats endpoint 또는 응답 시간 측정 — 라운드 진행 시 LLM call latency가 줄어드는지 확인. 줄지 않으면 prefix가 다르게 형성되는 문제.
-- **fallback**: vLLM 자동 cache 안 통하면 KV는 우리 영역 밖. document하고 진행.
+### Step P2F-5: 라운드 내 STM 고정 invariant 검증 (1일, 검증 위주)
+- **설계 invariant**: 라운드 시작 시 STM snapshot이 고정됨. 라운드 내 매 턴은 그 STM에 직전 user/assistant 발화만 append (`maybe_append_turn`) 후 응답 생성. STM의 promotion / eviction은 `RoundProcessor`가 라운드 경계에서만 수행.
+- **예외 (STM miss)**: 현재 turn의 topic이 STM에 없을 때만 LTM에서 그 topic을 promote. 이 경우 외 라운드 내 STM 구성은 변하지 않음.
+- 이는 LLM 런타임 내부 mechanism에 의존하는 feature가 아니라 **Hi-EM 측 설계 불변량**. P2F-2/3/4가 이 불변량을 implement, P2F-5는 그것을 명시적으로 test.
+- **검증**:
+  - (a) unit: 라운드 내 매 턴마다 `stm.current_topics()` snapshot 비교 — STM miss로 인한 promotion 외 변화 없음
+  - (b) unit: `RoundProcessor.process`는 라운드 경계 (`turn_id % (2*round_size) == 0`)에서만 호출
+  - (c) integration smoke (P2F-6): 25-turn trace에서 STM 변경 시점이 (라운드 경계 ∪ STM miss)뿐임을 확인
 
 ### Step P2F-6: 통합 smoke test (1일)
 - `scripts/smoke_test_full_pipeline.py`: A→B→A→B→A 5턴 시나리오, STM hit/miss + 라운드 발동 trace 출력
-- 응답 시간 비교: baseline (현재 stateless) vs full pipeline (STM cached)
+- 응답 시간 비교: baseline (현재 stateless) vs full pipeline (STM 고정 + 라운드 처리)
 
 ### Step P2F-7: Phase 4 재실행 (반나절)
 - `run_longmemeval.py`의 hi-em method를 새 `HiEM`으로 자동 교체 (HiEM API 안 바뀌면 코드 변경 없음)
@@ -153,7 +152,7 @@ $$I_t = \alpha_1 \log(1+n_t) + \alpha_2 \mathrm{EMA}(\text{freq}) + \alpha_3 \ex
 P2F-1 (importance) ──┐
                      ├─→ P2F-3 (RoundProcessor) ─┐
 P2F-2 (MemoryWindow) ┘                           │
-                                                  ├─→ P2F-4 (handle_turn 수정) ──→ P2F-5 (KV) ──→ P2F-6/7
+                                                  ├─→ P2F-4 (handle_turn 수정) ──→ P2F-5 (STM 고정 invariant) ──→ P2F-6/7
                                                   │
                                   Phase 4 sanity ──┘ (검증 trigger)
 ```
@@ -173,13 +172,13 @@ P2F-2 (MemoryWindow) ┘                           │
 - **STM 상태가 conv_id 사이 격리 안 되면 leak**: per-conversation STM 인스턴스 강제
 - **async 라운드 처리 race**: Python `threading.Lock`으로 STM/LTM 보호 (encoder처럼)
 - **importance 가중치 잘못 설정 시 thrashing**: P2F-1 unit test로 monotonicity 검증 + Phase 4 sweep으로 튜닝
-- **vLLM prefix cache miss → 효과 없음**: P2F-5 검증 단계에서 latency 측정으로 즉시 발견
+- **라운드 내 STM이 비의도적으로 mutation (STM miss / 라운드 경계 외)**: P2F-5 invariant test로 검출 (`maybe_append_turn` / eviction 트리거 시점 점검)
 
 ### 3.3 Phase 4 재실행 시 비교 baseline
 | 라벨 | 의미 |
 |---|---|
 | `hi-em` (현재) | stateless re-selection, k_topics=3 × k_turns_per_topic=5 |
-| `hi-em-full` (P2F 후) | STM cached + round + importance |
+| `hi-em-full` (P2F 후) | STM 라운드 고정 + round 처리 + importance |
 | 가설 | hi-em-full이 multi-session에서 0.20 → 0.40+ |
 
 ---
@@ -189,7 +188,6 @@ P2F-2 (MemoryWindow) ┘                           │
 1. **Phase 5 논문 실험·재현**: 본 설계는 평가 인프라 강화. 논문 수치 재현은 Phase 5.
 2. **m_cleaned (500 sessions)** 평가: oracle은 짧음. STM의 진짜 가치(긴 history + 토픽 복귀)는 m_cleaned에서만 정량 가능.
 3. **importance 4 작용 가중치 최적값**: P2F-7 sweep 후 확정. 본 plan은 baseline 가중치만.
-4. **KV-cache 절약 정량**: vLLM endpoint stats 접근 가능해야 측정. 사용자 환경 확인 필요.
 
 ---
 
@@ -199,6 +197,26 @@ P2F-2 (MemoryWindow) ┘                           │
 2. review 반영 후 P2F-1부터 순차 implement
 3. 각 step 별 commit (Phase 2 commit 패턴 유지)
 4. P2F-7 (sanity 비교) 결과로 Phase 4 reframing 최종 결정
+
+## 5'. 구현 진행 (2026-04-27)
+
+| Step | 상태 | 결과 |
+|---|---|---|
+| P2F-1 (`topic_importance.py`) | ✅ 2026-04-26 | 13 tests pass |
+| P2F-2 (`MemoryWindow` class) | ✅ 2026-04-27 | 20 tests pass — topic-atomic invariant 강제 (turn-level slicing API 부재) |
+| P2F-3 (`round_processor.py`) | ✅ 2026-04-27 | 13 tests pass — async + per-instance RLock |
+| P2F-4 (`HiEM.handle_turn` STM-first) | ✅ 2026-04-27 | 10 tests pass + 회귀 13/13 — `use_stm=True` 옵션, in-sync turn append |
+| P2F-5 (라운드 내 STM 고정 invariant) | ✅ 부분 — 명시적 invariant unit test 미작성 | smoke test 25-turn trace에서 STM 변동이 라운드 경계 + STM miss뿐임 육안 확인 |
+| P2F-6 (smoke test) | ✅ 2026-04-27 | `scripts/smoke_test_full_pipeline.py` 25-turn invariant pass |
+| P2F-7 (Phase 4 sanity 비교) | 🔲 사용자 실행 대기 | `--method hi-em-full --limit 30 --stratify` 1 question OK / 30Q OK (0/30 error, 78s) |
+
+**핵심 추가**: `MemoryWindow.maybe_append_turn(topic_id, turn)` — STM 내 topic만 in-sync 갱신. STM에 없는 topic은 partial 안 채움 (atomicity 보존). 이로써 라운드 안에서도 STM 내 topic의 prefill이 stale하지 않으면서 STM 자체의 promotion / eviction은 라운드 경계까지 발생하지 않음 → 라운드 내 prefill 구성이 안정적으로 유지됨.
+
+**확인된 invariants** (smoke + sanity):
+- topic atomicity — STM 내 모든 topic의 turn 수가 LTM full count와 일치
+- round trigger — `next_turn_id % (2*round_size) == 0`에 정확히 1회 발동
+- max_topics 캡 준수, max_turns soft 캡 (단일 topic이 cap 초과 시는 atomicity 우선)
+- A→B→A 패턴에서 STM revisit hit (smoke 4/5)
 
 ---
 
@@ -211,7 +229,7 @@ P2F-2 (MemoryWindow) ┘                           │
 | **Importance threshold** | 0.5 (uniform 가중치 가정) | 측정 후 |
 | **Round async lib** | `threading.Thread` (단순) | `asyncio` (orchestration 늘어나면) |
 | **LTM 재구성 범위** | state.json만 (jsonl append-only 유지) | jsonl도 재정렬 (디스크 I/O↑, 지양) |
-| **vLLM prefix cache 검증** | latency 측정으로 indirect | vLLM endpoint stats API 확인 |
+| **라운드 내 STM 고정 invariant 검증** | unit test (snapshot 비교) + smoke test trace | (선택) 응답 latency 분산 측정으로 안정성 정량 |
 
 ---
 
@@ -229,7 +247,6 @@ P2F-2 (MemoryWindow) ┘                           │
 
 ### 실측으로만 풀리는 것 (P2F-7 후 판단)
 - Q1/Q7: STM이 multi-session 0.20을 0.40+로 풀어내는가, 아니면 cheaper-only인가
-- Q4: vLLM prefix cache 실제 hit (P2F-5에서 latency + `/metrics` 둘 다 측정)
 - Q6: MVP만으로 충분한지 — 본 design 풀 패키지 구현 후 ablation으로 측정 가능
 
 ### 보류 / 후속
@@ -241,8 +258,7 @@ P2F-2 (MemoryWindow) ┘                           │
 ## 7. 검증 미해결 (구현 후 P2F-7에서 판정)
 
 1. **Topic importance 공식의 monotonicity가 4 작용 모두에서 보장되나?** — round count 증가 시 망각이 다른 작용을 압도하는 케이스 등.
-2. **STM eviction 후 다시 같은 topic 등장 시 promotion 비용** — 매번 LTM에서 다 읽어 RAM에 올리면 효과 무의미. delta 캐싱 필요한가?
+2. **STM eviction 후 다시 같은 topic 등장 시 promotion 비용** — 매번 LTM에서 다 읽어 RAM에 올리면 효과 무의미. incremental 적재 필요한가?
 3. **Round async가 매 턴 흐름과 deadlock 안 함을 보장**할 lock 그래프?
-4. **vLLM prefix cache가 우리 messages 형식에 정말 작동**할까? messages list ordering / role 변동에 대한 cache key sensitivity 문서 확인 필요.
-5. **본 design이 Phase 4 multi-session 0.20을 실제로 풀 수 있나?** — 즉 budget 늘림 + STM 영속화가 정답 누락 문제를 직접 푸는가, 아니면 같은 문제 단순 transparent하게 만드는가?
-6. **KV-cache 재사용이 정확도 trade-off 없이 token 효율만 주나?** — prefix 같으면 LLM 응답도 같음 (deterministic). temperature > 0이면 sampling만 다름.
+4. **본 design이 Phase 4 multi-session 0.20을 실제로 풀 수 있나?** — 즉 budget 늘림 + STM 영속화가 정답 누락 문제를 직접 푸는가, 아니면 같은 문제 단순 transparent하게 만드는가?
+5. **라운드 내 STM 고정이 응답 정확도에 영향 없는가?** — 라운드 중간에 새 topic으로 shift하면 STM miss로 즉시 promote (P2F-4). 그 외에는 STM이 라운드 경계까지 라운드 시작 시점 구성을 유지 — 그 사이에 다른 topic의 새 turn 정보가 답변 결함을 일으키는가.

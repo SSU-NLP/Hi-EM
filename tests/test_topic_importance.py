@@ -6,7 +6,11 @@ import json
 import math
 from pathlib import Path
 
-from hi_em.topic_importance import compute_importance, load_importance_config
+from hi_em.topic_importance import (
+    _ema_frequency,
+    compute_importance,
+    load_importance_config,
+)
 
 
 def _state(*counts: int) -> dict:
@@ -25,7 +29,6 @@ def test_load_default_config_from_repo() -> None:
     assert "alpha" in cfg and len(cfg["alpha"]) == 4
     for k in ("lambda_r", "lambda_freq", "min_floor"):
         assert k in cfg
-    # JSON comment must be stripped.
     assert "_comment" not in cfg
 
 
@@ -55,13 +58,27 @@ def test_load_custom_config(tmp_path: Path) -> None:
 
 
 def test_load_partial_section_uses_section_defaults_for_missing(tmp_path: Path) -> None:
-    """Partial config — missing keys fall back to module defaults."""
     p = tmp_path / "c.json"
     p.write_text(json.dumps({"topic_importance": {"lambda_r": 2.0}}))
     cfg = load_importance_config(p)
     assert cfg["lambda_r"] == 2.0
-    assert cfg["alpha"] == [1.0, 1.0, 1.0, 1.0]   # default
-    assert cfg["min_floor"] == 0.1                 # default
+    assert cfg["alpha"] == [1.0, 1.0, 1.0, 1.0]
+    assert cfg["min_floor"] == 0.1
+
+
+# --- _ema_frequency (bounded EMA) ----------------------------------------
+
+def test_ema_frequency_bounded_above_by_one() -> None:
+    """True EMA over per-round 0/1 indicator stays ≤ 1.0 even when topic is
+    mentioned every round (regression: old impl was unbounded sum)."""
+    rounds = list(range(0, 100))   # mentioned every round 0..99
+    val = _ema_frequency(rounds, round_now=99, half_life=2.0)
+    assert val <= 1.0 + 1e-9
+    assert val > 0.5
+
+
+def test_ema_frequency_zero_for_empty() -> None:
+    assert _ema_frequency([], round_now=10, half_life=1.0) == 0.0
 
 
 # --- compute_importance --------------------------------------------------
@@ -70,37 +87,48 @@ def test_empty_state_returns_empty_dict() -> None:
     assert compute_importance({"topics": []}, round_now=0, mention_log={}) == {}
 
 
-def test_floor_applied_when_all_terms_zero() -> None:
-    # No mentions → all 4 terms ~0; min_floor must apply.
-    state = _state(0)  # n_t=0 → log(1)=0
-    out = compute_importance(state, round_now=5, mention_log={}, min_floor=0.25)
-    # The recency term default = exp(-0.5 * 0) = 1 since last_round defaults to round_now.
-    # So this test verifies the floor specifically when α₃=0.
-    out_no_recency = compute_importance(
-        state, round_now=5, mention_log={}, alpha=(1.0, 1.0, 0.0, 1.0), min_floor=0.25
+def test_no_mentions_no_recency_boost() -> None:
+    """Bug 6 regression: a topic with empty mention_log must NOT receive
+    a free recency=1 boost. With α₃ acting alone and no mentions, score
+    must be 0 (then floored)."""
+    state = _state(0)
+    out = compute_importance(
+        state, round_now=5, mention_log={},
+        alpha=(0.0, 0.0, 1.0, 0.0), min_floor=0.0,
+        normalize=False,
     )
-    assert out_no_recency[0] == 0.25
+    assert out[0] == 0.0
 
 
-def test_turn_count_strengthens(monkeypatch) -> None:
-    """α₁ * log(1+n_t): more turns → higher score (strict mono)."""
+def test_floor_applied_when_all_terms_zero() -> None:
+    state = _state(0)
+    out = compute_importance(
+        state, round_now=5, mention_log={}, min_floor=0.25,
+        normalize=False,
+    )
+    assert out[0] == 0.25
+
+
+def test_turn_count_strengthens() -> None:
+    """α₁ * log(1+n_t): more turns → higher raw score."""
     state = _state(1, 5, 20)
     out = compute_importance(
         state, round_now=0, mention_log={},
         alpha=(1.0, 0.0, 0.0, 0.0), min_floor=0.0,
+        normalize=False,
     )
-    # log(2) < log(6) < log(21)
     assert out[0] < out[1] < out[2]
     assert math.isclose(out[2], math.log(21), rel_tol=1e-9)
 
 
-def test_recency_decay() -> None:
+def test_recency_decay_with_mentions() -> None:
     """α₃ * exp(-λ_r·Δround): older last mention → lower score."""
     state = _state(1, 1)
-    mention_log = {0: [9], 1: [3]}  # topic 0 recent, topic 1 stale
+    mention_log = {0: [9], 1: [3]}
     out = compute_importance(
         state, round_now=10, mention_log=mention_log,
         alpha=(0.0, 0.0, 1.0, 0.0), lambda_r=0.5, min_floor=0.0,
+        normalize=False,
     )
     assert out[0] > out[1]
     assert math.isclose(out[0], math.exp(-0.5 * 1), rel_tol=1e-9)
@@ -108,12 +136,12 @@ def test_recency_decay() -> None:
 
 
 def test_frequency_ema_higher_for_recent_repeats() -> None:
-    """α₂ EMA(mentions): same total, but recent grouping > old."""
     state = _state(1, 1)
     out = compute_importance(
         state, round_now=10,
         mention_log={0: [9, 8, 7], 1: [0, 1, 2]},
         alpha=(0.0, 1.0, 0.0, 0.0), lambda_freq=2.0, min_floor=0.0,
+        normalize=False,
     )
     assert out[0] > out[1]
 
@@ -123,12 +151,12 @@ def test_frequency_zero_when_no_mentions() -> None:
     out = compute_importance(
         state, round_now=5, mention_log={},
         alpha=(0.0, 1.0, 0.0, 0.0), min_floor=0.0,
+        normalize=False,
     )
     assert out[0] == 0.0
 
 
 def test_neighbor_coupling_uses_prev_importance() -> None:
-    """α₄ Σⱼ wᵢⱼ prev_I[j]: only fires when prev + weights both given."""
     state = _state(1, 1)
     prev = {0: 1.0, 1: 2.0}
     weights = {0: {1: 0.5}, 1: {0: 0.5}}
@@ -136,9 +164,8 @@ def test_neighbor_coupling_uses_prev_importance() -> None:
         state, round_now=0, mention_log={},
         prev_importance=prev, neighbor_weights=weights,
         alpha=(0.0, 0.0, 0.0, 1.0), min_floor=0.0,
+        normalize=False,
     )
-    # topic 0 borrows from topic 1: 0.5 * 2.0 = 1.0
-    # topic 1 borrows from topic 0: 0.5 * 1.0 = 0.5
     assert math.isclose(out[0], 1.0)
     assert math.isclose(out[1], 0.5)
 
@@ -148,12 +175,13 @@ def test_neighbor_coupling_zero_without_prev_importance() -> None:
     out = compute_importance(
         state, round_now=0, mention_log={},
         alpha=(0.0, 0.0, 0.0, 1.0), min_floor=0.0,
+        normalize=False,
     )
     assert out[0] == 0.0
 
 
 def test_combined_uniform_alpha() -> None:
-    """Smoke: all 4 forces active together with uniform α=1."""
+    """All 4 forces active with uniform α=1; recently-repeated topic dominates."""
     state = _state(3, 1)
     out = compute_importance(
         state, round_now=2,
@@ -162,7 +190,44 @@ def test_combined_uniform_alpha() -> None:
         neighbor_weights={0: {1: 1.0}, 1: {0: 1.0}},
         alpha=(1.0, 1.0, 1.0, 1.0), lambda_r=0.5, lambda_freq=2.0,
         min_floor=0.0,
+        normalize=False,
     )
-    # Sanity: both > 0, recently-repeated topic 0 dominates.
-    assert out[0] > 0 and out[1] > 0
     assert out[0] > out[1]
+
+
+# --- Normalization -------------------------------------------------------
+
+def test_normalization_scales_peak_to_one() -> None:
+    """When normalize=True, the peak topic should become 1.0."""
+    state = _state(1, 5, 20)
+    out = compute_importance(
+        state, round_now=0, mention_log={},
+        alpha=(1.0, 0.0, 0.0, 0.0), min_floor=0.0,
+        normalize=True,
+    )
+    assert math.isclose(max(out.values()), 1.0)
+    # Rank preserved: more turns → higher normalized score.
+    assert out[0] < out[1] < out[2]
+
+
+def test_normalization_min_floor_still_applies() -> None:
+    """A topic whose normalized score is below min_floor gets clipped up."""
+    state = _state(100, 1)  # 1st topic dominates, 2nd very low
+    out = compute_importance(
+        state, round_now=0, mention_log={},
+        alpha=(1.0, 0.0, 0.0, 0.0), min_floor=0.3,
+        normalize=True,
+    )
+    assert out[1] >= 0.3
+    assert math.isclose(out[0], 1.0)
+
+
+def test_normalization_all_zero_raw_returns_floor() -> None:
+    """With normalize=True and all zero raw (no terms active), output = floor."""
+    state = _state(0, 0)
+    out = compute_importance(
+        state, round_now=0, mention_log={},
+        alpha=(1.0, 1.0, 1.0, 1.0), min_floor=0.2,
+        normalize=True,
+    )
+    assert out == {0: 0.2, 1: 0.2}

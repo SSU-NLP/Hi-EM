@@ -4,7 +4,7 @@ Design:
     - ``wandb`` is an optional runtime dep. If ``WANDB_API_KEY`` is unset the
       ``WandbRun`` becomes a no-op so existing scripts keep working without
       configuration.
-    - Tokenizer is loaded lazily and cached per-process. We use the **actual
+    - Tokenizer is loaded lazily and memoized per-process. We use the **actual
       Qwen chat template** for ``prefill_tokens`` so the "same accuracy, far
       fewer tokens" efficiency claim is defensible (~15% heuristic error
       would not be).
@@ -57,14 +57,14 @@ except ImportError:  # pragma: no cover
     wandb = None  # type: ignore
 
 
-_TOKENIZER_CACHE: dict[str, Any] = {}
+_TOKENIZERS: dict[str, Any] = {}
 
 
 def _tokenizer_for(model: str):
-    if model not in _TOKENIZER_CACHE:
+    if model not in _TOKENIZERS:
         from transformers import AutoTokenizer
-        _TOKENIZER_CACHE[model] = AutoTokenizer.from_pretrained(model)
-    return _TOKENIZER_CACHE[model]
+        _TOKENIZERS[model] = AutoTokenizer.from_pretrained(model)
+    return _TOKENIZERS[model]
 
 
 def count_prefill_tokens(messages: list[dict[str, Any]], model: str) -> int:

@@ -144,6 +144,44 @@ def run_hi_em(history, question, llm, model, encoder, ltm_root, conv_id,
     return response, debug["messages"], {"topic_revisit_hit": revisit_hit}
 
 
+def run_hi_em_full(history, question, llm, model, encoder, ltm_root, conv_id,
+                   *, alpha, lmda, sigma0_sq, round_size,
+                   stm_max_topics, stm_max_turns, promotion_threshold,
+                   importance_alpha, lambda_r, lambda_freq, min_floor,
+                   **llm_kwargs):
+    """Phase 2-Full: STM-stateful HiEM."""
+    if ltm_root.exists():
+        shutil.rmtree(ltm_root)
+    hi = HiEM(
+        conv_id=conv_id, encoder=encoder, llm=llm, model=model,
+        ltm_root=ltm_root,
+        alpha=alpha, lmda=lmda, sigma0_sq=sigma0_sq,
+        response_filter=strip_think_tags,
+        use_stm=True,
+        round_size=round_size,
+        stm_max_topics=stm_max_topics,
+        stm_max_turns=stm_max_turns,
+        promotion_threshold=promotion_threshold,
+        importance_alpha=tuple(importance_alpha),
+        lambda_r=lambda_r,
+        lambda_freq=lambda_freq,
+        min_floor=min_floor,
+        round_async=False,
+        **llm_kwargs,
+    )
+    hi.preload_history(history)
+    response, debug = hi.handle_turn(question, return_debug=True)
+    revisit_hit = int(any(t["topic_id"] == debug["topic_id"]
+                          for t in debug["prefill_turns"]))
+    extras = {
+        "topic_revisit_hit": revisit_hit,
+        "stm_hit": int(bool(debug.get("stm_hit"))),
+        "stm_topics": len(hi.stm.current_topics()) if hi.stm else 0,
+        "stm_turns": hi.stm.total_turns() if hi.stm else 0,
+    }
+    return response, debug["messages"], extras
+
+
 # --- Round phase implementations ----------------------------------------
 
 def phase_run(
@@ -184,6 +222,24 @@ def phase_run(
                     k_topics=args.k_topics,
                     k_turns_per_topic=args.k_turns_per_topic,
                     alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
+                    **llm_kwargs,
+                )
+            elif args.method == "hi-em-full":
+                conv_id = qid.replace("/", "_")
+                hyp, msgs, extras = run_hi_em_full(
+                    history, question, llm, args.model,
+                    encoder=encoder,
+                    ltm_root=ltm_root / conv_id,
+                    conv_id=conv_id,
+                    alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
+                    round_size=args.round_size,
+                    stm_max_topics=args.stm_max_topics,
+                    stm_max_turns=args.stm_max_turns,
+                    promotion_threshold=args.promotion_threshold,
+                    importance_alpha=args.importance_alpha,
+                    lambda_r=args.lambda_r,
+                    lambda_freq=args.lambda_freq,
+                    min_floor=args.min_floor,
                     **llm_kwargs,
                 )
             else:
@@ -341,10 +397,14 @@ def main() -> None:
     load_dotenv()
     cfg = load_config()
     seg, mw, ev = cfg["segmenter"], cfg["memory_window"], cfg["evaluation"]
+    imp_cfg = cfg["topic_importance"]
+    stm_cfg = cfg["stm"]
+    round_cfg = cfg["round"]
 
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--method", required=True, choices=["sliding", "full", "rag", "hi-em"])
+    p.add_argument("--method", required=True,
+                   choices=["sliding", "full", "rag", "hi-em", "hi-em-full"])
     p.add_argument("--data", default="benchmarks/LongMemEval/data/longmemeval_oracle.json")
     p.add_argument("--exp-id", default=None,
                    help="Resume an existing experiment by id, or auto-generate.")
@@ -368,7 +428,12 @@ def main() -> None:
     p.add_argument("--no-thinking", action="store_true",
                    default=os.environ.get("HIEM_NO_THINKING", "").lower()
                            in {"1", "true", "yes", "on"})
-    p.add_argument("--device", default=os.environ.get("HIEM_DEVICE"))
+    # ``.env`` may carry an inline-comment value; only honor real device names.
+    _env_device = (os.environ.get("HIEM_DEVICE") or "").strip()
+    p.add_argument(
+        "--device",
+        default=_env_device if _env_device in {"cuda", "mps", "cpu"} else None,
+    )
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--sliding-k", type=int, default=ev["sliding_k"])
     p.add_argument("--rag-k", type=int, default=ev["rag_k"])
@@ -377,6 +442,19 @@ def main() -> None:
     p.add_argument("--alpha", type=float, default=seg["alpha"])
     p.add_argument("--lmda", type=float, default=seg["lmda"])
     p.add_argument("--sigma0-sq", type=float, default=seg["sigma0_sq"])
+    # hi-em-full HP (Phase 2-Full)
+    p.add_argument("--round-size", type=int,
+                   default=round_cfg["turns_per_round"] // 2)
+    p.add_argument("--stm-max-topics", type=int, default=stm_cfg["max_topics"])
+    p.add_argument("--stm-max-turns", type=int, default=stm_cfg["max_turns"])
+    p.add_argument("--promotion-threshold", type=float,
+                   default=stm_cfg["promotion_threshold"])
+    p.add_argument("--importance-alpha", type=float, nargs=4,
+                   metavar=("A1", "A2", "A3", "A4"),
+                   default=imp_cfg["alpha"])
+    p.add_argument("--lambda-r", type=float, default=imp_cfg["lambda_r"])
+    p.add_argument("--lambda-freq", type=float, default=imp_cfg["lambda_freq"])
+    p.add_argument("--min-floor", type=float, default=imp_cfg["min_floor"])
     p.add_argument("--no-token-count", action="store_true")
     p.add_argument("--results-root", default=str(DEFAULT_RESULTS_ROOT))
     p.add_argument("--wandb-project", default="hi-em-phase4")
@@ -451,7 +529,7 @@ def main() -> None:
     print(f"[data] {n_total} questions → {rounds_n} rounds × {args.questions_per_round}")
 
     # Encoder + LLM (heavy, do once outside the round loop).
-    needs_encoder = args.method in {"rag", "hi-em"}
+    needs_encoder = args.method in {"rag", "hi-em", "hi-em-full"}
     encoder = QueryEncoder(device=args.device) if needs_encoder else None
     if encoder is not None:
         print(f"[encoder] device={encoder.device}")
@@ -467,7 +545,7 @@ def main() -> None:
 
     # Hi-EM ltm root: per-experiment, isolated from archive.
     ltm_root = exp_dir / "working_state" / "ltm"
-    if args.method == "hi-em" and ltm_root.exists():
+    if args.method in {"hi-em", "hi-em-full"} and ltm_root.exists():
         # Resume-safe: per-question conv_id dirs are ephemeral; cleaning them is OK
         # because preload_history rebuilds from the input for the current round.
         pass

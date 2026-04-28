@@ -126,6 +126,15 @@
 - [ ] Memory window 크기 정책 $K_{\text{window}}$ (고정 vs 적응적)
 - 이유: 현재 baseline policy(cosine + recency)가 단순해 보일 수 있으나, **Hi-EM의 진짜 차별화는 Phase 4 downstream QA에서 4-way baseline 비교(Sliding/Full/RAG/Hi-EM) 시 측정**. 미리 importance/merge 튜닝하면 over-engineering. Phase 4 결과로 어떤 정책 조정이 ROI 높은지 판단 후 진행.
 
+### 2-Full (2026-04-27 구현 완료) — STM + Round + Importance
+- [x] **P2F-1**: `src/hi_em/topic_importance.py` (4 작용: 강화·빈도·망각·연결) — 13 tests
+- [x] **P2F-2**: `MemoryWindow` 클래스 (`src/hi_em/memory_window.py`) — topic-atomic, threading.RLock — 20 tests
+- [x] **P2F-3**: `RoundProcessor` (`src/hi_em/round_processor.py`) — async daemon thread, mention log + neighbor weights — 13 tests
+- [x] **P2F-4**: `HiEM(use_stm=True, round_size=10, ...)` STM-first 분기 + round trigger + in-sync turn append — 10 tests + 회귀 13/13
+- [x] **P2F-5/6**: 통합 smoke (`scripts/smoke_test_full_pipeline.py`) — 25 turn, A↔B 토픽 인터리브, atomicity / 트리거 / cap / revisit-hit invariant pass
+- [x] Sanity: stratified 30Q × `hi-em-full` × LongMemEval oracle — error 0/30, 78s, revisit_hit 0.40
+- [ ] **P2F-7**: 5-method (sliding/full/rag/hi-em/hi-em-full) sanity 30 비교 → 결정 분기 (full 500 / HP sweep / 다른 dataset / 정직 reframing)
+
 ---
 
 ## Phase 3: 오케스트레이션
