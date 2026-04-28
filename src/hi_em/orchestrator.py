@@ -72,6 +72,7 @@ class HiEM:
         lambda_freq: float = 0.5,
         min_floor: float = 0.1,
         round_async: bool = True,
+        round_clear_stm: bool = False,
         # -------------------------------------------------------------
         **llm_kwargs: Any,
     ) -> None:
@@ -107,6 +108,7 @@ class HiEM:
                 lambda_r=lambda_r,
                 lambda_freq=lambda_freq,
                 min_floor=min_floor,
+                clear_stm_each_round=round_clear_stm,
             )
         else:
             self._stm = None
@@ -212,8 +214,199 @@ class HiEM:
         return response
 
     # ------------------------------------------------------------------
+    # Read-only evaluation query
+    # ------------------------------------------------------------------
+
+    def eval_query(
+        self, user_text: str, return_debug: bool = False
+    ) -> str | tuple[str, dict[str, Any]]:
+        """Read-only query: select memory window + generate response, with
+        **no mutation** of segmenter state, STM, or LTM.
+
+        Use this for benchmark evaluation when many test questions share
+        a single frozen post-conversation memory state — e.g., LoCoMo,
+        where each conversation has ~200 questions all asked against the
+        same conversation history. Calling :meth:`handle_turn` instead
+        would (a) embed every test question into the conversation history
+        as if it were a real user turn, (b) cause STM miss-promotes that
+        permanently change the cached topic set, and (c) require an LTM
+        rebuild between questions to keep them independent — exactly the
+        200× rebuild overhead this method exists to avoid.
+
+        Semantically equivalent to a snapshot/restore around handle_turn,
+        but cheaper because there's nothing to revert.
+
+        Behaviour:
+
+        * Segmenter assigns the question's topic via
+          :meth:`HiEMSegmenter.predict_topic` (no centroid update, no
+          ``prev_k`` change, no count bump).
+        * STM membership unchanged. If the predicted topic is in STM:
+          prefill = ``stm.all_turns()``. If not: prefill = chronological
+          merge of current STM with the LTM turns of that topic — same
+          *content* a miss-promote would have produced, but the STM dict
+          is not modified.
+        * LTM is read but not appended to.
+        """
+        q = np.asarray(self._encoder.encode([user_text])[0])
+
+        if self._stm is not None:
+            topic_id = self._segmenter.predict_topic(q)
+            stm_hit = self._stm.has(topic_id)
+            stm_turns = self._stm.all_turns()
+            if stm_hit:
+                prefill = stm_turns
+            else:
+                ltm_turns = self._ltm.load_turns(self.conv_id, topic_id=topic_id)
+                if ltm_turns:
+                    merged = {t["turn_id"]: t for t in stm_turns}
+                    for t in ltm_turns:
+                        merged.setdefault(t["turn_id"], t)
+                    prefill = sorted(merged.values(), key=lambda t: t["turn_id"])
+                else:
+                    prefill = stm_turns
+        else:
+            topic_id = -1
+            stm_hit = None
+            prefill = select_memory_window(
+                q, self._ltm, self.conv_id, self._k_topics, self._k_turns_per_topic
+            )
+
+        messages: list[dict[str, Any]] = []
+        if self._system_prompt:
+            messages.append({"role": "system", "content": self._system_prompt})
+        messages.extend({"role": t["role"], "content": t["text"]} for t in prefill)
+        messages.append({"role": "user", "content": user_text})
+
+        response = self._llm.chat(messages, model=self._model, **self._llm_kwargs)
+
+        if return_debug:
+            debug: dict[str, Any] = {
+                "topic_id": topic_id,
+                "prefill_turns": prefill,
+                "messages": messages,
+            }
+            if self._use_stm:
+                debug["stm_hit"] = stm_hit
+            return response, debug
+        return response
+
+    # ------------------------------------------------------------------
     # History preload (benchmarks)
     # ------------------------------------------------------------------
+
+    def flush_stm(self) -> None:
+        """Drop all STM contents while leaving LTM, segmenter, and turn-id
+        counter intact. Used at haystack-session boundaries by ``hi-em-full-v2``
+        to simulate "user closes the app, opens it later" — working memory is
+        gone but long-term memory and topic identity persist.
+        """
+        if self._stm is not None:
+            self._stm.clear()
+
+    def preload_history_sessioned(
+        self,
+        sessions: list[list[dict[str, Any]]],
+        flush_stm_each: bool = True,
+    ) -> None:
+        """Preload nested haystack-sessions; flush STM at each session boundary.
+
+        Differs from :meth:`preload_history` only in that:
+
+        * Sessions are processed one at a time. Round processor is invoked
+          ``ceil(session_pairs / round_size)`` times **per session** so the
+          mention log / neighbor weights / importance scores reflect each
+          session's contribution before STM is flushed.
+        * After each session (incl. the last when ``flush_stm_each``):
+          :meth:`flush_stm` clears the working buffer. LTM persists. The
+          subsequent ``handle_turn`` will repopulate STM via the existing
+          cache-miss path (LTM → STM promote on topic re-hit).
+
+        Without ``use_stm``, this falls through to flat :meth:`preload_history`
+        since there is no STM to flush.
+        """
+        if not self._use_stm:
+            flat = [t for sess in sessions for t in sess]
+            self.preload_history(flat)
+            return
+
+        for sess in sessions:
+            if not sess:
+                continue
+            self._ingest_session_into_ltm(sess)
+            n_pairs = sum(1 for t in sess if t["role"] == "user")
+            n_rounds = max(1, (n_pairs + self._round_size - 1) // self._round_size)
+            for _ in range(n_rounds):
+                self._round_processor.process()  # type: ignore[union-attr]
+            if flush_stm_each:
+                self.flush_stm()
+        # Spec: at session boundary, STM is flushed and then "LTM에서 importance
+        # 순으로 다시 STM으로 이동시켜서 시작" (spec step 4). For mid-conversation
+        # boundaries this happens at the next session's first round (clear+promote
+        # under round_clear_stm=True). For the final boundary there's no next
+        # round, so we run one extra round_processor.process() to repopulate STM
+        # by importance — leaving the post-preload state as
+        # "LTM persists, STM = high-importance topic set" rather than empty.
+        # Skipped if no flush happened or STM already populated by the last in-
+        # session round (which would mean flush_stm_each was False).
+        if (
+            flush_stm_each
+            and self._stm is not None
+            and not self._stm.current_topics()
+        ):
+            self._round_processor.process()  # type: ignore[union-attr]
+        self._ltm.update_state(self.conv_id, self._snapshot_state())
+
+    def _ingest_session_into_ltm(self, turns: list[dict[str, Any]]) -> None:
+        """Mirrors :meth:`preload_history` body sans round trigger.
+
+        Encodes user turns, segments, appends user/assistant rows to LTM,
+        bumps ``_next_turn_id``. State snapshot is **not** written here; the
+        caller writes one snapshot per sessioned-preload call.
+        """
+        user_indices = [i for i, t in enumerate(turns) if t["role"] == "user"]
+        if user_indices:
+            user_texts = [turns[i]["content"] for i in user_indices]
+            user_embs = np.asarray(self._encoder.encode(user_texts))
+        else:
+            user_embs = np.empty((0, self._encoder.dim))
+        emb_by_turn_idx = {idx: user_embs[k] for k, idx in enumerate(user_indices)}
+
+        last_topic_id = 0
+        for i, t in enumerate(turns):
+            role = t["role"]
+            text = t["content"]
+            ts = t.get("ts", datetime.now(timezone.utc).isoformat())
+            if role == "user":
+                q = emb_by_turn_idx[i]
+                topic_id, is_boundary = self._segmenter.assign(q)
+                last_topic_id = topic_id
+                self._ltm.append_turn(
+                    self.conv_id,
+                    {
+                        "turn_id": self._next_turn_id,
+                        "ts": ts,
+                        "role": "user",
+                        "text": text,
+                        "embedding": q.tolist(),
+                        "topic_id": topic_id,
+                        "is_boundary": is_boundary,
+                    },
+                )
+            else:
+                self._ltm.append_turn(
+                    self.conv_id,
+                    {
+                        "turn_id": self._next_turn_id,
+                        "ts": ts,
+                        "role": role,
+                        "text": text,
+                        "embedding": None,
+                        "topic_id": last_topic_id,
+                        "is_boundary": False,
+                    },
+                )
+            self._next_turn_id += 1
 
     def preload_history(self, turns: list[dict[str, Any]]) -> None:
         """Inject pre-existing user/assistant turns into LTM without LLM calls.

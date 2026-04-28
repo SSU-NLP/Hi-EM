@@ -119,3 +119,28 @@ class HiEMSegmenter:
         is_boundary = self.prev_k is not None and k != self.prev_k
         self.prev_k = k
         return k, is_boundary
+
+    def predict_topic(self, s: np.ndarray) -> int:
+        """Read-only MAP assignment. Does NOT mutate counts, topics, or
+        ``prev_k``. Used during evaluation queries where the question
+        should select retrieval target without contributing to topic
+        statistics (the conversation that built those statistics is
+        already complete).
+
+        Returns the most-likely topic_id given current state, or ``0`` if
+        no topics exist yet.
+        """
+        if not self.topics:
+            return 0
+        prior = sticky_crp_unnormed(self.counts, self.prev_k, self.alpha, self.lmda)
+        active = np.flatnonzero(prior)
+        log_scores = np.empty(active.shape[0], dtype=np.float64)
+        for i, k in enumerate(active):
+            k_int = int(k)
+            if k_int < len(self.topics):
+                log_lik = self.topics[k_int].log_likelihood(s)
+            else:
+                log_lik = self._cold_start_log_lik(s)
+            log_scores[i] = math.log(prior[k_int]) + log_lik
+        chosen_idx = int(np.argmax(log_scores))
+        return int(active[chosen_idx])

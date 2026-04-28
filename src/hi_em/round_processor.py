@@ -59,6 +59,7 @@ class RoundProcessor:
         lambda_r: float = 0.5,
         lambda_freq: float = 0.5,
         min_floor: float = 0.1,
+        clear_stm_each_round: bool = False,
     ) -> None:
         self.conv_id = conv_id
         self._ltm = ltm
@@ -68,6 +69,7 @@ class RoundProcessor:
         self._lambda_r = lambda_r
         self._lambda_freq = lambda_freq
         self._min_floor = min_floor
+        self._clear_stm_each_round = clear_stm_each_round
 
         self._round_idx: int = 0
         self._mention_log: dict[int, list[int]] = {}
@@ -139,6 +141,12 @@ class RoundProcessor:
 
             promoted: list[int] = []
             with self._stm.lock:  # atomic round transition (bug 9 fix)
+                if self._clear_stm_each_round:
+                    # Strict spec ("topic_importance가 일정 이상인 topic_id에
+                    # 해당하는 대화들을 단기 메모리로 이동"): post-round STM =
+                    # exactly the high-importance set. Sub-threshold residue
+                    # from previous rounds / handle_turn writes is dropped.
+                    self._stm.clear()
                 for tid, score in importance.items():
                     if score >= self._threshold:
                         topic_turns = self._ltm.load_turns(

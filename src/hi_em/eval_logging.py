@@ -193,7 +193,14 @@ def aggregate_summary(per_q: list[dict[str, Any]]) -> dict[str, float]:
     if accs:
         out["accuracy_overall"] = float(np.mean(accs))
 
-    for key in ("prefill_tokens", "latency_sec"):
+    for key in (
+        "prefill_tokens", "latency_sec",
+        # Streaming-mode latency captured by OpenAIChatLLM.chat:
+        "ttft_sec",       # Time To First Token (sec)
+        "tpot_sec",       # Time Per Output Token (sec)
+        "output_tokens",  # completion token count from usage
+        "gen_sec",        # total generation wallclock
+    ):
         vals = [r[key] for r in per_q if key in r]
         if vals:
             for sk, sv in _percentiles(vals).items():
