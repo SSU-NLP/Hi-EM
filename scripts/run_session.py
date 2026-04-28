@@ -57,7 +57,7 @@ def main() -> None:
                    help="Default: session_<UTC ts>")
     p.add_argument("--methods", nargs="+",
                    default=["sliding", "full", "rag", "hi-em"],
-                   choices=["sliding", "full", "rag", "hi-em"])
+                   choices=["sliding", "full", "rag", "hi-em", "hi-em-full"])
     p.add_argument("--data",
                    default="benchmarks/LongMemEval/data/longmemeval_oracle.json")
     p.add_argument("--limit", type=int, default=None)
@@ -68,12 +68,80 @@ def main() -> None:
     p.add_argument("--results-root", default=str(DEFAULT_RESULTS_ROOT))
     p.add_argument("--skip-existing", action="store_true",
                    help="이미 completed 된 experiment 는 건너뛰기 (resume 와 별개).")
+
+    # --- HP overrides (forwarded to run_experiment.py only when set) ----
+    # Default = None so unset flags fall through to configs/hiem.json.
+    # Precedence: this CLI > session common_config > hiem.json > module defaults.
+    p.add_argument("--model", default=None,
+                   help="Override $HIEM_MODEL / configs default.")
+    p.add_argument("--temperature", type=float, default=None)
+    p.add_argument("--max-tokens", type=int, default=None)
+    p.add_argument("--device", default=None,
+                   help="Encoder device: cuda / mps / cpu.")
+    # segmenter
+    p.add_argument("--alpha", type=float, default=None,
+                   help="sCRP concentration (default: hiem.json segmenter.alpha).")
+    p.add_argument("--lmda", type=float, default=None,
+                   help="sCRP stickiness.")
+    p.add_argument("--sigma0-sq", type=float, default=None,
+                   help="Cold-start variance prior.")
+    # baseline budgets
+    p.add_argument("--sliding-k", type=int, default=None)
+    p.add_argument("--rag-k", type=int, default=None)
+    # hi-em (stateless) baseline
+    p.add_argument("--k-topics", type=int, default=None)
+    p.add_argument("--k-turns-per-topic", type=int, default=None)
+    # hi-em-full (Phase 2-Full STM)
+    p.add_argument("--round-size", type=int, default=None,
+                   help="user+assistant pairs per round.")
+    p.add_argument("--stm-max-topics", type=int, default=None)
+    p.add_argument("--stm-max-turns", type=int, default=None)
+    p.add_argument("--promotion-threshold", type=float, default=None)
+    p.add_argument("--importance-alpha", type=float, nargs=4,
+                   metavar=("A1", "A2", "A3", "A4"), default=None,
+                   help="4-action importance weights.")
+    p.add_argument("--lambda-r", type=float, default=None)
+    p.add_argument("--lambda-freq", type=float, default=None)
+    p.add_argument("--min-floor", type=float, default=None)
+
     args = p.parse_args()
 
     sid = args.session_id or (
         "session_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     )
     results_root = Path(args.results_root)
+
+    # HP overrides → snapshot only the non-None ones so common_config stays
+    # tight (skipped flags fall through to configs/hiem.json downstream).
+    _hp_flags: list[tuple[str, object]] = [
+        ("--model", args.model),
+        ("--temperature", args.temperature),
+        ("--max-tokens", args.max_tokens),
+        ("--device", args.device),
+        ("--alpha", args.alpha),
+        ("--lmda", args.lmda),
+        ("--sigma0-sq", args.sigma0_sq),
+        ("--sliding-k", args.sliding_k),
+        ("--rag-k", args.rag_k),
+        ("--k-topics", args.k_topics),
+        ("--k-turns-per-topic", args.k_turns_per_topic),
+        ("--round-size", args.round_size),
+        ("--stm-max-topics", args.stm_max_topics),
+        ("--stm-max-turns", args.stm_max_turns),
+        ("--promotion-threshold", args.promotion_threshold),
+        ("--lambda-r", args.lambda_r),
+        ("--lambda-freq", args.lambda_freq),
+        ("--min-floor", args.min_floor),
+    ]
+    hp_args: list[str] = []
+    hp_snapshot: dict = {}
+    for flag, val in _hp_flags:
+        if val is not None:
+            hp_args += [flag, str(val)]
+            hp_snapshot[flag.lstrip("-").replace("-", "_")] = val
+    if args.importance_alpha is not None:
+        hp_args += ["--importance-alpha", *(str(v) for v in args.importance_alpha)]
+        hp_snapshot["importance_alpha"] = args.importance_alpha
 
     common_config: dict = {
         "data": args.data,
@@ -82,6 +150,7 @@ def main() -> None:
         "workers": args.workers,
         "stratify": args.stratify,
         "limit": args.limit,
+        **({"hp_overrides": hp_snapshot} if hp_snapshot else {}),
     }
     session = Session(
         session_id=sid,
@@ -118,6 +187,7 @@ def main() -> None:
             cmd.append("--stratify")
         if args.limit:
             cmd += ["--limit", str(args.limit)]
+        cmd += hp_args
 
         print(f"\n=== RUN {m} ({eid}) ===")
         print(" ".join(cmd))
