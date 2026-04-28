@@ -14,6 +14,9 @@ outputs/*.npy
 outputs/*.pkl
 outputs/*.npz
 outputs/*.h5
+outputs/*.pdf
+outputs/*.jsonl
+outputs/*.wandb-run-id
 outputs/tmp/
 outputs/_smoke_*
 *.log
@@ -40,6 +43,7 @@ wandb
 # can be huge (per-question jsonl × hundreds of runs).
 results/experiments/
 results/replays/
+results/sessions/
 
 # Archive 의 raw 결과/LTM 은 untracked (분석 md 는 tracked).
 archive/*/ltm/

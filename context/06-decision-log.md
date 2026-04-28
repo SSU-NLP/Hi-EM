@@ -676,3 +676,58 @@ $$P(\mathbf{s}_n \mid e_n = k) = \mathcal{N}\big(\mathbf{s}_n;\, \mu_k,\, \mathr
 - LongMemEval oracle stratified 30Q × `hi-em-full`: error 0/30, 78s, revisit_hit 0.40.
 
 **다음 (사용자 실행)**: 5-method (sliding/full/rag/hi-em/hi-em-full) sanity 30 비교 → multi-session 0.20 → 0.40+ 회복 가설 검증. 가설 성립 시 full 500. 미성립 시 정직 reframing (Phase 5-A).
+
+---
+
+## 2026-04-29 — LoCoMo 평가 인프라 구축 + conv-level 캐시 도입 (3.3× 가속)
+
+**결정**: LoCoMo 벤치마크용 read-only `eval_query` API 신설 + `HiEMConvCache`로 conv 단위 1회 빌드 / Q마다 read-only 평가. hi-em-full LoCoMo sanity wallclock 60분 → 18분 (3.3× 가속).
+
+**문제 진단 (사건 발생)**:
+LoCoMo는 LongMemEval과 데이터 구조가 다르다:
+- LongMemEval: 500개 질문 각각이 **독립 haystack** (자기 대화 history). 매 Q마다 빌드는 자연스러움.
+- LoCoMo: 10개 conv × 평균 200 Q. **모든 Q가 같은 600턴 대화를 공유**.
+
+기존 인프라(`run_experiment.py:phase_run`)는 LongMemEval 모양에 맞춰 매 Q마다 `shutil.rmtree(ltm_root) + HiEM() + preload_history()`. LoCoMo에서는 **같은 600턴을 200번 재구축** → 200× 낭비.
+
+Smoke 측정:
+- 비-cached `hi-em-full` 49Q: round 1 = 11.6분 (latency_p50 = 339s/Q, prefill = 14.7k tok)
+- 50Q sanity 단독으로 60분 추정. 7-method 합산 시 100~120분.
+- Full 1986Q × 7 method 추정 65~70시간 (≈ 3일). 비현실적.
+
+**근본 원인**: 평가 프로토콜 mismatch. Hi-EM의 `handle_turn`은 **상태를 변경**한다 (segmenter 카운트 ↑, STM miss-promote, LTM jsonl append). LoCoMo의 평가 의도는 "대화가 끝난 시점의 메모리 상태에 대해 N개 질문을 던짐" — 즉 read-only query. 비교 논문(Mem0/MemoryBank/A-Mem)도 모두 conv당 1회 build, query는 frozen state.
+
+**대안 비교**:
+| 옵션 | 시비 가능성 | 판단 |
+|---|---|---|
+| (V1) Per-Q 재구축 (현재) | "왜 매번 재구축, 컴퓨팅 낭비 + 비현실적" | **시비 가능** |
+| (V2) Q마다 누적 (이전 Q가 메모리에 흔적) | "Q 순서 → 결과 영향, 통제 어떻게" | **시비 가능** |
+| (V3) conv당 1회 build, Q마다 snapshot+read-only | **표준 프로토콜** | **선택** |
+
+**구현 (V3)**:
+1. `HiEMSegmenter.predict_topic(s)` — read-only MAP assignment. counts/topics/prev_k mutate 안 함. (`src/hi_em/sem_core.py:124-145`)
+2. `HiEM.eval_query(user_text, return_debug=False)` — 메모리 mutate 없이 prefill+LLM만. STM 미스 시 LTM에서 가져오되 **STM에 promote 안 함** (in-flight prefill에만 합쳐서 사용). LTM jsonl append 없음. (`src/hi_em/orchestrator.py:218-289`)
+3. `HiEMConvCache` — `(sample_id, method)` 키로 HiEM instance를 lazy build/cache. Per-key build lock으로 concurrent 안전. (`scripts/run_experiment.py:HiEMConvCache class`)
+4. `phase_run`에 `hiem_cache` 파라미터, LoCoMo 모드에서 hi-em/hi-em-full/hi-em-full-v2가 자동으로 cache 경유.
+
+**검증**:
+- 단위 6 tests (`tests/test_eval_query.py`): segmenter / STM / LTM 변경 없음, 반복 호출 idempotent, stateless 모드 fallback. **6/6 PASS**.
+- 전체 회귀 202/202 PASS.
+- LoCoMo 49Q × hi-em-full (cached) 실측:
+  - Round 1: 291.6s (cold builds 5)
+  - Round 2-3: ~196s (cache hits, +2 build each)
+  - Round 4: 205.4s (cache 9/10, 1 new)
+  - Round 5: 127.8s (9Q, all cached)
+  - **Total: 18분** (vs 비-cached 60분 추정, **3.3× 가속**)
+  - F1 overall: 0.233 (adversarial 0.90, multi-hop 0.18, 나머지 < 0.05)
+
+**영향 범위**:
+- 신규: `src/hi_em/orchestrator.py:eval_query`, `src/hi_em/sem_core.py:predict_topic`, `scripts/run_experiment.py:HiEMConvCache`, `tests/test_eval_query.py`
+- LongMemEval 경로 영향 없음 — `hiem_cache=None` 기본값으로 기존 per-Q 빌드 유지.
+
+**대안 및 기각 사유**:
+- snapshot+restore (deepcopy STM/segmenter, 호출 후 복원): 가능하지만 LTM jsonl append를 되돌리려면 파일 truncate 필요 → 복잡 + 디스크 I/O. **eval_query가 더 깔끔** (애초에 mutate 안 함).
+- 모든 method를 conv-cache로 통일 (rag도 encoder embeddings 캐시): 미구현. sliding/full/rag는 sanity에서 빠르므로 우선순위 낮음. Full mode에서 필요하면 추후 추가.
+- topic atomicity로 인한 max_turns 무력화 (단일 topic 200+ turns) 별도 이슈로 남김. 현재 경고 로그만 출력 (`MemoryWindow.promote: topic 8 has 393 turns, exceeds max_turns=200. Storing anyway`). 평가 정확도엔 영향 없으나 prefill 토큰 19k까지 부풀음.
+
+**장기 실행 작업 점검 규칙 신설**: 위 사건 진단 중 round 2가 stuck-처럼 보였으나 실은 정상 진행이었음. 10분 초과 작업은 반드시 한 번 진행 점검 의무화. `CLAUDE.md` "장기 실행 작업 진행 점검" 절 추가.
