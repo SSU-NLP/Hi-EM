@@ -38,7 +38,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from hi_em.experiment import DEFAULT_RESULTS_ROOT, Session, save_session  # noqa: E402
 
-QTYPES = [
+QTYPES_LONGMEMEVAL = [
     "knowledge-update",
     "multi-session",
     "single-session-assistant",
@@ -46,6 +46,17 @@ QTYPES = [
     "single-session-user",
     "temporal-reasoning",
 ]
+QTYPES_LOCOMO = [
+    "multi-hop", "temporal-reasoning", "open-domain",
+    "single-hop", "adversarial",
+]
+
+
+def resolve_qtypes(benchmark: str | None, data_path: str) -> list[str]:
+    bm = benchmark
+    if bm is None:
+        bm = "locomo" if "locomo" in data_path.lower() else "longmemeval"
+    return QTYPES_LOCOMO if bm == "locomo" else QTYPES_LONGMEMEVAL
 
 
 def main() -> None:
@@ -57,7 +68,10 @@ def main() -> None:
                    help="Default: session_<UTC ts>")
     p.add_argument("--methods", nargs="+",
                    default=["sliding", "full", "rag", "hi-em"],
-                   choices=["sliding", "full", "rag", "hi-em", "hi-em-full"])
+                   choices=["sliding", "full", "rag", "rag-summary", "rag-observation",
+                            "hi-em", "hi-em-full", "hi-em-full-v2"])
+    p.add_argument("--benchmark", choices=["longmemeval", "locomo"], default=None,
+                   help="Forwarded to run_experiment.py. Default inferred from --data.")
     p.add_argument("--data",
                    default="benchmarks/LongMemEval/data/longmemeval_oracle.json")
     p.add_argument("--limit", type=int, default=None)
@@ -187,6 +201,8 @@ def main() -> None:
             cmd.append("--stratify")
         if args.limit:
             cmd += ["--limit", str(args.limit)]
+        if args.benchmark:
+            cmd += ["--benchmark", args.benchmark]
         cmd += hp_args
 
         print(f"\n=== RUN {m} ({eid}) ===")
@@ -212,29 +228,70 @@ def main() -> None:
             continue
         rows.append((m, json.loads(sp.read_text())))
 
+    qtypes = resolve_qtypes(args.benchmark, args.data)
+
+    # Total wallclock per method (sum of round_runtime across rounds).
+    def _method_total_runtime(eid: str) -> float:
+        rounds_dir = results_root / "experiments" / eid / "rounds"
+        if not rounds_dir.exists():
+            return 0.0
+        total = 0.0
+        for rdir in sorted(rounds_dir.iterdir()):
+            sp = rdir / "summary.json"
+            if sp.exists():
+                try:
+                    total += float(json.loads(sp.read_text()).get("round_runtime_sec", 0.0))
+                except Exception:
+                    pass
+        return total
+
     # stdout
     print(f"\n=== Session Summary: {sid} ===")
-    header = f"{'Method':<10} {'Overall':>8} " + " ".join(
-        f"{qt[:5]:>7}" for qt in QTYPES
+    header = f"{'Method':<14} {'Overall':>8} " + " ".join(
+        f"{qt[:5]:>7}" for qt in qtypes
     )
     print(header)
     print("-" * len(header))
     for m, s in rows:
         if not s:
-            print(f"{m:<10} (no summary)")
+            print(f"{m:<14} (no summary)")
             continue
         ov = s.get("accuracy_overall", 0.0)
         cells = [f"{ov:.3f}"]
-        for qt in QTYPES:
+        for qt in qtypes:
             v = s.get(f"accuracy_by_qtype/{qt}")
             cells.append(f"{v:.2f}" if v is not None else "  -  ")
-        print(f"{m:<10} {cells[0]:>8} " + " ".join(c.rjust(7) for c in cells[1:]))
+        print(f"{m:<14} {cells[0]:>8} " + " ".join(c.rjust(7) for c in cells[1:]))
+
+    # Latency table (TTFT/TPOT/runtime per method)
+    print()
+    print(f"=== Latency (streaming) — {sid} ===")
+    lhdr = (f"{'Method':<14} {'TTFT p50':>10} {'TTFT p95':>10} "
+            f"{'TPOT p50':>10} {'TPOT p95':>10} "
+            f"{'OutTok p50':>11} {'Gen p50':>10} {'Total':>10}")
+    print(lhdr)
+    print("-" * len(lhdr))
+    for (m, s), eid in zip(rows, exp_ids):
+        if not s:
+            print(f"{m:<14} (no summary)")
+            continue
+        total = _method_total_runtime(eid)
+        ttft50 = s.get("ttft_sec_p50", 0.0) * 1000
+        ttft95 = s.get("ttft_sec_p95", 0.0) * 1000
+        tpot50 = s.get("tpot_sec_p50", 0.0) * 1000
+        tpot95 = s.get("tpot_sec_p95", 0.0) * 1000
+        out50 = s.get("output_tokens_p50", 0.0)
+        gen50 = s.get("gen_sec_p50", 0.0)
+        print(f"{m:<14} {ttft50:>8.1f}ms {ttft95:>8.1f}ms "
+              f"{tpot50:>8.2f}ms {tpot95:>8.2f}ms "
+              f"{out50:>11.0f} {gen50:>8.2f}s {total/60:>7.1f}min")
 
     # comparison.md (markdown table)
     md_lines = [
         f"# Session {sid}",
         "",
         f"- data: `{args.data}`",
+        f"- benchmark: {args.benchmark or 'auto'}",
         f"- no_thinking: {args.no_thinking}",
         f"- questions_per_round: {args.questions_per_round}",
         f"- limit: {args.limit}",
@@ -242,17 +299,41 @@ def main() -> None:
         "",
         "## Comparison",
         "",
-        "| Method | Overall | " + " | ".join(QTYPES) + " |",
-        "| --- | --- | " + " | ".join("---" for _ in QTYPES) + " |",
+        "| Method | Overall | " + " | ".join(qtypes) + " |",
+        "| --- | --- | " + " | ".join("---" for _ in qtypes) + " |",
     ]
     for m, s in rows:
         if not s:
             continue
         ov = s.get("accuracy_overall", 0.0)
         cells = [m, f"{ov:.3f}"]
-        for qt in QTYPES:
+        for qt in qtypes:
             v = s.get(f"accuracy_by_qtype/{qt}")
             cells.append(f"{v:.2f}" if v is not None else "—")
+        md_lines.append("| " + " | ".join(cells) + " |")
+    md_lines.append("")
+    md_lines.append("## Latency (streaming)")
+    md_lines.append("")
+    md_lines.append(
+        "| Method | TTFT p50 (ms) | TTFT p95 (ms) | "
+        "TPOT p50 (ms) | TPOT p95 (ms) | "
+        "OutTok p50 | Gen p50 (s) | Total (min) |"
+    )
+    md_lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    for (m, s), eid in zip(rows, exp_ids):
+        if not s:
+            continue
+        total = _method_total_runtime(eid)
+        cells = [
+            m,
+            f"{s.get('ttft_sec_p50', 0.0) * 1000:.1f}",
+            f"{s.get('ttft_sec_p95', 0.0) * 1000:.1f}",
+            f"{s.get('tpot_sec_p50', 0.0) * 1000:.2f}",
+            f"{s.get('tpot_sec_p95', 0.0) * 1000:.2f}",
+            f"{s.get('output_tokens_p50', 0.0):.0f}",
+            f"{s.get('gen_sec_p50', 0.0):.2f}",
+            f"{total / 60:.1f}",
+        ]
         md_lines.append("| " + " | ".join(cells) + " |")
     md_lines.append("")
     md_lines.append("## Per-experiment artifacts")

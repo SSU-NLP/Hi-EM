@@ -22,6 +22,10 @@ dependencies = [
     # entry point 스크립트가 .env 자격증명 로드 (라이브러리 코드는 사용 안 함)
     "python-dotenv>=1.0",
     "wandb>=0.26.1",
+    # LoCoMo F1 metric: porter stemming. Upstream
+    # benchmarks/locomo/task_eval/evaluation.py uses nltk.PorterStemmer;
+    # we require it for numeric parity with the official metric.
+    "nltk>=3.8",
 ]
 
 [dependency-groups]
