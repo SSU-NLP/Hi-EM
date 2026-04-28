@@ -7,6 +7,8 @@ Methods (--method):
     rag         : 모든 turn 임베딩 → cosine top-K (chronological 정렬 후 prefill)
     hi-em       : HiEM stateless — preload_history + handle_turn (Phase 2 baseline)
     hi-em-full  : HiEM Phase 2-Full — STM (Memory Window) + RoundProcessor + topic importance
+    hi-em-full-v2: hi-em-full + STM flush at every haystack-session boundary
+                   (LTM persists; simulates user closing/reopening the app)
 
 Output:
     JSONL per line: {"question_id": ..., "hypothesis": ..., "method": ..., "model": ...}
@@ -165,6 +167,63 @@ def run_hi_em_full(
     return response, debug["messages"], extras
 
 
+def run_hi_em_full_v2(
+    haystack_sessions: list[list[dict]], question: str,
+    llm: OpenAIChatLLM, model: str,
+    encoder: QueryEncoder, ltm_root: Path, conv_id: str,
+    *,
+    alpha: float, lmda: float, sigma0_sq: float,
+    round_size: int,
+    stm_max_topics: int, stm_max_turns: int,
+    promotion_threshold: float,
+    importance_alpha: tuple[float, float, float, float],
+    lambda_r: float, lambda_freq: float, min_floor: float,
+    **llm_kwargs,
+) -> tuple[str, list[dict], dict]:
+    """Phase 2-Full v2: STM-stateful HiEM with **two strict-spec deviations**
+    from hi-em-full:
+
+    * **Per-round STM clear+repromote** (round_clear_stm=True): STM is wiped
+      at the start of every round_processor.process() before high-importance
+      topics are promoted. Post-round STM = exactly the high-importance set
+      (spec step 3 strict reading).
+    * **Per-session STM flush** (preload_history_sessioned): STM is cleared
+      at every haystack-session boundary. LTM persists across sessions for
+      cross-session retrieval; segmenter centroids and turn_id counter
+      persist so topic identity is consistent (spec step 4).
+    """
+    hi = HiEM(
+        conv_id=conv_id, encoder=encoder, llm=llm, model=model,
+        ltm_root=ltm_root,
+        alpha=alpha, lmda=lmda, sigma0_sq=sigma0_sq,
+        response_filter=strip_think_tags,
+        use_stm=True,
+        round_size=round_size,
+        stm_max_topics=stm_max_topics,
+        stm_max_turns=stm_max_turns,
+        promotion_threshold=promotion_threshold,
+        importance_alpha=importance_alpha,
+        lambda_r=lambda_r,
+        lambda_freq=lambda_freq,
+        min_floor=min_floor,
+        round_async=False,
+        round_clear_stm=True,
+        **llm_kwargs,
+    )
+    hi.preload_history_sessioned(haystack_sessions, flush_stm_each=True)
+    response, debug = hi.handle_turn(question, return_debug=True)
+    revisit_hit = int(any(t["topic_id"] == debug["topic_id"]
+                          for t in debug["prefill_turns"]))
+    extras = {
+        "topic_revisit_hit": revisit_hit,
+        "stm_hit": int(bool(debug.get("stm_hit"))),
+        "stm_topics": len(hi.stm.current_topics()) if hi.stm else 0,
+        "stm_turns": hi.stm.total_turns() if hi.stm else 0,
+        "n_sessions": len(haystack_sessions),
+    }
+    return response, debug["messages"], extras
+
+
 # --- Driver --------------------------------------------------------------
 
 def main() -> None:
@@ -182,7 +241,8 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--method", required=True,
-                        choices=["sliding", "full", "rag", "hi-em", "hi-em-full"])
+                        choices=["sliding", "full", "rag", "hi-em", "hi-em-full",
+                                 "hi-em-full-v2"])
     parser.add_argument(
         "--data",
         default=str(REPO_ROOT / "benchmarks/LongMemEval/data/longmemeval_oracle.json"),
@@ -287,7 +347,7 @@ def main() -> None:
         questions = questions[: args.limit]
     print(f"  {len(questions)} questions")
 
-    needs_encoder = args.method in {"rag", "hi-em", "hi-em-full"}
+    needs_encoder = args.method in {"rag", "hi-em", "hi-em-full", "hi-em-full-v2"}
     encoder = None
     if needs_encoder:
         print("[encoder] loading bge-base-en-v1.5 ...")
@@ -319,7 +379,7 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Hi-EM: per-question LTM root for isolation
-    if args.method in {"hi-em", "hi-em-full"}:
+    if args.method in {"hi-em", "hi-em-full", "hi-em-full-v2"}:
         ltm_base = Path(args.ltm_root)
         if ltm_base.exists():
             shutil.rmtree(ltm_base)
@@ -329,7 +389,8 @@ def main() -> None:
         """Process one question → per-q record (thread-safe, no shared state)."""
         qid = entry["question_id"]
         question = entry["question"]
-        history = flatten_history(entry["haystack_sessions"])
+        haystack_sessions = entry["haystack_sessions"]
+        history = flatten_history(haystack_sessions)
         t0 = time.perf_counter()
         try:
             if args.method == "sliding":
@@ -359,6 +420,24 @@ def main() -> None:
                 conv_id = qid.replace("/", "_")
                 hyp, msgs, extras = run_hi_em_full(
                     history, question, llm, args.model,
+                    encoder=encoder,
+                    ltm_root=Path(args.ltm_root) / conv_id,
+                    conv_id=conv_id,
+                    alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
+                    round_size=args.round_size,
+                    stm_max_topics=args.stm_max_topics,
+                    stm_max_turns=args.stm_max_turns,
+                    promotion_threshold=args.promotion_threshold,
+                    importance_alpha=tuple(args.importance_alpha),
+                    lambda_r=args.lambda_r,
+                    lambda_freq=args.lambda_freq,
+                    min_floor=args.min_floor,
+                    **llm_kwargs,
+                )
+            elif args.method == "hi-em-full-v2":
+                conv_id = qid.replace("/", "_")
+                hyp, msgs, extras = run_hi_em_full_v2(
+                    haystack_sessions, question, llm, args.model,
                     encoder=encoder,
                     ltm_root=Path(args.ltm_root) / conv_id,
                     conv_id=conv_id,
