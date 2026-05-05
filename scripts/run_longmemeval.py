@@ -6,8 +6,8 @@ Methods (--method):
     full        : 전체 history 그대로 prefill (LLM 토큰 한계는 vLLM이 처리)
     rag         : 모든 turn 임베딩 → cosine top-K (chronological 정렬 후 prefill)
     hi-em       : HiEM stateless — preload_history + handle_turn (Phase 2 baseline)
-    hi-em-full  : HiEM Phase 2-Full — STM (Memory Window) + RoundProcessor + topic importance
-    hi-em-full-v2: hi-em-full + STM flush at every haystack-session boundary
+    hi-em-full-v1  : HiEM Phase 2-Full — STM (Memory Window) + RoundProcessor + topic importance
+    hi-em-full-v2: hi-em-full-v1 + STM flush at every haystack-session boundary
                    (LTM persists; simulates user closing/reopening the app)
 
 Output:
@@ -15,7 +15,7 @@ Output:
 
 Usage:
     uv run python scripts/run_longmemeval.py --method sliding --limit 30
-    uv run python scripts/run_longmemeval.py --method hi-em-full
+    uv run python scripts/run_longmemeval.py --method hi-em-full-v1
 """
 
 from __future__ import annotations
@@ -181,7 +181,7 @@ def run_hi_em_full_v2(
     **llm_kwargs,
 ) -> tuple[str, list[dict], dict]:
     """Phase 2-Full v2: STM-stateful HiEM with **two strict-spec deviations**
-    from hi-em-full:
+    from hi-em-full-v1:
 
     * **Per-round STM clear+repromote** (round_clear_stm=True): STM is wiped
       at the start of every round_processor.process() before high-importance
@@ -241,7 +241,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--method", required=True,
-                        choices=["sliding", "full", "rag", "hi-em", "hi-em-full",
+                        choices=["sliding", "full", "rag", "hi-em", "hi-em-full-v1",
                                  "hi-em-full-v2"])
     parser.add_argument(
         "--data",
@@ -289,7 +289,7 @@ def main() -> None:
     parser.add_argument("--alpha", type=float, default=seg_cfg["alpha"])
     parser.add_argument("--lmda", type=float, default=seg_cfg["lmda"])
     parser.add_argument("--sigma0-sq", type=float, default=seg_cfg["sigma0_sq"])
-    # hi-em-full HP (configs/hiem.json: stm/round/topic_importance)
+    # hi-em-full-v1 HP (configs/hiem.json: stm/round/topic_importance)
     parser.add_argument("--round-size", type=int,
                         default=round_cfg["turns_per_round"] // 2,
                         help="user+assistant pairs per round (turns_per_round/2).")
@@ -347,7 +347,7 @@ def main() -> None:
         questions = questions[: args.limit]
     print(f"  {len(questions)} questions")
 
-    needs_encoder = args.method in {"rag", "hi-em", "hi-em-full", "hi-em-full-v2"}
+    needs_encoder = args.method in {"rag", "hi-em", "hi-em-full-v1", "hi-em-full-v2"}
     encoder = None
     if needs_encoder:
         print("[encoder] loading bge-base-en-v1.5 ...")
@@ -379,7 +379,7 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Hi-EM: per-question LTM root for isolation
-    if args.method in {"hi-em", "hi-em-full", "hi-em-full-v2"}:
+    if args.method in {"hi-em", "hi-em-full-v1", "hi-em-full-v2"}:
         ltm_base = Path(args.ltm_root)
         if ltm_base.exists():
             shutil.rmtree(ltm_base)
@@ -416,7 +416,7 @@ def main() -> None:
                     alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
                     **llm_kwargs,
                 )
-            elif args.method == "hi-em-full":
+            elif args.method == "hi-em-full-v1":
                 conv_id = qid.replace("/", "_")
                 hyp, msgs, extras = run_hi_em_full(
                     history, question, llm, args.model,

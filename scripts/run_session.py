@@ -69,7 +69,7 @@ def main() -> None:
     p.add_argument("--methods", nargs="+",
                    default=["sliding", "full", "rag", "hi-em"],
                    choices=["sliding", "full", "rag", "rag-summary", "rag-observation",
-                            "hi-em", "hi-em-full", "hi-em-full-v2"])
+                            "hi-em", "hi-em-full-v1", "hi-em-full-v2"])
     p.add_argument("--benchmark", choices=["longmemeval", "locomo"], default=None,
                    help="Forwarded to run_experiment.py. Default inferred from --data.")
     p.add_argument("--data",
@@ -105,7 +105,7 @@ def main() -> None:
     # hi-em (stateless) baseline
     p.add_argument("--k-topics", type=int, default=None)
     p.add_argument("--k-turns-per-topic", type=int, default=None)
-    # hi-em-full (Phase 2-Full STM)
+    # hi-em-full-v1 (Phase 2-Full STM)
     p.add_argument("--round-size", type=int, default=None,
                    help="user+assistant pairs per round.")
     p.add_argument("--stm-max-topics", type=int, default=None)
@@ -265,7 +265,7 @@ def main() -> None:
 
     # Latency table (TTFT/TPOT/runtime per method)
     print()
-    print(f"=== Latency (streaming) — {sid} ===")
+    print(f"=== Latency — {sid} ===")
     lhdr = (f"{'Method':<14} {'TTFT p50':>10} {'TTFT p95':>10} "
             f"{'TPOT p50':>10} {'TPOT p95':>10} "
             f"{'OutTok p50':>11} {'Gen p50':>10} {'Total':>10}")
@@ -312,7 +312,7 @@ def main() -> None:
             cells.append(f"{v:.2f}" if v is not None else "—")
         md_lines.append("| " + " | ".join(cells) + " |")
     md_lines.append("")
-    md_lines.append("## Latency (streaming)")
+    md_lines.append("## Latency")
     md_lines.append("")
     md_lines.append(
         "| Method | TTFT p50 (ms) | TTFT p95 (ms) | "

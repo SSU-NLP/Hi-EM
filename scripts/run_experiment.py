@@ -51,7 +51,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from hi_em.atomic_io import append_jsonl, load_json, load_jsonl, save_json  # noqa: E402
 from hi_em.config import load_config  # noqa: E402
-from hi_em.embedding import QueryEncoder  # noqa: E402
+from hi_em.embedding import QueryEncoder, make_encoder  # noqa: E402
 from hi_em.eval_logging import (  # noqa: E402
     WandbRun, aggregate_summary, count_prefill_tokens, parse_judge_yes_no,
 )
@@ -108,12 +108,72 @@ def run_full(history, question, llm, model, **llm_kwargs):
     return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
 
 
-def run_rag(history, question, llm, model, encoder, k, **llm_kwargs):
+class EncoderCache:
+    """Per-(sample_id, kind) encoder embedding cache for RAG-family methods.
+
+    LoCoMo poses ~200 questions per conversation, all sharing the same
+    600-turn history (or the same per-session ``session_summaries`` /
+    per-(session, speaker) ``observations``). Without caching, ``run_rag``
+    re-encodes the full 600-turn history for every question — and the
+    encoder is lock-serialized (``QueryEncoder.encode`` holds a global
+    ``threading.Lock``), so the cost grows linearly with question count
+    even with 8 worker threads.
+
+    With this cache we encode each conversation's corpus exactly once
+    per ``(sample_id, kind)`` pair and reuse the matrix for every
+    subsequent query. The question embedding is still computed fresh on
+    every call (it's per-Q by definition).
+
+    Same locking pattern as :class:`HiEMConvCache`: per-key build lock
+    inside an outer ``_dict_lock`` so concurrent workers for the same
+    sample don't trigger duplicate encodes.
+    """
+
+    def __init__(self, encoder) -> None:
+        self._encoder = encoder
+        # key = (sample_id, kind) → embedding matrix (n_chunks, dim)
+        self._cache: dict[tuple[str, str], np.ndarray] = {}
+        self._build_locks: dict[tuple[str, str], threading.Lock] = {}
+        self._dict_lock = threading.Lock()
+
+    def _get(self, sample_id: str, kind: str, texts: list[str]) -> np.ndarray:
+        key = (sample_id, kind)
+        with self._dict_lock:
+            cached = self._cache.get(key)
+            if cached is not None:
+                return cached
+            lk = self._build_locks.setdefault(key, threading.Lock())
+        with lk:
+            with self._dict_lock:
+                cached = self._cache.get(key)
+                if cached is not None:
+                    return cached
+            embs = np.asarray(self._encoder.encode(texts))
+            with self._dict_lock:
+                self._cache[key] = embs
+            return embs
+
+    def history(self, sample_id: str, history: list[dict]) -> np.ndarray:
+        return self._get(sample_id, "history", [t["content"] for t in history])
+
+    def summaries(self, sample_id: str, summaries: list[dict]) -> np.ndarray:
+        return self._get(sample_id, "summary", [s["text"] for s in summaries])
+
+    def observations(self, sample_id: str, obs: list[dict]) -> np.ndarray:
+        return self._get(sample_id, "observation", [o["text"] for o in obs])
+
+
+def run_rag(history, question, llm, model, encoder, k,
+            sample_id: str | None = None,
+            enc_cache: "EncoderCache | None" = None,
+            **llm_kwargs):
     if not history:
         msgs = [{"role": "user", "content": question}]
         return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
-    contents = [t["content"] for t in history]
-    embs = np.asarray(encoder.encode(contents))
+    if enc_cache is not None and sample_id is not None:
+        embs = enc_cache.history(sample_id, history)
+    else:
+        embs = np.asarray(encoder.encode([t["content"] for t in history]))
     q_emb = np.asarray(encoder.encode([question])[0])
     sims = embs @ q_emb
     top_idx = np.argsort(-sims)[: min(k, len(history))]
@@ -123,7 +183,10 @@ def run_rag(history, question, llm, model, encoder, k, **llm_kwargs):
     return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
 
 
-def run_rag_summary(extra_db, question, llm, model, encoder, k, **llm_kwargs):
+def run_rag_summary(extra_db, question, llm, model, encoder, k,
+                    sample_id: str | None = None,
+                    enc_cache: "EncoderCache | None" = None,
+                    **llm_kwargs):
     """LoCoMo-only: retrieve over per-session summaries (data-provided).
 
     Mirrors the LoCoMo paper's summary-RAG baseline. Each session has one
@@ -135,8 +198,10 @@ def run_rag_summary(extra_db, question, llm, model, encoder, k, **llm_kwargs):
     if not summaries:
         msgs = [{"role": "user", "content": question}]
         return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
-    texts = [s["text"] for s in summaries]
-    embs = np.asarray(encoder.encode(texts))
+    if enc_cache is not None and sample_id is not None:
+        embs = enc_cache.summaries(sample_id, summaries)
+    else:
+        embs = np.asarray(encoder.encode([s["text"] for s in summaries]))
     q_emb = np.asarray(encoder.encode([question])[0])
     sims = embs @ q_emb
     top_idx = np.argsort(-sims)[: min(k, len(summaries))]
@@ -153,7 +218,10 @@ def run_rag_summary(extra_db, question, llm, model, encoder, k, **llm_kwargs):
     return llm.chat(msgs, model=model, **llm_kwargs), msgs, {"k_retrieved": len(chrono)}
 
 
-def run_rag_observation(extra_db, question, llm, model, encoder, k, **llm_kwargs):
+def run_rag_observation(extra_db, question, llm, model, encoder, k,
+                        sample_id: str | None = None,
+                        enc_cache: "EncoderCache | None" = None,
+                        **llm_kwargs):
     """LoCoMo-only: retrieve over per-(session, speaker) observations.
 
     Observations are atomic facts extracted by the LoCoMo authors via
@@ -165,8 +233,10 @@ def run_rag_observation(extra_db, question, llm, model, encoder, k, **llm_kwargs
     if not obs:
         msgs = [{"role": "user", "content": question}]
         return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
-    texts = [o["text"] for o in obs]
-    embs = np.asarray(encoder.encode(texts))
+    if enc_cache is not None and sample_id is not None:
+        embs = enc_cache.observations(sample_id, obs)
+    else:
+        embs = np.asarray(encoder.encode([o["text"] for o in obs]))
     q_emb = np.asarray(encoder.encode([question])[0])
     sims = embs @ q_emb
     top_idx = np.argsort(-sims)[: min(k, len(obs))]
@@ -231,7 +301,23 @@ class HiEMConvCache:
                 **common,
             )
             hi.preload_history(flatten_history(haystack_sessions))
-        elif method in ("hi-em-full", "hi-em-full-v2"):
+        elif method in ("hi-em-full-v1", "hi-em-full-v2",
+                        "hi-em-full-v3.1.1", "hi-em-full-v3.2"):
+            if method == "hi-em-full-v3.1.1":
+                v3_extra = {
+                    "version": "v3.1.1",
+                    "tau": a.tau,
+                    "cos_threshold": a.cos_threshold,
+                }
+            elif method == "hi-em-full-v3.2.1":
+                v3_extra = {
+                    "version": "v3.2.1",
+                    "tau": a.tau,
+                    "cos_threshold": a.cos_threshold,
+                    "beta": a.beta,
+                }
+            else:
+                v3_extra = {}
             hi = HiEM(
                 use_stm=True,
                 round_size=a.round_size,
@@ -244,6 +330,7 @@ class HiEMConvCache:
                 min_floor=a.min_floor,
                 round_async=False,
                 round_clear_stm=(method == "hi-em-full-v2"),
+                **v3_extra,
                 **common,
             )
             if method == "hi-em-full-v2":
@@ -300,8 +387,9 @@ def run_hi_em_full(history, question, llm, model, encoder, ltm_root, conv_id,
                    *, alpha, lmda, sigma0_sq, round_size,
                    stm_max_topics, stm_max_turns, promotion_threshold,
                    importance_alpha, lambda_r, lambda_freq, min_floor,
+                   version="v2", tau=50.0, cos_threshold=0.7, beta=0.5,
                    **llm_kwargs):
-    """Phase 2-Full: STM-stateful HiEM."""
+    """Phase 2-Full: STM-stateful HiEM (v2 Gaussian, v3.1 cosine MAP, or v3.2 cosine MAP + sub-linear count)."""
     if ltm_root.exists():
         shutil.rmtree(ltm_root)
     hi = HiEM(
@@ -319,6 +407,10 @@ def run_hi_em_full(history, question, llm, model, encoder, ltm_root, conv_id,
         lambda_freq=lambda_freq,
         min_floor=min_floor,
         round_async=False,
+        version=version,
+        tau=tau,
+        cos_threshold=cos_threshold,
+        beta=beta,
         **llm_kwargs,
     )
     hi.preload_history(history)
@@ -381,7 +473,9 @@ def run_hi_em_full_v2(haystack_sessions, question, llm, model, encoder,
 
 def phase_run(
     questions: list[dict], rdir: Path, args, encoder, llm, llm_kwargs,
-    ltm_root: Path, hiem_cache: "HiEMConvCache | None" = None,
+    ltm_root: Path,
+    hiem_cache: "HiEMConvCache | None" = None,
+    enc_cache: "EncoderCache | None" = None,
 ) -> list[dict]:
     """Phase 1: hypothesis 생성. Returns per-question records.
 
@@ -390,6 +484,13 @@ def phase_run(
     methods build the post-conversation memory state once per
     ``sample_id`` and answer each question via :meth:`HiEM.eval_query`
     (read-only — no state mutation, no preload re-run).
+
+    ``enc_cache`` likewise enables per-conversation embedding reuse for
+    ``rag`` / ``rag-summary`` / ``rag-observation``: each conversation's
+    history (or summary / observation) chunks are encoded exactly once
+    and the resulting matrix is reused for all of that conversation's
+    questions. Without it, the encoder lock serializes ~200 redundant
+    re-encodes of the same history per LoCoMo conversation.
     """
     hyp_path = rdir / "hypothesis.jsonl"
     # Idempotent: if file exists from interrupted previous attempt, restart phase fresh.
@@ -429,17 +530,25 @@ def phase_run(
             elif args.method == "full":
                 hyp, msgs, extras = run_full(history, question, llm, args.model, **llm_kwargs)
             elif args.method == "rag":
-                hyp, msgs, extras = run_rag(history, question, llm, args.model,
-                                            encoder=encoder, k=args.rag_k, **llm_kwargs)
+                hyp, msgs, extras = run_rag(
+                    history, question, llm, args.model,
+                    encoder=encoder, k=args.rag_k,
+                    sample_id=entry.get("sample_id"), enc_cache=enc_cache,
+                    **llm_kwargs)
             elif args.method == "rag-summary":
                 hyp, msgs, extras = run_rag_summary(
                     entry.get("extra_databases"), question, llm, args.model,
-                    encoder=encoder, k=args.rag_k, **llm_kwargs)
+                    encoder=encoder, k=args.rag_k,
+                    sample_id=entry.get("sample_id"), enc_cache=enc_cache,
+                    **llm_kwargs)
             elif args.method == "rag-observation":
                 hyp, msgs, extras = run_rag_observation(
                     entry.get("extra_databases"), question, llm, args.model,
-                    encoder=encoder, k=args.rag_k, **llm_kwargs)
-            elif args.method in ("hi-em", "hi-em-full", "hi-em-full-v2"):
+                    encoder=encoder, k=args.rag_k,
+                    sample_id=entry.get("sample_id"), enc_cache=enc_cache,
+                    **llm_kwargs)
+            elif args.method in ("hi-em", "hi-em-full-v1", "hi-em-full-v2",
+                                 "hi-em-full-v3.1.1", "hi-em-full-v3.2"):
                 if hiem_cache is not None:
                     # LoCoMo path: build state once per sample_id,
                     # answer each question read-only via eval_query.
@@ -457,7 +566,13 @@ def phase_run(
                             alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
                             **llm_kwargs,
                         )
-                    elif args.method == "hi-em-full":
+                    elif args.method in ("hi-em-full-v1", "hi-em-full-v3.1.1", "hi-em-full-v3.2"):
+                        if args.method == "hi-em-full-v3.1.1":
+                            seg_version = "v3.1.1"
+                        elif args.method == "hi-em-full-v3.2.1":
+                            seg_version = "v3.2.1"
+                        else:
+                            seg_version = "v2"
                         hyp, msgs, extras = run_hi_em_full(
                             history, question, llm, args.model,
                             encoder=encoder,
@@ -472,6 +587,10 @@ def phase_run(
                             lambda_r=args.lambda_r,
                             lambda_freq=args.lambda_freq,
                             min_floor=args.min_floor,
+                            version=seg_version,
+                            tau=args.tau,
+                            cos_threshold=args.cos_threshold,
+                            beta=args.beta,
                             **llm_kwargs,
                         )
                     else:  # hi-em-full-v2
@@ -625,7 +744,13 @@ def phase_judge(
             "max_tokens": args.judge_max_tokens,
         }
         if args.no_thinking:
-            chat_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+            # vLLM honors chat_template_kwargs.enable_thinking; Crts honors
+            # OpenRouter-style reasoning.enabled. Send both — each backend
+            # ignores the other's key.
+            chat_kwargs["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": False},
+                "reasoning": {"enabled": False},
+            }
         raw = llm.chat([{"role": "user", "content": prompt}], **chat_kwargs)
         label = parse_judge_yes_no(raw)
         return {
@@ -703,7 +828,11 @@ def main() -> None:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--method", required=True,
                    choices=["sliding", "full", "rag", "rag-summary", "rag-observation",
-                            "hi-em", "hi-em-full", "hi-em-full-v2"])
+                            "hi-em", "hi-em-full-v1", "hi-em-full-v2",
+                            # Bounded Cosine MAP (v3.1 = legacy alias for v3.1.1)
+                            "hi-em-full-v3.1", "hi-em-full-v3.1.1",
+                            # Bounded Cosine MAP + sub-linear sCRP count (v3.2 = legacy alias for v3.2.1)
+                            "hi-em-full-v3.2", "hi-em-full-v3.2.1"])
     p.add_argument("--benchmark", choices=["longmemeval", "locomo"],
                    default=None,
                    help="Benchmark spec. Default inferred from --data path "
@@ -737,6 +866,18 @@ def main() -> None:
         "--device",
         default=_env_device if _env_device in {"cuda", "mps", "cpu"} else None,
     )
+    _env_emb_backend = (os.environ.get("HIEM_EMBEDDING_BACKEND") or "").strip().lower()
+    p.add_argument(
+        "--embedding-backend",
+        choices=["local", "api"],
+        default=_env_emb_backend if _env_emb_backend in {"local", "api"} else "local",
+        help="local: sentence-transformers (bge); api: OpenAI-compatible /v1/embeddings (OpenRouter etc.)",
+    )
+    p.add_argument(
+        "--embedding-model",
+        default=os.environ.get("HIEM_EMBEDDING_MODEL"),
+        help="Override embedding model id (e.g. openai/text-embedding-3-small).",
+    )
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--sliding-k", type=int, default=ev["sliding_k"])
     p.add_argument("--rag-k", type=int, default=ev["rag_k"])
@@ -745,7 +886,7 @@ def main() -> None:
     p.add_argument("--alpha", type=float, default=seg["alpha"])
     p.add_argument("--lmda", type=float, default=seg["lmda"])
     p.add_argument("--sigma0-sq", type=float, default=seg["sigma0_sq"])
-    # hi-em-full HP (Phase 2-Full)
+    # hi-em-full-v1 HP (Phase 2-Full)
     p.add_argument("--round-size", type=int,
                    default=round_cfg["turns_per_round"] // 2)
     p.add_argument("--stm-max-topics", type=int, default=stm_cfg["max_topics"])
@@ -758,10 +899,33 @@ def main() -> None:
     p.add_argument("--lambda-r", type=float, default=imp_cfg["lambda_r"])
     p.add_argument("--lambda-freq", type=float, default=imp_cfg["lambda_freq"])
     p.add_argument("--min-floor", type=float, default=imp_cfg["min_floor"])
+    # v3.x (Bounded Cosine variants) only
+    p.add_argument("--tau", type=float, default=50.0,
+                   help="Cosine temperature for hi-em-full-v3.x. "
+                        "Score = log prior + tau * cos(s, mu_or_pred). "
+                        "Default 50 (TopiOCQA-tuned).")
+    p.add_argument("--cos-threshold", type=float, default=0.7,
+                   help="New-cluster cosine baseline for hi-em-full-v3.x — a fresh "
+                        "topic competes as if it had cos = cos_threshold. "
+                        "Default 0.7 (TopiOCQA-tuned).")
+    p.add_argument("--beta", type=float, default=0.5,
+                   help="v3.2 only: sub-linear sCRP count exponent. "
+                        "prior_k ∝ (C_k + 1)^beta + lambda·1[prev=k]. "
+                        "beta=1.0 reduces to v3.1; beta<1 squashes the "
+                        "rich-get-richer accumulation that drives mega-topic. "
+                        "Default 0.5 (sqrt).")
     p.add_argument("--no-token-count", action="store_true")
     p.add_argument("--results-root", default=str(DEFAULT_RESULTS_ROOT))
     p.add_argument("--wandb-project", default="hi-em-phase4")
     args = p.parse_args()
+
+    # Backwards-compat aliases: old method names normalize to new ones.
+    _METHOD_ALIASES = {
+        "hi-em-full-v3.1": "hi-em-full-v3.1.1",
+        "hi-em-full-v3.2": "hi-em-full-v3.2.1",
+    }
+    if args.method in _METHOD_ALIASES:
+        args.method = _METHOD_ALIASES[args.method]
 
     results_root = Path(args.results_root)
 
@@ -789,11 +953,15 @@ def main() -> None:
         "temperature": args.temperature,
         "no_thinking": args.no_thinking,
         "device": args.device or "auto",
+        "embedding_backend": args.embedding_backend,
+        "embedding_model": args.embedding_model,
         "workers": args.workers,
         "limit": args.limit,
         "stratify": args.stratify,
         "questions_per_round": args.questions_per_round,
-        "segmenter": {"alpha": args.alpha, "lmda": args.lmda, "sigma0_sq": args.sigma0_sq},
+        "segmenter": {"alpha": args.alpha, "lmda": args.lmda, "sigma0_sq": args.sigma0_sq,
+                      "tau": args.tau, "cos_threshold": args.cos_threshold,
+                      "beta": args.beta},
         "memory_window": {"k_topics": args.k_topics, "k_turns_per_topic": args.k_turns_per_topic},
         "evaluation": {"sliding_k": args.sliding_k, "rag_k": args.rag_k},
         "session_common": session_common,
@@ -851,14 +1019,42 @@ def main() -> None:
     rounds_n = max(1, (n_total + args.questions_per_round - 1) // args.questions_per_round)
     print(f"[data] {n_total} questions → {rounds_n} rounds × {args.questions_per_round}")
 
+    # STM top-K importance turn-count stats: hi-em-full-v1 only, one-shot.
+    # File-existence gate honors "그뒤로 그 파일이 있으면 다시 안만들게" (CLAUDE.md).
+    if args.method == "hi-em-full-v1":
+        explicit = os.environ.get("HIEM_STM_TOPK_STATS_PATH")
+        topk_stats_path = (
+            Path(explicit) if explicit
+            else REPO_ROOT / "outputs" / "stm_importance_topk_stats.jsonl"
+        )
+        if topk_stats_path.exists():
+            print(f"[stm-topk-stats] {topk_stats_path} exists — skipping")
+            os.environ.pop("HIEM_STM_TOPK_STATS_PATH", None)
+        else:
+            os.environ["HIEM_STM_TOPK_STATS_PATH"] = str(topk_stats_path)
+            print(f"[stm-topk-stats] writing per-round top-3/4/5 stats to {topk_stats_path}")
+
     # Encoder + LLM (heavy, do once outside the round loop).
     needs_encoder = args.method in {
         "rag", "rag-summary", "rag-observation",
-        "hi-em", "hi-em-full", "hi-em-full-v2",
+        "hi-em", "hi-em-full-v1", "hi-em-full-v2",
+        "hi-em-full-v3.1.1", "hi-em-full-v3.2",
     }
-    encoder = QueryEncoder(device=args.device) if needs_encoder else None
+    encoder = (
+        make_encoder(
+            device=args.device,
+            backend=args.embedding_backend,
+            model=args.embedding_model,
+        )
+        if needs_encoder
+        else None
+    )
     if encoder is not None:
-        print(f"[encoder] device={encoder.device}")
+        print(
+            f"[encoder] backend={args.embedding_backend} "
+            f"model={getattr(encoder, 'model_name', '?')} "
+            f"device={getattr(encoder, 'device', '?')} dim={encoder.dim}"
+        )
         if not args.no_token_count:
             count_prefill_tokens([{"role": "user", "content": "warmup"}], args.model)
     elif not args.no_token_count:
@@ -867,11 +1063,18 @@ def main() -> None:
     llm = OpenAIChatLLM()
     llm_kwargs: dict = {"temperature": args.temperature, "max_tokens": args.max_tokens}
     if args.no_thinking:
-        llm_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+        # vLLM honors chat_template_kwargs.enable_thinking; Crts honors
+        # OpenRouter-style reasoning.enabled. Send both — each backend
+        # ignores the other's key.
+        llm_kwargs["extra_body"] = {
+            "chat_template_kwargs": {"enable_thinking": False},
+            "reasoning": {"enabled": False},
+        }
 
     # Hi-EM ltm root: per-experiment, isolated from archive.
     ltm_root = exp_dir / "working_state" / "ltm"
-    if args.method in {"hi-em", "hi-em-full"} and ltm_root.exists():
+    if args.method in {"hi-em", "hi-em-full-v1",
+                        "hi-em-full-v3.1.1", "hi-em-full-v3.2"} and ltm_root.exists():
         # Resume-safe: per-question conv_id dirs are ephemeral; cleaning them is OK
         # because preload_history rebuilds from the input for the current round.
         pass
@@ -881,13 +1084,24 @@ def main() -> None:
     # 200× preload cost; each Q answers read-only via :meth:`HiEM.eval_query`.
     hiem_cache: HiEMConvCache | None = None
     if benchmark == "locomo" and args.method in {
-        "hi-em", "hi-em-full", "hi-em-full-v2"
+        "hi-em", "hi-em-full-v1", "hi-em-full-v2",
+        "hi-em-full-v3.1.1", "hi-em-full-v3.2",
     }:
         hiem_cache = HiEMConvCache(
             ltm_root=ltm_root, encoder=encoder, llm=llm,
             model=args.model, llm_kwargs=llm_kwargs, args=args,
         )
         print("[hiem-cache] enabled (per-sample_id conv-level state cache)")
+
+    # Same idea for RAG-family methods: cache per-conversation embedding
+    # matrices so the encoder (which is lock-serialized inside QueryEncoder)
+    # does each conversation's corpus exactly once instead of ~200 times.
+    enc_cache: EncoderCache | None = None
+    if benchmark == "locomo" and args.method in {
+        "rag", "rag-summary", "rag-observation"
+    } and encoder is not None:
+        enc_cache = EncoderCache(encoder=encoder)
+        print("[enc-cache] enabled (per-sample_id embedding cache)")
 
     # Resume.
     last = find_resumable_experiment(exp_id, root=results_root)
@@ -900,14 +1114,17 @@ def main() -> None:
         return
 
     # Wandb (optional, no-op if not authed).
+    # Sidecar holds the run id as plain text (see WandbRun.__init__);
+    # never load_json — it's not JSON.
+    sidecar = exp_dir / "wandb-run-id.txt"
+    resume_id = sidecar.read_text(encoding="utf-8").strip() if sidecar.exists() else None
     wb = WandbRun(
         project=args.wandb_project,
         name=exp_id,
         group=args.session or Path(args.data).stem,
         config=config_snapshot,
-        sidecar_path=exp_dir / "wandb-run-id.txt",
-        resume_id=load_json(exp_dir / "wandb-run-id.txt")
-                  if (exp_dir / "wandb-run-id.txt").exists() else None,
+        sidecar_path=sidecar,
+        resume_id=resume_id or None,
     )
 
     # Round loop.
@@ -928,7 +1145,7 @@ def main() -> None:
         t_round = time.perf_counter()
         run_records = phase_run(
             batch, rdir, args, encoder, llm, llm_kwargs, ltm_root,
-            hiem_cache=hiem_cache,
+            hiem_cache=hiem_cache, enc_cache=enc_cache,
         )
         if benchmark == "locomo":
             judged = phase_judge_locomo(run_records, batch, rdir, args)
@@ -962,6 +1179,12 @@ def main() -> None:
     final["n_questions"] = len(all_judged)
     final["n_rounds"] = rounds_n
     save_json(exp_dir / "summary.json", final)
+
+    if args.method == "hi-em-full-v1" and os.environ.get("HIEM_STM_TOPK_STATS_PATH"):
+        from hi_em.stm_topk_stats import flush_aggregate
+        written = flush_aggregate()
+        if written:
+            print(f"[stm-topk-stats] aggregated stats written to {written}")
 
     mark_experiment_complete(exp_id, total_rounds=rounds_n, root=results_root)
 

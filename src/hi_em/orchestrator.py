@@ -42,6 +42,7 @@ from hi_em.ltm import LTM
 from hi_em.memory_window import MemoryWindow, select_memory_window
 from hi_em.round_processor import RoundProcessor
 from hi_em.sem_core import HiEMSegmenter
+from hi_em.sem_core_optimize import HiEMSegmenterV3
 
 
 class HiEM:
@@ -73,6 +74,11 @@ class HiEM:
         min_floor: float = 0.1,
         round_async: bool = True,
         round_clear_stm: bool = False,
+        # ---- v3.x (Bounded Cosine variants) -------------------------
+        version: str = "v2",
+        tau: float = 50.0,
+        cos_threshold: float = 0.7,
+        beta: float = 0.5,  # v3.2 only: sub-linear sCRP count exponent
         # -------------------------------------------------------------
         **llm_kwargs: Any,
     ) -> None:
@@ -81,9 +87,26 @@ class HiEM:
         self._llm = llm
         self._model = model
         self._ltm = LTM(ltm_root)
-        self._segmenter = HiEMSegmenter(
-            dim=encoder.dim, alpha=alpha, lmda=lmda, sigma0_sq=sigma0_sq
-        )
+        self._version = version
+        if version == "v3.1.1":
+            self._segmenter = HiEMSegmenterV3(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold,
+            )
+        elif version == "v3.2.1":
+            from hi_em.sem_core_optimize_pe import HiEMSegmenterV32
+            self._segmenter = HiEMSegmenterV32(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+            )
+        elif version == "v2":
+            self._segmenter = HiEMSegmenter(
+                dim=encoder.dim, alpha=alpha, lmda=lmda, sigma0_sq=sigma0_sq
+            )
+        else:
+            raise ValueError(
+                f"unknown HiEM version: {version!r} (expected 'v2', 'v3.1.1', or 'v3.2.1')"
+            )
         self._k_topics = k_topics
         self._k_turns_per_topic = k_turns_per_topic
         self._system_prompt = system_prompt
@@ -514,16 +537,21 @@ class HiEM:
         }
 
     def _snapshot_state(self) -> dict[str, Any]:
+        topics_out = []
+        for t in self._segmenter.topics:
+            row: dict[str, Any] = {
+                "topic_id": t.topic_id,
+                "centroid": t.mu.tolist(),
+                "count": t.n,
+            }
+            # v2 Gaussian topic carries diagonal variance; v3 cosine topic
+            # has no variance state. Snapshot what's available.
+            variance_fn = getattr(t, "variance", None)
+            if callable(variance_fn):
+                row["variance"] = variance_fn().tolist()
+            topics_out.append(row)
         return {
             "conv_id": self.conv_id,
             "n_turns": self._next_turn_id,
-            "topics": [
-                {
-                    "topic_id": t.topic_id,
-                    "centroid": t.mu.tolist(),
-                    "variance": t.variance().tolist(),
-                    "count": t.n,
-                }
-                for t in self._segmenter.topics
-            ],
+            "topics": topics_out,
         }
