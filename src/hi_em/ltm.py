@@ -32,6 +32,11 @@ class LTM:
         self.root = Path(root_dir)
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        # In-memory mirror of <conv_id>.jsonl. Populated lazily on first access
+        # and kept in sync by ``append_turn``. Eliminates O(n²) re-parses when
+        # ``RoundProcessor.process`` calls ``load_turns`` per promoted topic
+        # every round during ``preload_history``.
+        self._turns_mem: dict[str, list[dict[str, Any]]] = {}
 
     def _turns_path(self, conv_id: str) -> Path:
         return self.root / f"{conv_id}.jsonl"
@@ -40,27 +45,40 @@ class LTM:
         return self.root / f"{conv_id}.state.json"
 
     def append_turn(self, conv_id: str, turn: dict[str, Any]) -> None:
-        """Append a single turn record to ``<conv_id>.jsonl``."""
-        with self._lock, self._turns_path(conv_id).open("a") as f:
-            f.write(json.dumps(turn) + "\n")
+        """Append a single turn record to ``<conv_id>.jsonl`` and the in-memory mirror."""
+        with self._lock:
+            with self._turns_path(conv_id).open("a") as f:
+                f.write(json.dumps(turn) + "\n")
+            mem = self._turns_mem.get(conv_id)
+            if mem is None:
+                # Lazy populate: include any pre-existing turns on disk plus this one.
+                self._turns_mem[conv_id] = self._read_turns_from_disk(conv_id)
+            else:
+                mem.append(turn)
 
     def update_state(self, conv_id: str, state: dict[str, Any]) -> None:
         """Overwrite ``<conv_id>.state.json`` with the latest topic snapshot."""
         with self._lock:
             self._state_path(conv_id).write_text(json.dumps(state, indent=2))
 
+    def _read_turns_from_disk(self, conv_id: str) -> list[dict[str, Any]]:
+        path = self._turns_path(conv_id)
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text().splitlines() if line]
+
     def load_turns(
         self, conv_id: str, topic_id: int | None = None
     ) -> list[dict[str, Any]]:
         """Return all turns (optionally filtered to one ``topic_id``)."""
         with self._lock:
-            path = self._turns_path(conv_id)
-            if not path.exists():
-                return []
-            turns = [json.loads(line) for line in path.read_text().splitlines() if line]
-        if topic_id is not None:
-            turns = [t for t in turns if t["topic_id"] == topic_id]
-        return turns
+            mem = self._turns_mem.get(conv_id)
+            if mem is None:
+                mem = self._read_turns_from_disk(conv_id)
+                self._turns_mem[conv_id] = mem
+            if topic_id is None:
+                return list(mem)
+            return [t for t in mem if t["topic_id"] == topic_id]
 
     def load_state(self, conv_id: str) -> dict[str, Any] | None:
         """Return the latest topic-state snapshot, or ``None`` if absent."""
