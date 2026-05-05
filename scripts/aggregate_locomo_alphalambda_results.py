@@ -21,6 +21,9 @@ ROOT = REPO / "results" / "experiments"
 SWEEP = REPO / "outputs" / "sweep_2026-05-05_locomo_alpha_lambda_cos"
 LOG = SWEEP / "run.log"
 RAG_LOG = SWEEP / "run_rag.log"
+V321_LOG = SWEEP / "run_v321.log"
+TOP20_FILE = SWEEP / "top20_for_v321.txt"
+V321_BETAS = ("0.25", "0.5", "1.0")
 
 
 def parse_runtimes(log_path: Path) -> dict:
@@ -33,7 +36,9 @@ def parse_runtimes(log_path: Path) -> dict:
     for b in blocks[1:]:
         head = b.splitlines()[0]
         m_full = re.search(r"method=hi-em-full-v1\b.*alpha=(\d+) lmda=(\d+) sigma", head)
-        m_v31 = re.search(r"method=hi-em-full-v3\.1.*alpha=(\d+) lmda=(\d+) cos=([\d.]+)", head)
+        # v3.2.1 must be checked BEFORE v3.1 (string prefix overlap)
+        m_v321 = re.search(r"method=hi-em-full-v3\.2\.1\b.*alpha=(\d+) lmda=(\d+) cos=([\d.]+) beta=([\d.]+)", head)
+        m_v31 = re.search(r"method=hi-em-full-v3\.1\.?\d*\b.*alpha=(\d+) lmda=(\d+) cos=([\d.]+)", head)
         m_rag = re.search(r"method=(rag(?:-\w+)?)\b", head)
         rt_match = re.search(r"runtime=([\d.]+)s", b)
         if not rt_match:
@@ -41,6 +46,8 @@ def parse_runtimes(log_path: Path) -> dict:
         rt = float(rt_match.group(1))
         if m_full:
             out[("full", m_full.group(1), m_full.group(2))] = rt
+        elif m_v321:
+            out[("v3.2.1", m_v321.group(1), m_v321.group(2), m_v321.group(3), m_v321.group(4))] = rt
         elif m_v31:
             out[("v3.1.1", m_v31.group(1), m_v31.group(2), m_v31.group(3))] = rt
         elif m_rag:
@@ -75,7 +82,8 @@ def stm_stats_from_jsonl(p: Path) -> tuple:
     )
 
 
-def build_row(method: str, alpha, lmda, cos_thr, exp_id: str, runtimes: dict) -> dict | None:
+def build_row(method: str, alpha, lmda, cos_thr, exp_id: str, runtimes: dict,
+              beta=None) -> dict | None:
     exp_dir = ROOT / exp_id
     sj = exp_dir / "summary.json"
     if not sj.exists():
@@ -88,6 +96,9 @@ def build_row(method: str, alpha, lmda, cos_thr, exp_id: str, runtimes: dict) ->
     elif method == "v3.1.1":
         topk = SWEEP / f"stm_topk_hi-em-full-v3_1_a{alpha}_l{lmda}_c{cos_thr}.rounds.jsonl"
         rt = runtimes.get(("v3.1.1", str(alpha), str(lmda), str(cos_thr)))
+    elif method == "v3.2.1":
+        topk = SWEEP / f"stm_topk_v3_2_1_a{alpha}_l{lmda}_c{cos_thr}_b{beta}.rounds.jsonl"
+        rt = runtimes.get(("v3.2.1", str(alpha), str(lmda), str(cos_thr), str(beta)))
     else:  # rag*
         topk = None
         rt = runtimes.get(("rag", method))
@@ -106,6 +117,7 @@ def build_row(method: str, alpha, lmda, cos_thr, exp_id: str, runtimes: dict) ->
         "α": alpha if alpha is not None else "—",
         "λ": lmda if lmda is not None else "—",
         "cos": cos_thr if cos_thr is not None else "—",
+        "β": beta if beta is not None else "—",
         "acc": s["accuracy_overall"],
         "err": s["error_rate"],
         "rt_s": rt,
@@ -139,6 +151,23 @@ def collect_rows(runtimes: dict) -> list[dict]:
                 r = build_row("v3.1.1", alpha, lmda, cos_thr, exp_id, runtimes)
                 if r:
                     rows.append(r)
+    # Block 3: v3.2.1 top-20 × β
+    if TOP20_FILE.exists():
+        for line in TOP20_FILE.open():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            cfg = line.split("#", 1)[0].strip()
+            parts = cfg.split()
+            if len(parts) < 3:
+                continue
+            alpha_s, lmda_s, cos_s = parts[0], parts[1], parts[2]
+            for beta in V321_BETAS:
+                exp_id = f"20260505_locomo_aL_top20_a{alpha_s}_l{lmda_s}_c{cos_s}_b{beta}_hi-em-full-v3_2_1"
+                r = build_row("v3.2.1", int(alpha_s), int(lmda_s), cos_s, exp_id, runtimes, beta=beta)
+                if r:
+                    rows.append(r)
+
     # RAG variants
     for m in ("rag", "rag-summary", "rag-observation"):
         exp_id = f"20260505_locomo_aL_{m.replace('-', '_')}"
@@ -150,23 +179,23 @@ def collect_rows(runtimes: dict) -> list[dict]:
 
 def annotate(rows: list[dict]) -> None:
     """Add 비고 column based on outliers + structural flags."""
-    # Per-block runtime medians (full / v3.1 separate)
-    rt_full = [r["rt_s"] for r in rows if r["method"] == "full" and r["rt_s"]]
-    rt_v31 = [r["rt_s"] for r in rows if r["method"] == "v3.1.1" and r["rt_s"]]
-    rt_med = {"full": median(rt_full) if rt_full else 0.0,
-              "v3.1.1": median(rt_v31) if rt_v31 else 0.0}
-    accs_full = [r["acc"] for r in rows if r["method"] == "full"]
-    accs_v31 = [r["acc"] for r in rows if r["method"] == "v3.1.1"]
-    best = {"full": max(accs_full) if accs_full else None,
-            "v3.1.1": max(accs_v31) if accs_v31 else None}
-    worst = {"full": min(accs_full) if accs_full else None,
-             "v3.1.1": min(accs_v31) if accs_v31 else None}
+    # Per-block runtime medians + best/worst per method
+    blocks = ("full", "v3.1.1", "v3.2.1")
+    rt_med = {}
+    best = {}
+    worst = {}
+    for m in blocks:
+        rts = [r["rt_s"] for r in rows if r["method"] == m and r["rt_s"]]
+        accs = [r["acc"] for r in rows if r["method"] == m]
+        rt_med[m] = median(rts) if rts else 0.0
+        best[m] = max(accs) if accs else None
+        worst[m] = min(accs) if accs else None
 
     for r in rows:
         notes = []
         if r["method"] in rt_med and rt_med[r["method"]] and r["rt_s"] and r["rt_s"] > 2 * rt_med[r["method"]]:
             notes.append(f"느림 ({r['rt_s']/60:.1f}min, mega-topic 추정)")
-        if r["method"] in {"full", "v3.1.1"}:
+        if r["method"] in {"full", "v3.1.1", "v3.2.1"}:
             if r["t2μ"] == 0:
                 notes.append("STM single-topic")
             elif r["ratio"] != float("inf") and r["ratio"] > 50:
@@ -205,7 +234,7 @@ def write_outputs(rows: list[dict]) -> None:
     md_path = SWEEP / "summary_table.md"
     csv_path = SWEEP / "summary_table.csv"
 
-    cols = ["method", "α", "λ", "cos", "acc", "rt_s", "gen_p50", "lat_p50",
+    cols = ["method", "α", "λ", "cos", "β", "acc", "rt_s", "gen_p50", "lat_p50",
             "t1μ", "t2μ", "t3μ", "gap", "ratio", "t1max", "t2max", "t1var", "비고"]
 
     # Markdown
@@ -248,7 +277,11 @@ def write_outputs(rows: list[dict]) -> None:
 
 
 def main() -> int:
-    runtimes = {**parse_runtimes(LOG), **parse_runtimes(RAG_LOG)}
+    runtimes = {
+        **parse_runtimes(LOG),
+        **parse_runtimes(RAG_LOG),
+        **parse_runtimes(V321_LOG),
+    }
     rows = collect_rows(runtimes)
     annotate(rows)
     write_outputs(rows)

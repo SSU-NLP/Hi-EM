@@ -302,7 +302,7 @@ class HiEMConvCache:
             )
             hi.preload_history(flatten_history(haystack_sessions))
         elif method in ("hi-em-full-v1", "hi-em-full-v2",
-                        "hi-em-full-v3.1.1", "hi-em-full-v3.2"):
+                        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1"):
             if method == "hi-em-full-v3.1.1":
                 v3_extra = {
                     "version": "v3.1.1",
@@ -548,7 +548,7 @@ def phase_run(
                     sample_id=entry.get("sample_id"), enc_cache=enc_cache,
                     **llm_kwargs)
             elif args.method in ("hi-em", "hi-em-full-v1", "hi-em-full-v2",
-                                 "hi-em-full-v3.1.1", "hi-em-full-v3.2"):
+                                 "hi-em-full-v3.1.1", "hi-em-full-v3.2.1"):
                 if hiem_cache is not None:
                     # LoCoMo path: build state once per sample_id,
                     # answer each question read-only via eval_query.
@@ -566,7 +566,7 @@ def phase_run(
                             alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
                             **llm_kwargs,
                         )
-                    elif args.method in ("hi-em-full-v1", "hi-em-full-v3.1.1", "hi-em-full-v3.2"):
+                    elif args.method in ("hi-em-full-v1", "hi-em-full-v3.1.1", "hi-em-full-v3.2.1"):
                         if args.method == "hi-em-full-v3.1.1":
                             seg_version = "v3.1.1"
                         elif args.method == "hi-em-full-v3.2.1":
@@ -1038,7 +1038,7 @@ def main() -> None:
     needs_encoder = args.method in {
         "rag", "rag-summary", "rag-observation",
         "hi-em", "hi-em-full-v1", "hi-em-full-v2",
-        "hi-em-full-v3.1.1", "hi-em-full-v3.2",
+        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1",
     }
     encoder = (
         make_encoder(
@@ -1074,7 +1074,7 @@ def main() -> None:
     # Hi-EM ltm root: per-experiment, isolated from archive.
     ltm_root = exp_dir / "working_state" / "ltm"
     if args.method in {"hi-em", "hi-em-full-v1",
-                        "hi-em-full-v3.1.1", "hi-em-full-v3.2"} and ltm_root.exists():
+                        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1"} and ltm_root.exists():
         # Resume-safe: per-question conv_id dirs are ephemeral; cleaning them is OK
         # because preload_history rebuilds from the input for the current round.
         pass
@@ -1085,7 +1085,7 @@ def main() -> None:
     hiem_cache: HiEMConvCache | None = None
     if benchmark == "locomo" and args.method in {
         "hi-em", "hi-em-full-v1", "hi-em-full-v2",
-        "hi-em-full-v3.1.1", "hi-em-full-v3.2",
+        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1",
     }:
         hiem_cache = HiEMConvCache(
             ltm_root=ltm_root, encoder=encoder, llm=llm,
