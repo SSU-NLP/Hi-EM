@@ -195,7 +195,9 @@ def aggregate_summary(per_q: list[dict[str, Any]]) -> dict[str, float]:
 
     for key in (
         "prefill_tokens", "latency_sec",
-        # Streaming-mode latency captured by OpenAIChatLLM.chat:
+        # Per-call latency from OpenAIChatLLM.chat. ttft/tpot are 0.0 in
+        # non-streaming mode (HIEM_LLM_STREAM=false); output_tokens and
+        # gen_sec are populated regardless of stream mode.
         "ttft_sec",       # Time To First Token (sec)
         "tpot_sec",       # Time Per Output Token (sec)
         "output_tokens",  # completion token count from usage

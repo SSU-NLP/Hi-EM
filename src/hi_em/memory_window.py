@@ -119,6 +119,10 @@ class MemoryWindow:
         with self._lock:
             return sum(len(v) for v in self._topics.values())
 
+    def topic_turn_counts(self) -> dict[int, int]:
+        with self._lock:
+            return {tid: len(v) for tid, v in self._topics.items()}
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             return {

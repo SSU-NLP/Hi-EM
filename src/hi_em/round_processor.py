@@ -22,6 +22,7 @@ Concurrency model:
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -157,6 +158,15 @@ class RoundProcessor:
                         self._stm.promote(tid, topic_turns)
                         promoted.append(tid)
                 evicted = self._stm.evict_to_capacity(importance)
+
+                if os.environ.get("HIEM_STM_TOPK_STATS_PATH"):
+                    from hi_em.stm_topk_stats import record_round as _rec
+                    _rec(
+                        conv_id=self.conv_id,
+                        round_idx=round_idx,
+                        importance=importance,
+                        stm_turn_counts=self._stm.topic_turn_counts(),
+                    )
 
             self._prev_importance = importance
             self._round_idx += 1

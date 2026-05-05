@@ -3,10 +3,12 @@
 The OpenAI client is mocked — no real network calls. Smoke tests against an
 actual OpenRouter / vLLM endpoint live in Phase 3-3.
 
-``chat()`` always streams (``stream=True`` + ``stream_options.include_usage``)
-so we can capture per-call TTFT/TPOT and report streaming-mode latency
-metrics in evaluation reports. Tests exercise the streamed-iterator
-contract.
+``chat()`` defaults to streaming (``stream=True`` +
+``stream_options.include_usage``) so we can capture per-call TTFT/TPOT
+and report streaming-mode latency metrics in evaluation reports. Tests
+exercise the streamed-iterator contract; non-streaming fallback (env
+``HIEM_LLM_STREAM=false`` or ``stream=False`` constructor arg) is a
+separate code path used for backends that 500 on streamed chat.
 """
 
 from __future__ import annotations

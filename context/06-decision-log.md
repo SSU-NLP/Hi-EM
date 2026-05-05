@@ -731,3 +731,7 @@ Smoke 측정:
 - topic atomicity로 인한 max_turns 무력화 (단일 topic 200+ turns) 별도 이슈로 남김. 현재 경고 로그만 출력 (`MemoryWindow.promote: topic 8 has 393 turns, exceeds max_turns=200. Storing anyway`). 평가 정확도엔 영향 없으나 prefill 토큰 19k까지 부풀음.
 
 **장기 실행 작업 점검 규칙 신설**: 위 사건 진단 중 round 2가 stuck-처럼 보였으나 실은 정상 진행이었음. 10분 초과 작업은 반드시 한 번 진행 점검 의무화. `CLAUDE.md` "장기 실행 작업 진행 점검" 절 추가.
+
+## 2026-05-03 mega-topic 해결 상태 중간 점검
+
+v3.1 Bounded Cosine MAP와 v3.2 Cosine Prediction Error는 TopiOCQA/TIAGE에서 Gaussian v2 대비 F1을 개선하거나 유지해 likelihood 신호 회복 가능성을 보였다. 그러나 두 벤치마크는 평균 12~15턴의 짧은 대화라 raw sCRP `C_k + λ` 누적 폭주가 본격화되는 long-conv mega-topic 검증으로는 부족하다. 특히 TIAGE v3.2 best는 F1=0.411로 높지만 avg max-share=0.491, avg topics=5.1이라 짧은 대화에서도 단일 topic 흡수 경향이 나타난 경고 신호다. 결론적으로 현재 결과는 "likelihood 개선" 증거이지 "C_k 누적 mega-topic 해결" 증거가 아니며, LoCoMo 600턴 재검증과 TopiOCQA/TIAGE concat long-conv stress test로 max-share/topic-count/F1을 함께 확인한 뒤 sqrt+decay prior 도입 여부를 최종 결정한다.
