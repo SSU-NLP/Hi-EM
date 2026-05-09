@@ -4,7 +4,7 @@
 set -u
 cd "$(git rev-parse --show-toplevel)"
 
-OUT_DIR=outputs/sweep_2026-05-05_locomo_alpha_lambda_cos
+OUT_DIR=outputs/sweeps/2026-05-05_locomo_alpha_lambda_cos
 mkdir -p "$OUT_DIR"
 LOG="$OUT_DIR/run_rag.log"
 

@@ -2,8 +2,8 @@
 """Aggregate α×λ×cos sweep + RAG variants into a single markdown table.
 
 Outputs:
-    outputs/sweep_2026-05-05_locomo_alpha_lambda_cos/summary_table.md
-    outputs/sweep_2026-05-05_locomo_alpha_lambda_cos/summary_table.csv
+    outputs/sweeps/2026-05-05_locomo_alpha_lambda_cos/summary_table.md
+    outputs/sweeps/2026-05-05_locomo_alpha_lambda_cos/summary_table.csv
 
 Run any time during/after the sweep. Skips configs without summary.json.
 """
@@ -18,7 +18,7 @@ from statistics import mean, median, pvariance
 
 REPO = Path(__file__).resolve().parent.parent
 ROOT = REPO / "results" / "experiments"
-SWEEP = REPO / "outputs" / "sweep_2026-05-05_locomo_alpha_lambda_cos"
+SWEEP = REPO / "outputs" / "sweeps/2026-05-05_locomo_alpha_lambda_cos"
 LOG = SWEEP / "run.log"
 RAG_LOG = SWEEP / "run_rag.log"
 V321_LOG = SWEEP / "run_v321.log"
@@ -193,6 +193,10 @@ def annotate(rows: list[dict]) -> None:
 
     for r in rows:
         notes = []
+        # β=1.0 in v3.2.1 reduces sub-linear (C+1)^β to v3.1.1 raw sCRP exactly;
+        # acc difference vs source v3.1.1 is therefore LLM temperature noise only.
+        if r["method"] == "v3.2.1" and str(r.get("β", "")) == "1.0":
+            notes.append("v3.1.1과 알고리즘 동일 — sanity-50 LLM noise 측정용 control")
         if r["method"] in rt_med and rt_med[r["method"]] and r["rt_s"] and r["rt_s"] > 2 * rt_med[r["method"]]:
             notes.append(f"느림 ({r['rt_s']/60:.1f}min, mega-topic 추정)")
         if r["method"] in {"full", "v3.1.1", "v3.2.1"}:

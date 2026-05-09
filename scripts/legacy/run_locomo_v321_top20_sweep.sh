@@ -11,7 +11,7 @@
 set -u
 cd "$(git rev-parse --show-toplevel)"
 
-OUT_DIR=outputs/sweep_2026-05-05_locomo_alpha_lambda_cos
+OUT_DIR=outputs/sweeps/2026-05-05_locomo_alpha_lambda_cos
 LOG="$OUT_DIR/run_v321.log"
 TOP_FILE="$OUT_DIR/top20_for_v321.txt"
 BETAS=(0.25 0.5 1.0)

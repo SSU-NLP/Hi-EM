@@ -7,11 +7,11 @@ Strategy (b): for v1 (no `cos`) rows, expand to (α, λ, best_cos) where
 (α, λ, cos) tuples by acc.
 
 Reads:
-    outputs/sweep_2026-05-05_locomo_alpha_lambda_cos/summary_table.csv
+    outputs/sweeps/2026-05-05_locomo_alpha_lambda_cos/summary_table.csv
         (produced by aggregate_locomo_alphalambda_results.py)
 
 Writes:
-    outputs/sweep_2026-05-05_locomo_alpha_lambda_cos/top20_for_v321.txt
+    outputs/sweeps/2026-05-05_locomo_alpha_lambda_cos/top20_for_v321.txt
         one ``alpha lambda cos`` per line.
 
 Also prints lines to stdout so the v3.2.1 sweep shell can pipe them.
@@ -23,8 +23,8 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CSV_PATH = REPO / "outputs" / "sweep_2026-05-05_locomo_alpha_lambda_cos" / "summary_table.csv"
-OUT_PATH = REPO / "outputs" / "sweep_2026-05-05_locomo_alpha_lambda_cos" / "top20_for_v321.txt"
+CSV_PATH = REPO / "outputs" / "sweeps/2026-05-05_locomo_alpha_lambda_cos" / "summary_table.csv"
+OUT_PATH = REPO / "outputs" / "sweeps/2026-05-05_locomo_alpha_lambda_cos" / "top20_for_v321.txt"
 
 
 def main() -> int:

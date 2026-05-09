@@ -8,7 +8,7 @@
 set -u
 cd "$(git rev-parse --show-toplevel)"
 
-OUT_DIR=outputs/sweep_2026-05-04_locomo_sanity50
+OUT_DIR=outputs/sweeps/2026-05-04_locomo_sanity50
 mkdir -p "$OUT_DIR"
 LOG="$OUT_DIR/run.log"
 
