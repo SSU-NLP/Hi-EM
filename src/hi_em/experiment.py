@@ -26,7 +26,7 @@ from typing import Any
 from hi_em.atomic_io import load_json, save_json
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_RESULTS_ROOT = REPO_ROOT / "results"
+DEFAULT_RESULTS_ROOT = REPO_ROOT / "outputs" / "runs"
 
 
 def utc_timestamp() -> str:

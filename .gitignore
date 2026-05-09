@@ -23,7 +23,6 @@ outputs/_smoke_*
 .venv/
 
 # LTM 영속 저장 — per-conversation jsonl + state.json (context/01-hi-em-design.md §9.1)
-data/
 
 # 환경변수 (자격증명) — .env.example는 tracked
 .env
@@ -33,6 +32,8 @@ sem.txt
 
 # Claude Code local settings
 .claude/
+.codex
+.codex/
 
 SEM/
 
@@ -41,12 +42,49 @@ wandb
 # Phase 4-Re research-experiment-infrastructure: experiment-level data is local-only.
 # Sessions are tracked (config snapshot is part of the project), but experiments + replays
 # can be huge (per-question jsonl × hundreds of runs).
-results/experiments/
-results/replays/
-results/sessions/
 
-# Archive 의 raw 결과/LTM 은 untracked (분석 md 는 tracked).
+# Archive — only README.md tracked. Raw runs (working_state, rounds, checkpoints,
+# wandb-run-id, etc.) are gitignored.
 archive/*/ltm/
 archive/*/outputs/*.jsonl
 archive/*/outputs/*.json
 archive/*/outputs/*.wandb-run-id
+archive/*/working_state/
+archive/*/*/working_state/
+archive/*/rounds/
+archive/*/*/rounds/
+archive/*/checkpoints/
+archive/*/*/checkpoints/
+archive/*/*/wandb-run-id.txt
+archive/*/*/completed.json
+archive/*/*/experiment.json
+archive/*/*/summary.json
+
+# outputs/experiments — only REPORT.md (and explicit context md) tracked.
+# Raw run data (results/, run.log, stm_topk, working_state, rounds, checkpoints) ignored.
+outputs/runs/
+outputs/experiments/*/*.json
+outputs/experiments/*/*.jsonl
+outputs/experiments/*/stm_topk*
+outputs/experiments/*/*/results/
+outputs/experiments/*/*/run.log
+outputs/experiments/*/*/stm_topk*
+outputs/experiments/*/*/*.json
+outputs/experiments/*/*/*.jsonl
+outputs/experiments/*/*/*/results/
+outputs/experiments/*/*/*/run.log
+outputs/experiments/*/*/*/stm_topk*
+outputs/experiments/*/*/*.csv
+outputs/experiments/*/*.csv
+outputs/experiments/*/*.txt
+outputs/experiments/*/*/exit_code.txt
+outputs/experiments/*/*/*/exit_code.txt
+outputs/experiments/*/*/working_state/
+outputs/experiments/*/*/rounds/
+outputs/experiments/*/*/checkpoints/
+
+# General catch-all for raw experiment artifacts wherever they appear
+**/working_state/
+**/rounds/round_*/
+**/checkpoints/latest.json
+**/checkpoints/round_*/

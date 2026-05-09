@@ -100,7 +100,11 @@ def _build_haystack_sessions(conversation: dict) -> list[list[dict]]:
             content = f"{speaker}: {text}"
             if j == 0 and date:
                 content = f"[{date}] {content}"
-            out.append({"role": "user", "content": content})
+            # dia_id (e.g. "D1:3") is preserved on the turn object so
+            # downstream retrieval (RAG/sliding/full + Hi-EM) can report
+            # which source turns landed in the LLM context for evidence
+            # recall/precision metrics. The chat-API call strips it.
+            out.append({"role": "user", "content": content, "dia_id": t.get("dia_id")})
         sessions.append(out)
     return sessions
 

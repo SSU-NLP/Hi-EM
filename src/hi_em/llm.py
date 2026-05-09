@@ -47,6 +47,7 @@ import threading
 import time
 from typing import Any
 
+import openai
 from openai import OpenAI
 
 
@@ -78,6 +79,27 @@ class OpenAIChatLLM:
         """
         return getattr(self._tls, "last_metrics", None)
 
+    # Retry transient 5xx / timeout from the upstream provider.
+    # Crts → Together pipeline emits 503 ("service_unavailable") under
+    # short-lived load spikes; the upstream itself signals
+    # ``retry_after_seconds`` ≈ 1 in the error body. We back off
+    # 1s, 3s, 9s (max 3 retries) before surfacing the error.
+    _RETRY_BACKOFFS_SEC: tuple[float, ...] = (1.0, 3.0, 9.0)
+    _RETRY_EXCEPTIONS: tuple = (
+        openai.InternalServerError,  # 5xx (503/504/etc.)
+        openai.APITimeoutError,
+        openai.APIConnectionError,
+    )
+
+    def _create_with_retry(self, **kwargs):
+        for attempt in range(len(self._RETRY_BACKOFFS_SEC) + 1):
+            try:
+                return self._client.chat.completions.create(**kwargs)
+            except self._RETRY_EXCEPTIONS:
+                if attempt >= len(self._RETRY_BACKOFFS_SEC):
+                    raise
+                time.sleep(self._RETRY_BACKOFFS_SEC[attempt])
+
     def chat(
         self,
         messages: list[dict[str, Any]],
@@ -95,7 +117,7 @@ class OpenAIChatLLM:
 
         if not self._stream:
             t0 = time.perf_counter()
-            resp = self._client.chat.completions.create(
+            resp = self._create_with_retry(
                 model=model,
                 messages=messages,
                 **kwargs,
@@ -113,7 +135,7 @@ class OpenAIChatLLM:
             return text
 
         t0 = time.perf_counter()
-        stream = self._client.chat.completions.create(
+        stream = self._create_with_retry(
             model=model,
             messages=messages,
             stream=True,

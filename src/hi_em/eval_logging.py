@@ -225,4 +225,14 @@ def aggregate_summary(per_q: list[dict[str, Any]]) -> dict[str, float]:
     for qt, vs in by_qt.items():
         out[f"accuracy_by_qtype/{qt}"] = float(np.mean(vs))
 
+    # Evidence retrieval metrics (LoCoMo). DYCP-style names: k = method
+    # context size. R-multi-hop@k is multi-hop-only by construction; the
+    # other three are averaged over all instrumented non-adversarial
+    # entries with non-empty evidence.
+    for key in ("H@k", "R@k", "R-multi-hop@k", "P@k"):
+        vals = [r[key] for r in per_q if key in r]
+        if vals:
+            out[key] = float(np.mean(vals))
+            out[f"{key}_n"] = float(len(vals))
+
     return out
