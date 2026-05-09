@@ -33,8 +33,48 @@
 
 ## 현재 상태
 
-**마지막 업데이트**: 2026-04-27
-**현재 Phase**: **Phase 2-Full 구현 완료** (P2F-2~6 + sanity). 신규 method `hi-em-full` 사용 가능. **다음: Phase 4-Re P2F-7 — 5-way sanity 비교 (sliding/full/rag/hi-em/hi-em-full) 실행 후 결정 분기**.
+**마지막 업데이트**: 2026-05-08
+**현재 작업**: v3.3.1 + v3.3.2 experiment 완료. Hi-EM 라인이 LoCoMo 에서 처음으로 RAG/sliding 모든 baseline 을 이김.
+
+핵심 결과:
+- **v3.3.1 default HP 가 mega-topic 의 직접 원인**이었음. cos=0.7, α=1, β=0.5 → T1μ=386 turn (single-topic). HP experiment 으로 cos=0.9, α=100, β=0.25 잡으면 T1μ=28.6, T2μ=23.2, T3μ=19.7 (multi-topic). acc 0.215 → 0.263.
+- **v3.3.2 도입**: SEM2 surprise → boundary 메커니즘을 explicit threshold 로 복원. `pe_threshold` CLI 옵션. v3.3.1 best HP 위에 `pe=0.5 + rnn_train_steps=3` 으로 acc **0.273**. rag-observation (0.258) 포함 모든 baseline 이김.
+
+산출물:
+- `outputs/experiments/2026-05-08_v331_hpsweep/` — 5 configs HP experiment
+- `outputs/experiments/2026-05-08_v332_pesweep/` — 12 configs PE experiment
+- `outputs/experiments/2026-05-08_v332_pesweep/REPORT.md` — 전체 비교 표 (acc + qtype + T1/T2/T3 + T1max/T2max/T1var + gen_p50 + wall_s + RAG baselines)
+- `context/methodology/v3.3.2.md` — v3.3.2 알고리즘 + sweep 결과
+- `context/methodology/v3.3.1.md` — HP experiment 결과 추가
+- `context/06-decision-log.md` — 2026-05-08 entry
+
+**과거 Phase**: Phase 2-Full 구현 완료 (P2F-2~6 + sanity). 신규 method `hi-em-full` 사용 가능.
+
+**미커밋 변경 (자고 일어나면 commit)**:
+- 신규: `src/hi_em/sem_core_v332_rnn_pe.py`, `tests/test_v332_pe_boundary.py`, `scripts/experiment.py`, `context/methodology/v3.3.2.md`, `outputs/experiments/`, `outputs/reports/`, `outputs/design/`, `outputs/legacy/`, `scripts/legacy/`
+- 수정: `src/hi_em/orchestrator.py` (v3.3.2 dispatch + pe_threshold), `scripts/run_experiment.py` (v3.3.2 method registration + --pe-threshold flag, topk gate 확장), `context/methodology/v3.3.1.md`, `context/methodology/v3.3.2.md`, `context/methodology/README.md`, `context/methodology/infrastructure.md` (experiment harness + dir 구조 추가), `context/06-decision-log.md`, `handoff.md`, `README.md`
+- 정리: `outputs/sweep_2026-*` → `outputs/experiments/2026-*`. 기타 `outputs/{*.md,*.jsonl,*.pdf}` → `outputs/{reports,legacy,design}/`. `scripts/run_*sweep.sh`, `scripts/aggregate_*.py` 등 옛 per-experiment 스크립트 → `scripts/legacy/`.
+
+## Experiment 실행 (canonical)
+
+새 experiment 는 항상 **`scripts/experiment.py`** 로 실행. 자세한 사용법 → `context/methodology/infrastructure.md` § 7.
+
+### 진행 중 experiment — full LoCoMo resume
+
+`outputs/experiments/2026-05-08_full_locomo/` 에 v1/v3.1.1/v3.3.1/v3.3.2 best 4 method 완료, rag/rag-summary/rag-observation/sliding/full 5 method 미실행. 아래 명령어로 resume (이미 끝난 4개는 skip):
+
+```bash
+uv run python scripts/experiment.py \
+  --name 2026-05-08_full_locomo \
+  --benchmark locomo \
+  --data benchmarks/locomo/data/locomo10.json \
+  --workers 100 --questions-per-round 200 \
+  --method 'hi-em-full-v1:v1_best@alpha=1,lmda=10,sigma0_sq=0.01' \
+  --method 'hi-em-full-v3.1.1:v3p1p1_best@alpha=10,lmda=10,cos_threshold=0.3,tau=50' \
+  --method 'hi-em-full-v3.3.1:v3p3p1_best@alpha=100,lmda=10,cos_threshold=0.9,beta=0.25' \
+  --method 'hi-em-full-v3.3.2:v3p3p2_best@alpha=100,lmda=10,cos_threshold=0.9,beta=0.25,pe_threshold=0.5,rnn_train_steps=3' \
+  --method rag --method rag-summary --method rag-observation --method sliding --method full
+```
 
 ### Phase 2-Full 추가 모듈 (2026-04-27)
 - `src/hi_em/memory_window.py` — `MemoryWindow` 클래스 (topic-atomic STM, in-process RAM 보유, threading.RLock). API: `has/get/promote/maybe_append_turn/evict_topic/evict_lowest_importance/evict_to_capacity/all_turns/current_topics/total_turns/clear`. **불변식: 한 topic은 STM에 통째 또는 부재 — turn-level slicing 함수 없음**.
@@ -72,7 +112,7 @@
 - **Phase 1-3, 1-4 완료**: TopiOCQA dev. **Gate PASS (marginal)** — Hi-EM F1=0.471 vs cosine 0.467 (HP α=10, λ=1, σ₀²=0.1, SEM2 defaults). 7-iteration 탐색으로 bge intrinsic ceiling ~0.47 확인.
 - **Phase 1-5 완료**: TIAGE test. **Gate FAIL** — Hi-EM persistence F1=0.317 / freq-shift F1=0.377, **둘 다 cosine baseline 0.421에 패배**. Latency 0.73 ms/turn은 PASS.
 - **Phase 1-6 종합 Gate: FAIL** — TopiOCQA PASS + TIAGE FAIL → Phase 2 진입 자격 미충족.
-- **2026-04-25 환경 복구 + TIAGE sweep 완료**: 로컬 `.venv` (uv-managed Python 3.11) 셋업, TopiOCQA F1=0.471 / TIAGE F1=0.317·0.377 재현 검증. **TIAGE 108-config grid sweep 신규 실행** (`run_tiage_sweep.py`) → **best Hi-EM F1=0.383 (α=10, λ=3, σ₀²=0.1), cosine 0.421 미달 + 0.4 floor 미달, Gate 두 조건 모두 FAIL**. "TopiOCQA만 sweep best, TIAGE는 두 점만"의 비대칭 해소 → 옵션 1(TIAGE HP sweep) 사실상 종료.
+- **2026-04-25 환경 복구 + TIAGE sweep 완료**: 로컬 `.venv` (uv-managed Python 3.11) 셋업, TopiOCQA F1=0.471 / TIAGE F1=0.317·0.377 재현 검증. **TIAGE 108-config grid sweep 신규 실행** (`run_tiage_sweep.py`) → **best Hi-EM F1=0.383 (α=10, λ=3, σ₀²=0.1), cosine 0.421 미달 + 0.4 floor 미달, Gate 두 조건 모두 FAIL**. "TopiOCQA만 sweep best, TIAGE는 두 점만"의 비대칭 해소 → 옵션 1(TIAGE HP experiment) 사실상 종료.
 - **2026-04-25 옵션 5 (clustering quality) 완료**: V-measure/NMI/ARI 측정 (`run_clustering_quality.py`). **모든 metric에서 cosine 우위** — 원래 가설(Hi-EM 토픽 ID 묶기 우위) 반박. **새 발견**: Boundary F1 ↔ ARI **trade-off** — freq-shift HP (α=10): F1↑ ARI=0.187·0.314 / persistence HP (α=1): F1↓ ARI=0.398·0.397. **메모리 시스템엔 persistence HP가 적합** (completeness↑, 같은 토픽 복귀 cluster 보존 우선) → Phase 2 HP 선택 근거. `outputs/phase-1-clustering-quality.md`
 - **2026-04-25 Phase 2 진입 + Step 2-1 완료**: LTM 저장 포맷 확정 — **per-conversation JSONL (turn append-only) + `<conv_id>.state.json` (topic 상태 latest snapshot, overwrite)**. 디렉토리 `data/ltm/` (gitignored). Topic 분할 HP **persistence (α=1, λ=10, σ₀²=0.01)** 채택. 자세한 내용·trade-off: `context/01-hi-em-design.md §9.1` + `06-decision-log.md` 2026-04-25 entry.
 - **2026-04-25 Step 2-2 완료**: `src/hi_em/ltm.py` (LTM API) + `tests/test_ltm.py` (8 tests). API: `append_turn / update_state / load_turns(topic_id?) / load_state / list_conversations`. validation 없음 (내부 모듈, schema는 §9.1 참조). 전체 테스트 회귀 **26/26 PASS**.
@@ -97,7 +137,7 @@
 
 ### 다음: Phase 4-Re P2F-7 — 5-way sanity 비교 후 결정 분기
 
-`hi-em-full` 도입으로 비교 method 5가지 (sliding/full/rag/hi-em/hi-em-full). 30Q stratified로 sanity → 결과로 (a) full 500, (b) HP sweep, (c) 다른 dataset, (d) Phase 5 정직 reframing 결정.
+`hi-em-full` 도입으로 비교 method 5가지 (sliding/full/rag/hi-em/hi-em-full). 30Q stratified로 sanity → 결과로 (a) full 500, (b) HP experiment, (c) 다른 dataset, (d) Phase 5 정직 reframing 결정.
 
 명령어 예시 (사용자 실행):
 ```bash
@@ -165,7 +205,7 @@ uv run python scripts/run_experiment.py --method hi-em --no-thinking ...
 # Resume (같은 exp_id 재호출 — 자동 last completed round 감지)
 uv run python scripts/run_experiment.py --exp-id <existing> ...
 
-# Session 안에서 (HP sweep 등)
+# Session 안에서 (HP experiment 등)
 uv run python scripts/run_experiment.py --session 20260427_phase4_main --method hi-em ...
 ```
 
@@ -216,7 +256,7 @@ uv run python scripts/run_phase4_all.py --workers 8 --no-thinking
 
 ### Phase 1-6 결정 분기 진행 상황 (참고)
 
-1. ~~**TIAGE HP sweep**~~ ✅ 완료 (2026-04-25). `outputs/phase-1-tiage-sweep.json`
+1. ~~**TIAGE HP experiment**~~ ✅ 완료 (2026-04-25). `outputs/phase-1-tiage-sweep.json`
 2. **Hi-EM likelihood 교체** — 보류 (Phase 4 결과 후 재검토)
 3. **Phase 2 reframing 진입** ✅ **채택, 진행 중** (Step 2-1 완료, 2-2부터 시작)
 4. **옵션 D escalation** — 보류

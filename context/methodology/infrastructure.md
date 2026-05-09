@@ -1,0 +1,180 @@
+
+# 공용 Infrastructure (cross-cutting design)
+
+버전 간에 공유되는 *non-version-specific* 인프라/구현 설계. 사소한 cache 정책, locking, encoding 단위 같은 항목도 여기 누적.
+
+각 항목은 다음 형식:
+- 무엇 (정의)
+- 어디 (코드 위치)
+- 왜 (도입 동기)
+- 행동 영향 (어느 method 가 받는가)
+- 알려진 한계 / 변형 후보
+
+---
+
+## 1. `EncoderCache` — RAG 계열용 임베딩 캐시
+
+- **무엇**: `(sample_id, kind)` 키로 conversation 별 corpus 임베딩을 캐싱. `kind ∈ {"history", "summary", "observation"}`.
+- **어디**: `scripts/run_experiment.py:111-163`.
+- **왜**:
+  - LoCoMo 한 conversation 에 ~200 질문이 같은 600-turn history 를 공유. 캐시 없으면 질문마다 600 turn 을 재인코딩 → 200×.
+  - encoder 는 thread lock 으로 직렬화돼 있어 (`QueryEncoder.encode` 의 global Lock), worker 수를 늘려도 인코딩 비용은 그대로.
+- **행동 영향**:
+  - `rag` / `rag-summary` / `rag-observation` baseline 의 retrieval 단계.
+  - 의미 자체는 안 바꿈 — 동일한 임베딩을 한 번만 계산.
+- **Locking 패턴**: per-key build lock 을 outer `_dict_lock` 안에 둠. concurrent worker 가 같은 sample 에 대해 중복 인코딩 안 하도록.
+- **알려진 한계 / 변형 후보**:
+  - 현재 sample 단위로 인메모리. conversation 간 공유 캐시 없음. 다른 sample 이 같은 텍스트 chunk 를 갖고 있어도 재인코딩.
+
+---
+
+## 2. `HiEMConvCache` — Hi-EM 인스턴스 캐시 (per-conversation post-build state)
+
+- **무엇**: `(sample_id, method)` 키로 *대화 segmentation 이 끝난 시점의 HiEM 인스턴스* 를 캐시. 질문은 read-only `eval_query()` 로만 인스턴스를 사용.
+- **어디**: `scripts/run_experiment.py:256+`.
+- **왜**:
+  - LoCoMo / LongMemEval 스타일에서 같은 600-turn history 에 200 질문을 던짐. 질문마다 LTM jsonl + segmenter centroid + STM round-promote 를 재구축하면 200× preload 비용.
+  - 한 번 build → 모든 질문이 공유.
+- **행동 영향**:
+  - `hi-em-full-v1` / `v2` / `v3.1.1` / `v3.2.1` / `v3.3.1` 모두 — Hi-EM 라인 공통.
+  - segmentation 결과 자체는 변경 없음. 단지 같은 결과를 재계산하지 않을 뿐.
+- **Lazy build + per-sample lock**: 첫 worker 가 sample 잠금을 잡고 build, 동일 sample 의 다른 worker 는 대기 후 캐시 공유. 다른 sample 들은 병렬로 build.
+- **반드시 read-only 사용**: 질문 처리는 `HiEM.eval_query` 로만 — 인스턴스 상태(centroid, count, prev_k) 를 mutate 하지 않음. mutate 하면 질문 순서가 결과를 바꿔버림.
+- **알려진 한계 / 변형 후보**:
+  - 디스크 캐시 없음 — 프로세스 재시작 시 재build.
+  - `read-only` 보장은 코드 규약. 명시적 lock 으로 enforce 안 됨.
+
+---
+
+## 3. Encoder lock (단일 thread 직렬화)
+
+- **무엇**: `QueryEncoder.encode` 가 global `threading.Lock` 으로 인코딩 호출을 직렬화.
+- **어디**: `src/hi_em/embedding.py` (간접 — `EncoderCache` docstring 에 기록).
+- **왜**: 임베딩 모델 자체가 multi-thread 안전하지 않음 (HuggingFace tokenizer + torch model). 한 thread 만 동시에 forward.
+- **행동 영향**:
+  - `--workers N` 늘려도 *인코딩 단계* 는 직렬. LLM 호출만 병렬.
+  - Hi-EM 의 segmentation 단계는 conversation 단위 직렬 → encoder 가 직렬이라도 큰 문제는 안 됨.
+  - RAG 계열은 `EncoderCache` 가 빌드된 뒤엔 인코딩이 거의 없으므로 영향 적음.
+- **알려진 한계**:
+  - 한 sample 의 인코딩 시간이 wall-clock 직선적으로 들어감.
+  - GPU encoding 으로 가도 lock 은 그대로 (일관성 보장).
+
+---
+
+## 4. LLM `--no-thinking` (reasoning bypass)
+
+- **무엇**: OpenAI-compatible `extra_body` 로 두 가지 키를 동시에 보냄:
+  ```
+  extra_body = {
+      "chat_template_kwargs": {"enable_thinking": False},  # vLLM
+      "reasoning": {"enabled": False},                     # Crts / OpenRouter
+  }
+  ```
+- **어디**: `scripts/run_experiment.py:775-782` (judge), `1112-1119` (main chat).
+- **왜**:
+  - qwen / DeepSeek / Crts proxied 모델들은 reasoning mode 가 default ON 이면 답을 `message.reasoning` 또는 `<think>...</think>` 로 보냄.
+  - Hi-EM 의 LLM 어댑터는 `message.content` 만 추출 → reasoning 모델이면 `content=None` 이 와서 모든 hypothesis 가 빈 문자열.
+  - 2026-05-07 sweep 사고: `--no-thinking` 빠진 채 v3.3.1 비교 sweep 돌려서 모든 run 의 `error_rate=1.00`. 결과 무의미.
+- **행동 영향**:
+  - 모든 method (Hi-EM 라인 + RAG 계열 + sliding) 의 LLM 호출.
+  - hyperparameter 가 아니라 *환경 호환성 플래그*.
+- **권장**: 외부 OpenAI-compatible endpoint (Crts / OpenRouter) 사용 시 *항상 켤 것*. 새 sweep script 작성 시 누락하지 않도록 기본 포함.
+
+---
+
+## 5. Retrieval policy — Hi-EM (선택된 topic 안에서)
+
+- **무엇**: `HiEM.eval_query` 가 질문 임베딩으로 top-K topic 을 고른 뒤, 각 topic 에서 *최근 N turn* 을 가져옴.
+- **어디**: `src/hi_em/memory_window.py:39+` (selection), `orchestrator.py` (eval_query).
+- **왜 / 한계**: `context/methodology/v1.md` 의 "알려진 한계 #5 (retrieval evidence-aware 아님)" 와 동일. v3.x 모든 버전이 이 정책을 그대로 상속.
+- **행동 영향**: 모든 Hi-EM 변형의 QA 결과 — 답이 "오래된 turn" 또는 "centroid 와 떨어진 turn" 에 있으면 못 찾음.
+- **변형 후보** (아직 미적용):
+  - 선택된 topic 안에서 turn-단위 cosine rerank
+  - MMR (다양성)
+  - 시간 필터
+  - 질문 유형별 retrieval 전략 분리
+
+---
+
+## 6. STM topic atomicity
+
+- **무엇**: STM 에 topic 이 들어갈 때 *통째로* 들어감. soft turn cap (`max_turns`) 보다 atomicity 가 우선.
+- **어디**: `src/hi_em/memory_window.py:12, 140`.
+- **왜**: 한 topic 의 의미를 깨지 않으려는 설계.
+- **한계**: 큰 topic (200 turn 짜리) 이 통째로 들어가면 prefill 폭주 (LoCoMo 19k token 사례, decision-log).
+- **변형 후보**: summary 수준에서만 atomicity 유지, 내부 turn 은 bounded chunk 만.
+
+---
+
+## 7. Experiment harness — `scripts/experiment.py` (canonical)
+
+- **무엇**: 단일 entry point 로 임의의 experiment (sweep / ablation / comparison) 를 실행 + REPORT.md 자동 생성.
+- **어디**: `scripts/experiment.py`.
+- **용어**: 한 *experiment* = 이름 붙은 여러 *run* 의 집합. 각 run = method × HP 한 조합. sweep, ablation, comparison 모두 같은 형태.
+- **왜**: 이전엔 experiment 마다 별도 shell + 별도 aggregator 를 작성. 코드 중복 + 결과 형식 불일치. 통합 harness 로 대체.
+- **사용**:
+  ```
+  uv run python scripts/experiment.py \
+    --name <experiment-name> \
+    --benchmark locomo \
+    --data benchmarks/locomo/data/locomo10.json \
+    --workers 100 --no-thinking \
+    --method "method[:label][@k=v,k=v,...]" \
+    [--method ...] \
+    [--limit N --stratify]
+  ```
+- **Method spec 문법**: `method[:label][@k1=v1,k2=v2,...]`
+  - `method`: `run_experiment.py --method` 값 (e.g. `hi-em-full-v3.3.2`, `rag`, `sliding`, `full`)
+  - `label`: 출력 subdir 이름. 미지정 시 method (`.` → `p`, `-` → `_`).
+  - `k=v`: `run_experiment.py` 의 `--k v` 로 forward. HP override.
+- **Resume**: 같은 `--name` 으로 재실행하면 `<run_dir>/exit_code.txt = 0` 인 run 은 자동 skip. 중간에 죽어도 안전.
+- **출력**: `outputs/experiments/<name>/<label>/` 에 per-run run.log + results/ + stm_topk.json (hi-em-full-* 만). 모든 run 끝나면 `outputs/experiments/<name>/REPORT.md` 자동 생성.
+- **REPORT.md 컬럼** (2026-05-09~): `method | notes | acc | mh/sh/tr/adv/od | T1μ/T2μ/T3μ | T1max/T2max/T1var | n_topics | gen_p50(s) | wall`. 모든 run 이 동일 데이터·limit 으로 돌므로 `n_questions` 는 표 위 header 한 줄로 분리. `notes` 는 method 식별의 일부이므로 method 바로 옆에 둠 — 해당 method 가 실제로 사용하는 HP 한 줄 요약 (hi-em-full-* 는 segmenter+memory_window, rag* 는 rag_k, sliding 은 sliding_k) + override 가 있으면 끝에 `· override: k=v` 로 append. `experiment.json` 의 `config` 에서 추출.
+- **Aggregate-only 모드**: `--aggregate-only` 로 실험 안 돌리고 REPORT.md 만 재생성.
+- **legacy**: `scripts/legacy/` 에 옛 per-experiment shell 스크립트 + per-aggregator 보존됨 (참고용).
+
+---
+
+## 8. 산출물 디렉토리 구조
+
+2026-05-08 통합 후 — top-level **2개**:
+
+```
+outputs/                  # 모든 active/historical generated
+├── experiments/             # experiment.py 산출 (sweep / ablation / comparison). self-contained.
+│   └── <date>_<label>/<run_label>/{run.log, exit_code.txt, stm_topk.json, results/experiments/<exp_id>/}
+├── runs/                    # standalone run_experiment.py 데이터 (default --results-root).
+│   ├── <date>/<exp_id>/     # 옛 sweep 들의 raw exp 데이터 (날짜별 누적)
+│   └── _misc/               # smoke / scratch
+├── reports/                 # 독립 분석 MD (committed)
+└── design/                  # 설계 문서 (committed)
+
+archive/                  # 의도적으로 버린 것 (Phase 4 era — RAG 에 패배 후 폐기)
+├── 2026-04-26-baseline/     # Phase 4 reference (RAG 0.62 vs Hi-EM 0.56)
+├── 2026-04-28/              # Phase 4 follow-up (24 runs)
+├── 2026-04-29/              # (14 runs)
+├── 2026-04-30/              # (1 run)
+└── README.md                # "왜 버렸는지"
+```
+
+**원칙**:
+- 새 experiment = `scripts/experiment.py` → `outputs/experiments/<name>/` (self-contained)
+- standalone debug = `run_experiment.py` 직접 호출 → `outputs/runs/`
+- 시간 흐른 experiment 데이터 = `outputs/runs/<date>/` 에 누적 (정리 X — 자료)
+- `archive/` = *의도적 폐기* 만. "오래됐다" 가 아니라 "더 이상 쓰지 않는다고 결정함" 의 표시. baseline + Phase 4 era 만 현재.
+
+**없어진 것** (2026-05-08 정리):
+- top-level `results/` → `outputs/runs/` 로 이동
+- `archive/legacy_runs/` → 5월 데이터는 `outputs/runs/`, Phase 4 데이터는 `archive/<date>/` 로 분리
+- `outputs/legacy/` → orphan smoke jsonl 삭제 (가치 없음)
+
+git 정책: `outputs/experiments/<name>/REPORT.md`, `outputs/reports/*.md`, `outputs/design/*` = committed. `outputs/runs/`, sweep 안의 jsonl 데이터 = gitignored.
+
+---
+
+## 작성 규칙
+
+새 인프라/cross-cutting 설계 항목 추가 시:
+1. 위 형식 (무엇/어디/왜/행동영향/한계) 으로 한 섹션 추가.
+2. 어느 버전이 영향받는지 명시.
+3. 실험에서 이 인프라가 *결과에 영향을 줬으면* 반드시 기록 (예: `--no-thinking` 누락으로 sweep 망친 사례).

@@ -732,6 +732,77 @@ Smoke 측정:
 
 **장기 실행 작업 점검 규칙 신설**: 위 사건 진단 중 round 2가 stuck-처럼 보였으나 실은 정상 진행이었음. 10분 초과 작업은 반드시 한 번 진행 점검 의무화. `CLAUDE.md` "장기 실행 작업 진행 점검" 절 추가.
 
+## 2026-05-08 v3.3.2 도입 (surprise hard boundary) + v3.3.1 default HP 가 mega-topic 의 직접 원인임을 확인
+
+세 가지.
+
+**(1) v3.3.1 default HP 의 mega-topic 확인 + 깨는 HP 확보** — 2026-05-07 비교 sweep 에서 v3.3.1 default (`cos=0.7, α=1, β=0.5`) 가 T1μ=386 turn (~LoCoMo 600 의 절반 이상 흡수) 으로 single-topic collapse. 2026-05-08 HP sweep (5 configs) 결과: `cos=0.9, α=100, β=0.25` 에서 T1μ=28.6, T2μ=23.2, T3μ=19.7 로 **진짜 multi-topic 환경** 형성. acc 0.215 (default) → **0.263** (best HP). rag-observation baseline 0.258 와 함께 v3.3.1 이 처음으로 RAG 와 동급/우위. 결론: v3.3.1 의 알고리즘 자체는 fine, **default HP 가 잘못 잡혀 있었음**. 향후 default 를 `cos=0.9, α=100, β=0.25` 로 옮기는 것 검토 필요. 자세한 결과: `outputs/experiments/2026-05-08_v331_hpsweep/`, `context/methodology/v3.3.1.md`.
+
+**(2) v3.3.2 도입 (surprise hard boundary)** — v3.3.1 식 + `max_k cos(s, ŝ_k) < (1 − pe_threshold)` 면 MAP 무시하고 새 topic 강제. SEM2 의 surprise → boundary mechanism 을 cosine 거리 위에 explicit threshold 로 복원. CLAUDE.md SEM 계승 원칙 정당화 3 단계 통과 (SEM 본진 *implicit* 메커니즘의 *explicit* 변환). 코드: `src/hi_em/sem_core_v332_rnn_pe.py` + 5 단위 테스트 (`tests/test_v332_pe_boundary.py`). orchestrator + run_experiment.py 분기 + `--pe-threshold` CLI. `pe_threshold=1.0` (default) 이면 v3.3.1 과 numerically 동일.
+
+**(3) v3.3.2 PE sweep 결과** — `outputs/experiments/2026-05-08_v332_pesweep/` 12 configs. v3.3.1 best HP (cos=0.9, α=100, β=0.25) 위에 (pe_threshold, lmda, promotion_threshold, tau, train_steps) sweep. best = `pe=0.5 + rnn_train_steps=3` → **acc 0.273**. 모든 RAG/sliding baseline 보다 우위. 관찰: pe_threshold 단독은 v3.3.1 best 와 거의 동등 (~0.256~0.258). 결정적 이득은 RNN train_steps 증가. λ↓ + promotion↓ 조합은 오히려 acc 하락. 즉 mega 가 깨진 환경에선 충분한 stickiness/promotion threshold 가 multi-topic STM 에 필요. 자세한 표는 `outputs/experiments/2026-05-08_v332_pesweep/REPORT.md`, `context/methodology/v3.3.2.md`.
+
+## 2026-05-07 v3.3.1 도입 + methodology 디렉토리 + SEM 계승 원칙 명문화
+
+세 가지 결정.
+
+**(1) v3.3.1 도입** — SEM 본진의 *scene dynamics + prediction error* 를 v3 라인에 복원. likelihood term 만 `τ·cos(s, μ_k)` → `τ·cos(s, ŝ_k)` 로 교체, ŝ_k 는 per-topic GRU 예측. sticky-CRP prior 식은 v3.2.1 sub-linear count 그대로 상속. SEM 계승 원칙(아래) 측면에서 *복원* 이라 정당화 부담 없음. 코드: `src/hi_em/{event_rnn,topic_v331_rnn,sem_core_v331_rnn}.py` + 5 단위 테스트. 검증: pytest 223 pass, LoCoMo `--limit 3` e2e exit 0. 자세한 알고리즘은 `context/methodology/v3.3.1.md`.
+
+**(2) `context/methodology/` 도입** — v1/v2/v3.1.1/v3.2.1/v3.3.1 마다 한 파일씩 + `infrastructure.md` (cross-cutting). 사유: 알고리즘·hyperparameter·SEM 계승·infrastructure 결정이 decision-log + 코드 docstring 으로 흩어져 있어 "지금 v3.X 가 정확히 어떻게 동작하는가" 의 단일 진실 원천이 없었다. CLAUDE.md 에 *최우선 관리 대상* 으로 명시.
+
+**(3) SEM 계승 원칙 명문화** — Hi-EM 은 SEM/SEM2 계승 모델이다. SEM 에 없는 메커니즘(vMF, multi-prototype, per-topic κ 학습 등)은 default = 도입 안 함. 도입 검토 시 (a) SEM 에 왜 없는지 명시, (b) SEM 철학과 충돌 안 함을 보임, (c) 본 decision-log 에 근거+날짜 append — 셋 모두 충족 필요. CLAUDE.md 의 "SEM 계승 원칙 (최상위 설계 제약)" 섹션. 사유: 새 component 를 무절제하게 추가하면 정체성을 잃고 "임의로 조합된 retrieval heuristic" 으로 전락.
+
+**LLM endpoint 사고 부수 기록**: 같은 날 v3.3.1 비교 sweep 의 첫 시도가 `--no-thinking` 누락으로 모든 run `error_rate=1.00`. qwen/qwen3.5-9b 가 답을 `message.reasoning` 에 넣고 `content=null` 로 보내서 hypothesis 가 모두 빈 문자열. 향후 sweep script 작성 시 `--no-thinking` + `--workers 100` 둘 다 default 포함. `context/methodology/infrastructure.md` 4번 항목.
+
 ## 2026-05-03 mega-topic 해결 상태 중간 점검
 
 v3.1 Bounded Cosine MAP와 v3.2 Cosine Prediction Error는 TopiOCQA/TIAGE에서 Gaussian v2 대비 F1을 개선하거나 유지해 likelihood 신호 회복 가능성을 보였다. 그러나 두 벤치마크는 평균 12~15턴의 짧은 대화라 raw sCRP `C_k + λ` 누적 폭주가 본격화되는 long-conv mega-topic 검증으로는 부족하다. 특히 TIAGE v3.2 best는 F1=0.411로 높지만 avg max-share=0.491, avg topics=5.1이라 짧은 대화에서도 단일 topic 흡수 경향이 나타난 경고 신호다. 결론적으로 현재 결과는 "likelihood 개선" 증거이지 "C_k 누적 mega-topic 해결" 증거가 아니며, LoCoMo 600턴 재검증과 TopiOCQA/TIAGE concat long-conv stress test로 max-share/topic-count/F1을 함께 확인한 뒤 sqrt+decay prior 도입 여부를 최종 결정한다.
+
+## 2026-05-09 v3.3.3 설계 결정 — SEM2 `log_likelihood_f0` restart 분기 복원
+
+**결정**: v3.3.3 은 v3.3.2 의 cosine+shared-GRU PE 구조 위에 SEM2 `log_likelihood_f0` 의 same-label restart 분기를 복원한다. $k_{\text{prev}}=k$ 후보를 repeat 와 restart 두 score 로 나누고, restart 가 repeat 를 이기면 topic label 은 유지하되 boundary 로 판정한다.
+
+**근거**:
+- SEM2 `run()` 원 구현은 직전 event 에 대해 `log_likelihood_next(x_prev, x_curr)` 와 `log_likelihood_f0(x_curr)` 를 모두 계산한다.
+- 같은 event label 이라도 restart 경로가 이기면 `event_boundary=True` 가 된다. 즉 SEM2 에서 "같은 label" 과 "episode continuation" 은 분리되어 있다.
+- v1 / v3.1.1 / v3.3.1 은 이 분기를 cold-start centroid fallback 으로 우회했고, v3.3.2 는 hard PE boundary 로 surprise 일부만 복원했다. restart-vs-repeat 자체는 여전히 미포팅 상태다.
+
+**SEM 계승 정당화**:
+- SEM 에 없는 메커니즘이 아니라 SEM2 에 있던 인터페이스의 복원이다.
+- Hi-EM 에 없었던 이유는 원리상 기각이 아니라 구현 단순화와 cosine surrogate 전환 과정의 미포팅이다.
+- sticky-CRP prior, local MAP, online update, scene dynamics 와 충돌하지 않는다. $k_{\text{prev}}$ 의 likelihood 경로만 SEM2 처럼 분해한다.
+
+**영향 범위**:
+- 설계 문서: `context/methodology/v3.3.3.md`
+- 구현 outline: `context/methodology/v3.3.3_impl_outline.md`
+- 향후 구현 예정: `src/hi_em/sem_core_v333_rnn_f0.py`, 필요 시 `src/hi_em/topic_v333_rnn_f0.py`, method mapping, `tests/test_v333_f0.py`
+
+**대안**:
+- v3.3.2 hard PE boundary 만 유지 (기각: 새 topic 강제와 same-label restart 는 다른 현상. SEM2 원 분기를 계속 빠뜨림)
+- restart 를 항상 새 topic 으로 처리 (기각: label 재사용을 허용하는 SEM2 구조와 불일치)
+- f0 를 전역 상수로만 처리 (보류: cold-start fallback 으로는 가능하지만 SEM2 event별 f0 의미가 약해짐)
+
+## 2026-05-09 v3.3.4 설계 결정 — per-topic $\sigma_k^2$ EMA variance calibration 도입 검토
+
+**결정**: v3.3.4 는 v3.3.2 의 global hard PE threshold 한계를 검증하기 위해 topic별 cosine PE 분산 $\sigma_k^2$ 를 EMA 로 유지하고, likelihood 를 $-\mathrm{PE}^2/(2\sigma_k^2)$ 로 calibration 하는 실험 branch 로 설계한다. default 승격이 아니라 정당화 부담이 큰 후보로 취급한다.
+
+**근거**:
+- v3.3.2 는 `cos_threshold` 와 `pe_threshold` 가 전역 고정값이다. 좁은 topic 과 넓은 topic 의 cosine PE 분포가 다르면 같은 threshold 가 과분할 / 과흡수를 동시에 만들 수 있다.
+- LoCoMo 는 factual thread, preference/social thread, long-range revisit 가 섞여 있어 topic별 PE 폭이 다를 가능성이 있다.
+- SEM 의 본래 likelihood 는 prediction error 를 noise scale 과 함께 해석한다. cosine substitution 에서 사라진 calibration 을 최소 scalar variance 로 되돌리는 실험이다.
+
+**SEM 계승 정당화**:
+- SEM2 에 topic별 $\sigma_k^2$ EMA 는 없다. 가능한 이유는 controlled video/VAE 환경에서 공통 noise 로 충분했거나, 작은 event 의 variance 학습이 불안정해 의도적으로 단순화했기 때문이다.
+- 따라서 v3.3.4 는 per-topic concentration $\kappa$ 학습과 같은 계열의 위험한 자유도다. min-sample guard, global fallback, floor/cap 을 필수로 두고, 성능 이득과 PE histogram 근거가 없으면 default 로 올리지 않는다.
+- sCRP/Bayes 와 구조적으로는 충돌하지 않는다. sCRP 는 prior, $\sigma_k^2$ 는 likelihood noise scale 이다. 단 SEM2 원형보다 자유도가 늘어나는 절충을 명시한다.
+
+**영향 범위**:
+- 설계 문서: `context/methodology/v3.3.4.md`
+- 구현 outline: `context/methodology/v3.3.4_impl_outline.md`
+- sweep plan: `context/methodology/v3.3.3_v3.3.4_sweep_plan.md`
+- 향후 구현 예정: `src/hi_em/sem_core_v334_rnn_var.py`, method mapping, `tests/test_v334_variance.py`
+
+**대안**:
+- global `pe_threshold` sweep 지속 (기각: topic별 PE 폭 문제를 해결하지 못함)
+- per-topic $\kappa$ 또는 vMF concentration 학습 (기각: SEM 계승 부담이 더 크고 cosine likelihood 구조를 더 많이 바꿈)
+- per-conversation variance 만 사용 (보류: SEM 계승 부담은 낮지만 좁은/넓은 topic 차이를 직접 다루지 못함)

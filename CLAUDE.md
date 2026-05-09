@@ -2,7 +2,7 @@
 
 ## 중요 의사결정은 항상 codex로 답변 (최상위 규칙)
 
-설계 옵션 선택, 수식 확정, 모듈 구조 결정, 알고리즘 트레이드오프 평가 등 **프로젝트의 향후 방향에 영향을 주는 의사결정 질문**은 Claude가 직접 답하지 않고 반드시 `codex:rescue` 서브에이전트로 위임해 답변한다.
+설계 옵션 선택, 수식 확정, 모듈 구조 결정, 알고리즘 트레이드오프 평가 등 **프로젝트의 향후 방향에 영향을 주는 의사결정 질문**은 Claude가 직접 답하지 않고 반드시 `codex:rescue` 서브에이전트로 위임해 한국어로 답변한다.
 
 판단 기준 (다음 중 하나라도 해당하면 codex 위임):
 - "어느 방법이 더 나은가" / "무엇을 선택해야 하나" / "이게 적절한가" 형태의 비교·판단 질문
@@ -13,6 +13,25 @@
 단순 코드 수정·디버그·문서 업데이트·요약은 Claude가 직접 처리해도 된다.
 
 위임 시 사용자가 이전 codex 스레드의 컨텍스트를 이어가는 후속 질문이면 `--resume`을 붙인다.
+
+## SEM 계승 원칙 (최상위 설계 제약)
+
+Hi-EM은 SEM / SEM2 계승 모델이다. **SEM(원논문) / SEM2(`nicktfranklin/SEM2`)에 존재하지 않는 메커니즘은 합리적 근거 없이 도입하지 않는다.**
+
+대상 예시 (SEM에 없으므로 default = 도입 안 함):
+- vMF likelihood, multi-prototype topic, per-topic concentration κ 학습
+- bounded cosine 외의 새로운 likelihood 함수
+- 학습형 dynamics 외의 새로운 prediction error 정의
+- SEM이 명시적으로 "쓰지 않는다"고 가정한 임의의 새 component
+
+도입을 검토하려면 다음 셋을 모두 충족해야 한다:
+1. **SEM에 왜 없는지** (의도적으로 빠진 건지, 단순 미구현인지) 명시한다.
+2. 추가했을 때 얻는 이점이 SEM의 철학(sCRP / Bayes / local MAP / scene dynamics)과 **충돌하지 않음**을 보인다. 충돌하면 어느 쪽을 우선할지 명시한다.
+3. `context/06-decision-log.md`에 근거 + 날짜를 append한다.
+
+신규 component 제안이 들어오면 Claude의 default 응답은 **"SEM에 있나?"** — 없으면 위 세 단계의 정당화 부담을 그 제안에 얹은 채로만 검토한다.
+
+이유: SEM 계승이라는 정체성을 잃으면 Hi-EM은 그저 "임의로 조합된 retrieval heuristic"이 된다. 새 메커니즘은 SEM에서 빠진 기능을 복원하거나, SEM 가정의 한계를 명시적으로 인정한 위에서만 추가한다.
 
 ## Step 완료 프로토콜 (최상위 강제 규칙)
 
@@ -44,11 +63,106 @@ python scripts/check_step_done.py
 
 - self-audit 건너뛰고 곧장 `check_step_done.py`만 돌려 통과시키기 금지. 스크립트 통과는 **필요조건이지 충분조건이 아니다.**
 
+## 산출물 / 실험 디렉토리 사용법 (canonical, 최상위 규칙)
+
+**용어**:
+- *experiment* = 이름 붙은 여러 *run* 의 집합 (sweep, ablation, comparison 모두 동일).
+- *run* = method × HP 한 조합 (`run_experiment.py` 한 번 호출).
+
+### 1. 새 experiment 실행 = `scripts/experiment.py` 한 entry 만
+
+```
+uv run python scripts/experiment.py \
+  --name <date>_<descriptor> \
+  --benchmark locomo --data <path> \
+  --workers 100 --no-thinking \
+  --method "method[:label][@k1=v1,k2=v2]" [--method ...] \
+  [--limit N --stratify]
+```
+
+규칙:
+- 새 sweep / ablation / comparison 마다 별도 shell 또는 aggregator 스크립트 작성 **금지**.
+- 모든 옵션 (HP override, baseline 추가 등) 은 `--method` spec 으로 표현 (`method[:label][@k=v,k=v]`).
+- 같은 `--name` 으로 재실행하면 `<run_dir>/exit_code.txt = 0` 인 run 자동 skip → 죽었다 살려도 안전.
+- 실험 끝나면 `outputs/experiments/<name>/REPORT.md` 자동 생성 (acc + qtype 5종 + T1/T2/T3 + T1max/T2max/T1var + n_topics + gen_p50 + wall).
+- `--aggregate-only` 로 결과 안 돌리고 표만 재생성 가능.
+
+자세한 spec 문법 → `context/methodology/infrastructure.md` § 7.
+
+### 2. 단일 ad-hoc run = `scripts/run_experiment.py`
+
+디버그 / smoke / 일회성 단발 실행. default `--results-root` = `outputs/runs/`. 자료가치 있으면 `outputs/runs/<date>/<exp_id>/` 에 자동 누적.
+
+### 3. 산출물 디렉토리 구조
+
+```
+outputs/                  # 모든 active/historical generated. top-level 1개.
+├── experiments/             # experiment.py 산출 — self-contained
+│   └── <name>/<run_label>/{run.log, exit_code.txt, stm_topk.json, results/...}
+├── runs/                    # run_experiment.py 단독 실행 (날짜 subdir 누적)
+├── reports/                 # 독립 분석 MD (committed: TIAGE/TopiOCQA segmentation 비교 등)
+└── design/                  # 설계 문서 (committed)
+
+archive/                  # *의도적으로 폐기* 한 것만 (시간 흐름 무관)
+├── 2026-04-26-baseline/     # Phase 4 reference (RAG 에 패배 → 폐기, 보존)
+├── 2026-04-{28,29,30}/      # Phase 4 follow-up (같이 폐기)
+└── README.md                # 왜 버렸는지 기록
+```
+
+**원칙**:
+- "오래됐다" 와 "폐기됐다" 는 **다른 것**. archive/ 는 *폐기 결정* 했을 때만. 단순히 시간 지나서 뒤로 밀린 데이터는 `outputs/runs/<date>/` 에 그대로 둔다.
+- 새 dir 만들지 말고 위 4 카테고리 (`experiments/`, `runs/`, `reports/`, `design/`) 중 하나에 넣기. 의미 모호하면 `outputs/runs/_misc/`.
+- archive 에 새 항목 추가할 땐 `archive/README.md` 에 *폐기 사유 + 날짜* 한 줄 append. 사유 없는 archive 추가 금지.
+- `outputs/experiments/<name>/` 안의 데이터는 self-contained. 한 experiment 의 모든 정보 (config, log, hypothesis, summary, REPORT) 가 이 한 디렉토리 안에서 답이 나와야 함.
+
+### 4. `scripts/legacy/` — 읽기 전용
+
+옛 per-experiment shell (`run_*sweep.sh`) + 옛 aggregator (`aggregate_*.py`) 보관됨. 참고용. **새 스크립트 추가 금지**, 기존 파일도 수정하지 않는다 — 현재 유효한 entry 는 `scripts/experiment.py` 와 `scripts/run_experiment.py` 둘 뿐.
+
+### 5. git 정책
+
+- committed: `outputs/experiments/<name>/REPORT.md`, `outputs/reports/*.md`, `outputs/design/*`, `archive/<name>/README.md`
+- gitignored: `outputs/runs/`, `outputs/experiments/*/*/results/`, `outputs/experiments/*/*/run.log`, `outputs/experiments/*/*/stm_topk*.json*`, `archive/*/ltm/`, `archive/*/outputs/*.{jsonl,json,wandb-run-id}`
+- `.gitignore` 변경은 cascade 검사 대상.
+
+### 6. wandb logging (필수)
+
+모든 실험은 wandb 로 자동 로깅된다 (project convention 2026-05-08~). `experiment.py` / `run_experiment.py` 가 자동으로 wandb run 을 시작하고, round 별 metric + final summary 를 push 한다.
+
+**1회 setup**: `uv run wandb login` 또는 `.env` 에 `WANDB_API_KEY=...` 추가. 인증 안 돼 있으면 wandb init 가 실패 catch 되어 *no-op* 으로 fallback (실험은 진행되지만 logging 안 됨 — `[wandb] init failed` 경고).
+
+**opt-out**: 특정 run 만 끄고 싶으면 `WANDB_MODE=disabled uv run python scripts/experiment.py ...` 로 prefix.
+
+**확인**: 실행 후 `outputs/experiments/<name>/<label>/run.log` 의 wandb 라인 또는 wandb 웹 UI 에서 `hi-em-phase4` (default `--wandb-project`) 확인.
+
+## `context/methodology/` 가 최우선 관리 대상 (최상위 규칙)
+
+**가장 1순위로 관리한다.** 코드 수정 / 설계 결정 / 인프라 변경 시 가장 먼저 확인·갱신해야 할 디렉토리.
+
+이유: 버전(v1/v2/v3.1.1/v3.2.1/v3.3.1) 별 *알고리즘 수준 정의* 와 cross-cutting 인프라 결정이 모이는 단일 진실 원천. 다른 docs (handoff, plan, decision-log) 는 *현재 진행 상황* 을 기록하지만, methodology/ 는 *설계 자체* 가 무엇인지 기록한다.
+
+기록 범위 (사소해 보여도 빠짐없이):
+- 알고리즘 수식 / score 식 / update rule
+- topic state 의 모든 필드, hyperparameter default
+- SEM 계승 측면 (있는 것 / 없는 것 / 변형한 것)
+- 알려진 한계 + 변형 후보 (적용 안 했어도 "고려 중인 변형" 섹션에 누적)
+- cross-cutting 인프라 (`EncoderCache`, `HiEMConvCache`, encoder lock, LLM 호환 플래그(`--no-thinking`), retrieval policy, STM atomicity 등)
+
+규칙:
+- 버전마다 1 파일 (`vX.md`). 새 버전 추가 시 직전 버전 파일을 템플릿 삼아 같은 구조 유지.
+- 버전 간 공유 항목은 `infrastructure.md` 에 추가. 항목 형식: 무엇 / 어디(file:line) / 왜 / 행동 영향(어느 method) / 알려진 한계.
+- *알고리즘 의미가 바뀌는* 변경은 새 버전 분리. 단순 성능/캐시 최적화는 같은 파일 안 "고려 중인 변형" 또는 "변경 이력" 섹션 누적.
+- 어떤 파일을 수정했든, 그 변경이 알고리즘·infrastructure 측면에서 의미가 있으면 *반드시* 해당 methodology 파일에 한 줄 이상 반영.
+- 의미가 모호하면 default = 기록한다. 기록은 cheap, 망각은 expensive.
+
+cascade 검사는 (아래 § 참조) `context/methodology/` 를 가장 먼저 확인 대상으로 둔다.
+
 ## 파일 수정 시 최신성 cascade 검사 (필수)
 
 Claude Code가 파일 1개를 수정·생성·삭제할 때마다 **다른 파일에 영향 가능성이 있는지 즉시 검사**한다. 영향받을 가능성이 있는 파일은 **사용자에게 한꺼번에 제시하고 같이 업데이트할지 묻는다**.
 
-확인 대상 (최소):
+확인 대상 (우선순위 순):
+- `context/methodology/*` — **최우선** (알고리즘·인프라 변경 시). 위 § 참조.
 - `README.md` — 디렉토리 구조, 외부 레포, gitignored 목록, 현재 상태
 - `plan.md` — 체크박스, Phase 진행률, 결과 수치
 - `handoff.md` — 현재 상태, 다음 할 일, 마지막 업데이트 날짜
@@ -68,7 +182,7 @@ Claude Code가 파일 1개를 수정·생성·삭제할 때마다 **다른 파�
 
 ## 장기 실행 작업 진행 점검 (필수)
 
-10분 초과로 예상되는 작업(실험·학습·sweep·평가 등)은 **시작 후 10분이 지나면 반드시 한 번 진행 상황을 확인**한다. background task / `run_in_background=true` / 별도 프로세스 모두 적용.
+10분 초과로 예상되는 작업(실험·학습·평가 등)은 **시작 후 10분이 지나면 반드시 한 번 진행 상황을 확인**한다. background task / `run_in_background=true` / 별도 프로세스 모두 적용.
 
 방법:
 - `ScheduleWakeup` (delaySeconds=600 이하) 으로 10분 내 자가 점검 예약

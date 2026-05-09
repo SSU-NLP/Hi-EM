@@ -56,7 +56,8 @@ scripts/
 # Phase 4 진행 중 — Step 4-5/4-6 사용자 실행 대기 (subset → 전체)
 # 추가 예정:
 #   Step 2-4: importance / merge / adaptive K_window (Phase 4 결과 후 튜닝)
-# LTM 데이터 위치: data/ltm/<conv_id>.{jsonl,state.json} (gitignored)
+# LTM 데이터 위치: outputs/experiments/<name>/<run_label>/results/working_state/ltm/<conv_id>.{jsonl,state.json}
+#                  (sweep 안 self-contained, gitignored). 2026-05-08 이전엔 top-level data/ltm/ — 삭제됨.
 # LLM 백엔드: memory/project_llm_backend.md (OpenAI-compatible, OpenRouter/vLLM)
 
 # Phase 2-Full (2026-04-27 구현 완료) 신규 모듈:

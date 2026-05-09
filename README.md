@@ -57,7 +57,8 @@ Hi-EM/
 │   ├── 03-architecture.md        모듈 구조, 파일 레이아웃
 │   ├── 04-benchmarks.md          벤치마크 메타 (평가 축: 토픽 경계 vs downstream QA)
 │   ├── 05-open-questions.md      열려있는 질문들
-│   └── 06-decision-log.md        설계 결정 이력 (append-only)
+│   ├── 06-decision-log.md        설계 결정 이력 (append-only)
+│   └── methodology/              **버전별 방법론 (최우선 관리)** — v1/v2/v3.1.1/v3.2.1/v3.3.1 + cross-cutting infrastructure
 │
 ├── src/hi_em/                코어 구현 (Phase 1 + 2-2/2-3 + 3-1/3-2 완료)
 │   ├── embedding.py              bge-base-en-v1.5 wrapper (L2 norm, 768dim)

@@ -77,12 +77,16 @@ Gibbs sampling 불필요. LTM에 원문 그대로 저장.
 
 **채택**: per-conversation **JSONL (turn 기록, append-only)** + **`.state.json` (topic 상태 latest snapshot, overwrite)**.
 
-**디렉토리 레이아웃** (gitignored, `data/ltm/`):
+**디렉토리 레이아웃** (gitignored):
 ```
-data/ltm/
+<ltm_root>/
 ├── <conv_id>.jsonl        # turn 기록, append-only
 └── <conv_id>.state.json   # topic 상태, overwrite
 ```
+
+`<ltm_root>` 는 caller (`run_experiment.py` / `experiment.py`) 가 결정.
+- 새 convention (2026-05-08~): `outputs/experiments/<name>/<run_label>/results/working_state/ltm/` (experiment 안 self-contained)
+- 옛 convention: `data/ltm/longmemeval/` (top-level, 2026-05-08 정리 시 삭제)
 
 **Turn 스키마** (JSONL 1 row = 1 turn):
 ```json
