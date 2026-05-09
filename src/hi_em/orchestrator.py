@@ -78,7 +78,26 @@ class HiEM:
         version: str = "v2",
         tau: float = 50.0,
         cos_threshold: float = 0.7,
-        beta: float = 0.5,  # v3.2 only: sub-linear sCRP count exponent
+        beta: float = 0.5,  # v3.2/v3.3: sub-linear sCRP count exponent
+        rnn_hidden_dim: int = 32,
+        rnn_lr: float = 1e-3,
+        rnn_train_steps: int = 1,
+        rnn_max_context: int = 8,
+        rnn_min_history: int = 2,
+        pe_threshold: float = 1.0,  # v3.3.2: surprise-driven boundary
+        # ---- v3.3.3 only (f0 / SEM2 restart branch) -----------------
+        restart_pe_threshold: float = 0.5,
+        restart_margin: float = 0.0,
+        f0_tau: float | None = None,
+        f0_min_starts: int = 2,
+        # ---- v3.3.4 only (per-topic PE variance calibration) --------
+        pe_var_decay: float = 0.95,
+        pe_var_min_samples: int = 5,
+        pe_var_sigma0_sq: float = 0.04,
+        pe_var_min_sq: float = 1e-4,
+        pe_var_max_sq: float = 0.25,
+        var_likelihood_weight: float = 1.0,
+        hard_pe_fallback: bool = False,
         # -------------------------------------------------------------
         **llm_kwargs: Any,
     ) -> None:
@@ -99,13 +118,72 @@ class HiEM:
                 dim=encoder.dim, alpha=alpha, lmda=lmda,
                 tau=tau, cos_threshold=cos_threshold, beta=beta,
             )
+        elif version == "v3.3.1":
+            from hi_em.sem_core_v331_rnn import HiEMSegmenterV331
+            self._segmenter = HiEMSegmenterV331(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                rnn_train_steps=rnn_train_steps,
+                rnn_max_context=rnn_max_context,
+                rnn_min_history=rnn_min_history,
+            )
+        elif version == "v3.3.2":
+            from hi_em.sem_core_v332_rnn_pe import HiEMSegmenterV332
+            self._segmenter = HiEMSegmenterV332(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                rnn_train_steps=rnn_train_steps,
+                rnn_max_context=rnn_max_context,
+                rnn_min_history=rnn_min_history,
+            )
+        elif version == "v3.3.3":
+            from hi_em.sem_core_v333_rnn_f0 import HiEMSegmenterV333
+            self._segmenter = HiEMSegmenterV333(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                rnn_train_steps=rnn_train_steps,
+                rnn_max_context=rnn_max_context,
+                rnn_min_history=rnn_min_history,
+                restart_pe_threshold=restart_pe_threshold,
+                restart_margin=restart_margin,
+                f0_tau=f0_tau,
+                f0_min_starts=f0_min_starts,
+            )
+        elif version == "v3.3.4":
+            from hi_em.sem_core_v334_rnn_var import HiEMSegmenterV334
+            self._segmenter = HiEMSegmenterV334(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                rnn_train_steps=rnn_train_steps,
+                rnn_max_context=rnn_max_context,
+                rnn_min_history=rnn_min_history,
+                pe_var_decay=pe_var_decay,
+                pe_var_min_samples=pe_var_min_samples,
+                pe_var_sigma0_sq=pe_var_sigma0_sq,
+                pe_var_min_sq=pe_var_min_sq,
+                pe_var_max_sq=pe_var_max_sq,
+                var_likelihood_weight=var_likelihood_weight,
+                hard_pe_fallback=hard_pe_fallback,
+            )
         elif version == "v2":
             self._segmenter = HiEMSegmenter(
                 dim=encoder.dim, alpha=alpha, lmda=lmda, sigma0_sq=sigma0_sq
             )
         else:
             raise ValueError(
-                f"unknown HiEM version: {version!r} (expected 'v2', 'v3.1.1', or 'v3.2.1')"
+                f"unknown HiEM version: {version!r} "
+                "(expected 'v2', 'v3.1.1', 'v3.2.1', 'v3.3.1', 'v3.3.2', 'v3.3.3', or 'v3.3.4')"
             )
         self._k_topics = k_topics
         self._k_turns_per_topic = k_turns_per_topic
@@ -414,6 +492,7 @@ class HiEM:
                         "embedding": q.tolist(),
                         "topic_id": topic_id,
                         "is_boundary": is_boundary,
+                        "dia_id": t.get("dia_id"),
                     },
                 )
             else:
@@ -427,6 +506,7 @@ class HiEM:
                         "embedding": None,
                         "topic_id": last_topic_id,
                         "is_boundary": False,
+                        "dia_id": t.get("dia_id"),
                     },
                 )
             self._next_turn_id += 1
@@ -466,6 +546,7 @@ class HiEM:
                         "embedding": q.tolist(),
                         "topic_id": topic_id,
                         "is_boundary": is_boundary,
+                        "dia_id": t.get("dia_id"),
                     },
                 )
             else:  # assistant — no embedding, inherit prev user's topic
@@ -479,6 +560,7 @@ class HiEM:
                         "embedding": None,
                         "topic_id": last_topic_id,
                         "is_boundary": False,
+                        "dia_id": t.get("dia_id"),
                     },
                 )
             self._next_turn_id += 1

@@ -95,17 +95,63 @@ def git_sha() -> str | None:
 
 # --- Method functions (4 baseline) — same logic as run_longmemeval.py ----
 
+def _collect_dia_ids(turns: list[dict]) -> list[str]:
+    """Collect non-empty dia_id values from a list of turn dicts."""
+    return [t["dia_id"] for t in turns if t.get("dia_id")]
+
+
+def compute_evidence_metrics(
+    entry: dict, retrieved_dia_ids: list[str] | None,
+) -> dict[str, float]:
+    """Evidence-based retrieval metrics on the LLM-context-turn unit.
+
+    Names follow DYCP-style ``X@k`` convention (k = method-specific
+    context size; RAG=rag_k, sliding=sliding_k, Hi-EM=STM, full=full
+    history). The four metrics are:
+        H@k        — hit rate: 1 if any evidence dia_id ∈ context, else 0
+        R@k        — recall: |evidence ∩ context| / |evidence|
+        P@k        — precision: |evidence ∩ context| / |context|
+        R-multi-hop@k  — same as R@k but only emitted on multi-hop (cat 1)
+
+    Returns {} for entries that should be excluded:
+        - retrieved_dia_ids is None (method not yet instrumented)
+        - category == 5 (adversarial — out-of-conversation, not a retrieval
+          task by codex 2026-05-09 decision)
+        - evidence list is empty
+    """
+    if retrieved_dia_ids is None:
+        return {}
+    if int(entry.get("category", 0)) == 5:
+        return {}
+    ev_dia = {x for x in (entry.get("evidence") or []) if isinstance(x, str)}
+    if not ev_dia:
+        return {}
+    ctx_dia = set(retrieved_dia_ids)
+    inter = ev_dia & ctx_dia
+    recall = len(inter) / len(ev_dia)
+    out: dict[str, float] = {
+        "H@k": 1.0 if inter else 0.0,
+        "R@k": recall,
+        "P@k": (len(inter) / len(ctx_dia)) if ctx_dia else 0.0,
+    }
+    if int(entry.get("category", 0)) == 1:
+        out["R-multi-hop@k"] = recall
+    return out
+
+
 def run_sliding(history, question, llm, model, k_turns, **llm_kwargs):
     selected = history[-k_turns:] if k_turns > 0 else []
     msgs = [{"role": t["role"], "content": t["content"]} for t in selected]
     msgs.append({"role": "user", "content": question})
-    return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
+    extras = {"retrieved_dia_ids": _collect_dia_ids(selected)}
+    return llm.chat(msgs, model=model, **llm_kwargs), msgs, extras
 
 
 def run_full(history, question, llm, model, **llm_kwargs):
     msgs = [{"role": t["role"], "content": t["content"]} for t in history]
     msgs.append({"role": "user", "content": question})
-    return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
+    extras = {"retrieved_dia_ids": _collect_dia_ids(history)}
+    return llm.chat(msgs, model=model, **llm_kwargs), msgs, extras
 
 
 class EncoderCache:
@@ -180,7 +226,8 @@ def run_rag(history, question, llm, model, encoder, k,
     chrono = sorted(int(i) for i in top_idx)
     msgs = [{"role": history[i]["role"], "content": history[i]["content"]} for i in chrono]
     msgs.append({"role": "user", "content": question})
-    return llm.chat(msgs, model=model, **llm_kwargs), msgs, {}
+    extras = {"retrieved_dia_ids": _collect_dia_ids([history[i] for i in chrono])}
+    return llm.chat(msgs, model=model, **llm_kwargs), msgs, extras
 
 
 def run_rag_summary(extra_db, question, llm, model, encoder, k,
@@ -302,7 +349,9 @@ class HiEMConvCache:
             )
             hi.preload_history(flatten_history(haystack_sessions))
         elif method in ("hi-em-full-v1", "hi-em-full-v2",
-                        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1"):
+                        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1",
+                        "hi-em-full-v3.3.1", "hi-em-full-v3.3.2",
+                        "hi-em-full-v3.3.3", "hi-em-full-v3.3.4"):
             if method == "hi-em-full-v3.1.1":
                 v3_extra = {
                     "version": "v3.1.1",
@@ -315,6 +364,68 @@ class HiEMConvCache:
                     "tau": a.tau,
                     "cos_threshold": a.cos_threshold,
                     "beta": a.beta,
+                }
+            elif method == "hi-em-full-v3.3.1":
+                v3_extra = {
+                    "version": "v3.3.1",
+                    "tau": a.tau,
+                    "cos_threshold": a.cos_threshold,
+                    "beta": a.beta,
+                    "rnn_hidden_dim": a.rnn_hidden_dim,
+                    "rnn_lr": a.rnn_lr,
+                    "rnn_train_steps": a.rnn_train_steps,
+                    "rnn_max_context": a.rnn_max_context,
+                    "rnn_min_history": a.rnn_min_history,
+                }
+            elif method == "hi-em-full-v3.3.2":
+                v3_extra = {
+                    "version": "v3.3.2",
+                    "tau": a.tau,
+                    "cos_threshold": a.cos_threshold,
+                    "beta": a.beta,
+                    "pe_threshold": a.pe_threshold,
+                    "rnn_hidden_dim": a.rnn_hidden_dim,
+                    "rnn_lr": a.rnn_lr,
+                    "rnn_train_steps": a.rnn_train_steps,
+                    "rnn_max_context": a.rnn_max_context,
+                    "rnn_min_history": a.rnn_min_history,
+                }
+            elif method == "hi-em-full-v3.3.3":
+                v3_extra = {
+                    "version": "v3.3.3",
+                    "tau": a.tau,
+                    "cos_threshold": a.cos_threshold,
+                    "beta": a.beta,
+                    "pe_threshold": a.pe_threshold,
+                    "rnn_hidden_dim": a.rnn_hidden_dim,
+                    "rnn_lr": a.rnn_lr,
+                    "rnn_train_steps": a.rnn_train_steps,
+                    "rnn_max_context": a.rnn_max_context,
+                    "rnn_min_history": a.rnn_min_history,
+                    "restart_pe_threshold": a.restart_pe_threshold,
+                    "restart_margin": a.restart_margin,
+                    "f0_tau": a.f0_tau,
+                    "f0_min_starts": a.f0_min_starts,
+                }
+            elif method == "hi-em-full-v3.3.4":
+                v3_extra = {
+                    "version": "v3.3.4",
+                    "tau": a.tau,
+                    "cos_threshold": a.cos_threshold,
+                    "beta": a.beta,
+                    "pe_threshold": a.pe_threshold,
+                    "rnn_hidden_dim": a.rnn_hidden_dim,
+                    "rnn_lr": a.rnn_lr,
+                    "rnn_train_steps": a.rnn_train_steps,
+                    "rnn_max_context": a.rnn_max_context,
+                    "rnn_min_history": a.rnn_min_history,
+                    "pe_var_decay": a.pe_var_decay,
+                    "pe_var_min_samples": a.pe_var_min_samples,
+                    "pe_var_sigma0_sq": a.pe_var_sigma0_sq,
+                    "pe_var_min_sq": a.pe_var_min_sq,
+                    "pe_var_max_sq": a.pe_var_max_sq,
+                    "var_likelihood_weight": a.var_likelihood_weight,
+                    "hard_pe_fallback": a.hard_pe_fallback,
                 }
             else:
                 v3_extra = {}
@@ -388,6 +499,15 @@ def run_hi_em_full(history, question, llm, model, encoder, ltm_root, conv_id,
                    stm_max_topics, stm_max_turns, promotion_threshold,
                    importance_alpha, lambda_r, lambda_freq, min_floor,
                    version="v2", tau=50.0, cos_threshold=0.7, beta=0.5,
+                   pe_threshold=1.0,
+                   rnn_hidden_dim=32, rnn_lr=1e-3, rnn_train_steps=1,
+                   rnn_max_context=8, rnn_min_history=2,
+                   restart_pe_threshold=0.5, restart_margin=0.0,
+                   f0_tau=None, f0_min_starts=2,
+                   pe_var_decay=0.95, pe_var_min_samples=5,
+                   pe_var_sigma0_sq=0.04, pe_var_min_sq=1e-4,
+                   pe_var_max_sq=0.25, var_likelihood_weight=1.0,
+                   hard_pe_fallback=False,
                    **llm_kwargs):
     """Phase 2-Full: STM-stateful HiEM (v2 Gaussian, v3.1 cosine MAP, or v3.2 cosine MAP + sub-linear count)."""
     if ltm_root.exists():
@@ -411,6 +531,23 @@ def run_hi_em_full(history, question, llm, model, encoder, ltm_root, conv_id,
         tau=tau,
         cos_threshold=cos_threshold,
         beta=beta,
+        pe_threshold=pe_threshold,
+        rnn_hidden_dim=rnn_hidden_dim,
+        rnn_lr=rnn_lr,
+        rnn_train_steps=rnn_train_steps,
+        rnn_max_context=rnn_max_context,
+        rnn_min_history=rnn_min_history,
+        restart_pe_threshold=restart_pe_threshold,
+        restart_margin=restart_margin,
+        f0_tau=f0_tau,
+        f0_min_starts=f0_min_starts,
+        pe_var_decay=pe_var_decay,
+        pe_var_min_samples=pe_var_min_samples,
+        pe_var_sigma0_sq=pe_var_sigma0_sq,
+        pe_var_min_sq=pe_var_min_sq,
+        pe_var_max_sq=pe_var_max_sq,
+        var_likelihood_weight=var_likelihood_weight,
+        hard_pe_fallback=hard_pe_fallback,
         **llm_kwargs,
     )
     hi.preload_history(history)
@@ -506,9 +643,14 @@ def phase_run(
         """LoCoMo cached path: build conv state once, eval_query per Q."""
         hi = hiem_cache.get(entry["sample_id"], method, entry["haystack_sessions"])
         response, debug = hi.eval_query(entry["question"], return_debug=True)
+        prefill_turns = debug["prefill_turns"]
         revisit_hit = int(any(t["topic_id"] == debug["topic_id"]
-                              for t in debug["prefill_turns"]))
-        extras: dict = {"topic_revisit_hit": revisit_hit}
+                              for t in prefill_turns))
+        extras: dict = {
+            "topic_revisit_hit": revisit_hit,
+            "retrieved_dia_ids": [t["dia_id"] for t in prefill_turns
+                                  if t.get("dia_id")],
+        }
         if "stm_hit" in debug:
             extras["stm_hit"] = int(bool(debug["stm_hit"]))
             extras["stm_topics"] = (
@@ -548,7 +690,9 @@ def phase_run(
                     sample_id=entry.get("sample_id"), enc_cache=enc_cache,
                     **llm_kwargs)
             elif args.method in ("hi-em", "hi-em-full-v1", "hi-em-full-v2",
-                                 "hi-em-full-v3.1.1", "hi-em-full-v3.2.1"):
+                                 "hi-em-full-v3.1.1", "hi-em-full-v3.2.1",
+                                 "hi-em-full-v3.3.1", "hi-em-full-v3.3.2",
+                                 "hi-em-full-v3.3.3", "hi-em-full-v3.3.4"):
                 if hiem_cache is not None:
                     # LoCoMo path: build state once per sample_id,
                     # answer each question read-only via eval_query.
@@ -566,11 +710,22 @@ def phase_run(
                             alpha=args.alpha, lmda=args.lmda, sigma0_sq=args.sigma0_sq,
                             **llm_kwargs,
                         )
-                    elif args.method in ("hi-em-full-v1", "hi-em-full-v3.1.1", "hi-em-full-v3.2.1"):
+                    elif args.method in ("hi-em-full-v1", "hi-em-full-v3.1.1",
+                                          "hi-em-full-v3.2.1", "hi-em-full-v3.3.1",
+                                          "hi-em-full-v3.3.2", "hi-em-full-v3.3.3",
+                                          "hi-em-full-v3.3.4"):
                         if args.method == "hi-em-full-v3.1.1":
                             seg_version = "v3.1.1"
                         elif args.method == "hi-em-full-v3.2.1":
                             seg_version = "v3.2.1"
+                        elif args.method == "hi-em-full-v3.3.1":
+                            seg_version = "v3.3.1"
+                        elif args.method == "hi-em-full-v3.3.2":
+                            seg_version = "v3.3.2"
+                        elif args.method == "hi-em-full-v3.3.3":
+                            seg_version = "v3.3.3"
+                        elif args.method == "hi-em-full-v3.3.4":
+                            seg_version = "v3.3.4"
                         else:
                             seg_version = "v2"
                         hyp, msgs, extras = run_hi_em_full(
@@ -591,6 +746,23 @@ def phase_run(
                             tau=args.tau,
                             cos_threshold=args.cos_threshold,
                             beta=args.beta,
+                            pe_threshold=args.pe_threshold,
+                            rnn_hidden_dim=args.rnn_hidden_dim,
+                            rnn_lr=args.rnn_lr,
+                            rnn_train_steps=args.rnn_train_steps,
+                            rnn_max_context=args.rnn_max_context,
+                            rnn_min_history=args.rnn_min_history,
+                            restart_pe_threshold=args.restart_pe_threshold,
+                            restart_margin=args.restart_margin,
+                            f0_tau=args.f0_tau,
+                            f0_min_starts=args.f0_min_starts,
+                            pe_var_decay=args.pe_var_decay,
+                            pe_var_min_samples=args.pe_var_min_samples,
+                            pe_var_sigma0_sq=args.pe_var_sigma0_sq,
+                            pe_var_min_sq=args.pe_var_min_sq,
+                            pe_var_max_sq=args.pe_var_max_sq,
+                            var_likelihood_weight=args.var_likelihood_weight,
+                            hard_pe_fallback=args.hard_pe_fallback,
                             **llm_kwargs,
                         )
                     else:  # hi-em-full-v2
@@ -635,6 +807,11 @@ def phase_run(
             }
             if tokens is not None:
                 rec["prefill_tokens"] = tokens
+            ev_metrics = compute_evidence_metrics(
+                entry, extras.get("retrieved_dia_ids")
+                if isinstance(extras, dict) else None,
+            )
+            rec.update(ev_metrics)
             return rec
         except Exception as e:
             return {
@@ -832,7 +1009,14 @@ def main() -> None:
                             # Bounded Cosine MAP (v3.1 = legacy alias for v3.1.1)
                             "hi-em-full-v3.1", "hi-em-full-v3.1.1",
                             # Bounded Cosine MAP + sub-linear sCRP count (v3.2 = legacy alias for v3.2.1)
-                            "hi-em-full-v3.2", "hi-em-full-v3.2.1"])
+                            "hi-em-full-v3.2", "hi-em-full-v3.2.1",
+                            # Per-topic RNN prediction-error likelihood (v3.3.1)
+                            # + hard PE-based boundary (v3.3.2)
+                            "hi-em-full-v3.3", "hi-em-full-v3.3.1",
+                            "hi-em-full-v3.3.2",
+                            # SEM2 f0 / restart branch (v3.3.3)
+                            # Per-topic PE variance calibration (v3.3.4)
+                            "hi-em-full-v3.3.3", "hi-em-full-v3.3.4"])
     p.add_argument("--benchmark", choices=["longmemeval", "locomo"],
                    default=None,
                    help="Benchmark spec. Default inferred from --data path "
@@ -914,6 +1098,55 @@ def main() -> None:
                         "beta=1.0 reduces to v3.1; beta<1 squashes the "
                         "rich-get-richer accumulation that drives mega-topic. "
                         "Default 0.5 (sqrt).")
+    p.add_argument("--rnn-hidden-dim", type=int, default=32,
+                   help="v3.3.1 only: per-topic GRU hidden size.")
+    p.add_argument("--rnn-lr", type=float, default=1e-3,
+                   help="v3.3.1 only: online Adam learning rate.")
+    p.add_argument("--rnn-train-steps", type=int, default=1,
+                   help="v3.3.1 only: SGD steps per assigned transition.")
+    p.add_argument("--rnn-max-context", type=int, default=8,
+                   help="v3.3.1 only: max previous embeddings fed to the GRU.")
+    p.add_argument("--rnn-min-history", type=int, default=2,
+                   help="v3.3.1 only: history length before using RNN prediction.")
+    p.add_argument("--pe-threshold", type=float, default=1.0,
+                   help="v3.3.2 only: surprise-driven boundary. If "
+                        "max_k cos(s, predicted_next_k) < (1 - pe_threshold), "
+                        "force new topic regardless of MAP. "
+                        "Default 1.0 = disabled (== v3.3.1).")
+    # v3.3.3 only — f0 / SEM2 restart branch
+    p.add_argument("--restart-pe-threshold", type=float, default=0.5,
+                   help="v3.3.3 only: only consider restart branch when "
+                        "repeat PE > this. Guard against f0 winning a "
+                        "well-predicted continuation by accident.")
+    p.add_argument("--restart-margin", type=float, default=0.0,
+                   help="v3.3.3 only: minimum (restart - repeat) score "
+                        "margin to mark same-label boundary.")
+    p.add_argument("--f0-tau", type=float, default=None,
+                   help="v3.3.3 only: cosine temperature for f0 likelihood. "
+                        "Default = same as --tau.")
+    p.add_argument("--f0-min-starts", type=int, default=2,
+                   help="v3.3.3 only: minimum episode-start samples before "
+                        "trusting per-topic f0 centroid (else fall back to mu).")
+    # v3.3.4 only — per-topic PE variance calibration
+    p.add_argument("--pe-var-decay", type=float, default=0.95,
+                   help="v3.3.4 only: EMA decay for per-topic PE variance. "
+                        "rho = 1 - decay. Default 0.95 ≈ window 20.")
+    p.add_argument("--pe-var-min-samples", type=int, default=5,
+                   help="v3.3.4 only: per-topic samples before trusting "
+                        "EMA variance over sigma0_sq fallback.")
+    p.add_argument("--pe-var-sigma0-sq", type=float, default=0.04,
+                   help="v3.3.4 only: cold-start scalar PE variance and "
+                        "fresh-topic baseline sigma. Default 0.04 (std 0.2).")
+    p.add_argument("--pe-var-min-sq", type=float, default=1e-4,
+                   help="v3.3.4 only: variance floor.")
+    p.add_argument("--pe-var-max-sq", type=float, default=0.25,
+                   help="v3.3.4 only: variance cap.")
+    p.add_argument("--var-likelihood-weight", type=float, default=1.0,
+                   help="v3.3.4 only: scale on calibrated log-likelihood.")
+    p.add_argument("--hard-pe-fallback", action="store_true", default=False,
+                   help="v3.3.4 only: layer the v3.3.2 hard PE-boundary on "
+                        "top of the calibrated MAP. Off by default — v3.3.4 "
+                        "core relies on likelihood-ratio alone.")
     p.add_argument("--no-token-count", action="store_true")
     p.add_argument("--results-root", default=str(DEFAULT_RESULTS_ROOT))
     p.add_argument("--wandb-project", default="hi-em-phase4")
@@ -923,6 +1156,7 @@ def main() -> None:
     _METHOD_ALIASES = {
         "hi-em-full-v3.1": "hi-em-full-v3.1.1",
         "hi-em-full-v3.2": "hi-em-full-v3.2.1",
+        "hi-em-full-v3.3": "hi-em-full-v3.3.1",
     }
     if args.method in _METHOD_ALIASES:
         args.method = _METHOD_ALIASES[args.method]
@@ -961,7 +1195,12 @@ def main() -> None:
         "questions_per_round": args.questions_per_round,
         "segmenter": {"alpha": args.alpha, "lmda": args.lmda, "sigma0_sq": args.sigma0_sq,
                       "tau": args.tau, "cos_threshold": args.cos_threshold,
-                      "beta": args.beta},
+                      "beta": args.beta,
+                      "rnn_hidden_dim": args.rnn_hidden_dim,
+                      "rnn_lr": args.rnn_lr,
+                      "rnn_train_steps": args.rnn_train_steps,
+                      "rnn_max_context": args.rnn_max_context,
+                      "rnn_min_history": args.rnn_min_history},
         "memory_window": {"k_topics": args.k_topics, "k_turns_per_topic": args.k_turns_per_topic},
         "evaluation": {"sliding_k": args.sliding_k, "rag_k": args.rag_k},
         "session_common": session_common,
@@ -1019,9 +1258,16 @@ def main() -> None:
     rounds_n = max(1, (n_total + args.questions_per_round - 1) // args.questions_per_round)
     print(f"[data] {n_total} questions → {rounds_n} rounds × {args.questions_per_round}")
 
-    # STM top-K importance turn-count stats: hi-em-full-v1 only, one-shot.
-    # File-existence gate honors "그뒤로 그 파일이 있으면 다시 안만들게" (CLAUDE.md).
-    if args.method == "hi-em-full-v1":
+    # STM top-K importance turn-count stats: all hi-em-full variants (v1 / v2 /
+    # v3.1.1 / v3.2.1 / v3.3.1). Round-level recording is gated by the
+    # ``HIEM_STM_TOPK_STATS_PATH`` env var (no-op without it). File-existence
+    # gate honors "그뒤로 그 파일이 있으면 다시 안만들게" (CLAUDE.md).
+    _topk_methods = {
+        "hi-em-full-v1", "hi-em-full-v2",
+        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1", "hi-em-full-v3.3.1",
+        "hi-em-full-v3.3.2", "hi-em-full-v3.3.3", "hi-em-full-v3.3.4",
+    }
+    if args.method in _topk_methods:
         explicit = os.environ.get("HIEM_STM_TOPK_STATS_PATH")
         topk_stats_path = (
             Path(explicit) if explicit
@@ -1038,7 +1284,8 @@ def main() -> None:
     needs_encoder = args.method in {
         "rag", "rag-summary", "rag-observation",
         "hi-em", "hi-em-full-v1", "hi-em-full-v2",
-        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1",
+        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1", "hi-em-full-v3.3.1",
+        "hi-em-full-v3.3.2", "hi-em-full-v3.3.3", "hi-em-full-v3.3.4",
     }
     encoder = (
         make_encoder(
@@ -1074,7 +1321,8 @@ def main() -> None:
     # Hi-EM ltm root: per-experiment, isolated from archive.
     ltm_root = exp_dir / "working_state" / "ltm"
     if args.method in {"hi-em", "hi-em-full-v1",
-                        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1"} and ltm_root.exists():
+                        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1",
+                        "hi-em-full-v3.3.1", "hi-em-full-v3.3.2"} and ltm_root.exists():
         # Resume-safe: per-question conv_id dirs are ephemeral; cleaning them is OK
         # because preload_history rebuilds from the input for the current round.
         pass
@@ -1085,7 +1333,8 @@ def main() -> None:
     hiem_cache: HiEMConvCache | None = None
     if benchmark == "locomo" and args.method in {
         "hi-em", "hi-em-full-v1", "hi-em-full-v2",
-        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1",
+        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1", "hi-em-full-v3.3.1",
+        "hi-em-full-v3.3.2",
     }:
         hiem_cache = HiEMConvCache(
             ltm_root=ltm_root, encoder=encoder, llm=llm,
@@ -1180,7 +1429,7 @@ def main() -> None:
     final["n_rounds"] = rounds_n
     save_json(exp_dir / "summary.json", final)
 
-    if args.method == "hi-em-full-v1" and os.environ.get("HIEM_STM_TOPK_STATS_PATH"):
+    if args.method in _topk_methods and os.environ.get("HIEM_STM_TOPK_STATS_PATH"):
         from hi_em.stm_topk_stats import flush_aggregate
         written = flush_aggregate()
         if written:
