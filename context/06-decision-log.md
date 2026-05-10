@@ -774,8 +774,7 @@ v3.1 Bounded Cosine MAP와 v3.2 Cosine Prediction Error는 TopiOCQA/TIAGE에서 
 
 **영향 범위**:
 - 설계 문서: `context/methodology/v3.3.3.md`
-- 구현 outline: `context/methodology/v3.3.3_impl_outline.md`
-- 향후 구현 예정: `src/hi_em/sem_core_v333_rnn_f0.py`, 필요 시 `src/hi_em/topic_v333_rnn_f0.py`, method mapping, `tests/test_v333_f0.py`
+- 구현 (2026-05-09 완료): `src/hi_em/sem_core_v333_rnn_f0.py`, `src/hi_em/orchestrator.py` (v3.3.3 분기), `scripts/run_experiment.py` (method mapping + HP CLI flags). v3.3.3 구현 outline 은 구현 완료 후 삭제 (`v3.3.3_impl_outline.md`).
 
 **대안**:
 - v3.3.2 hard PE boundary 만 유지 (기각: 새 topic 강제와 same-label restart 는 다른 현상. SEM2 원 분기를 계속 빠뜨림)
@@ -798,11 +797,42 @@ v3.1 Bounded Cosine MAP와 v3.2 Cosine Prediction Error는 TopiOCQA/TIAGE에서 
 
 **영향 범위**:
 - 설계 문서: `context/methodology/v3.3.4.md`
-- 구현 outline: `context/methodology/v3.3.4_impl_outline.md`
-- sweep plan: `context/methodology/v3.3.3_v3.3.4_sweep_plan.md`
-- 향후 구현 예정: `src/hi_em/sem_core_v334_rnn_var.py`, method mapping, `tests/test_v334_variance.py`
+- 구현 (2026-05-09 완료): `src/hi_em/sem_core_v334_rnn_var.py`, `src/hi_em/orchestrator.py` (v3.3.4 분기), `scripts/run_experiment.py` (method mapping + variance HP CLI flags). 구현 outline / sweep plan 은 구현 완료 후 삭제 (`v3.3.4_impl_outline.md`, `v3.3.3_v3.3.4_sweep_plan.md`).
 
 **대안**:
 - global `pe_threshold` sweep 지속 (기각: topic별 PE 폭 문제를 해결하지 못함)
 - per-topic $\kappa$ 또는 vMF concentration 학습 (기각: SEM 계승 부담이 더 크고 cosine likelihood 구조를 더 많이 바꿈)
 - per-conversation variance 만 사용 (보류: SEM 계승 부담은 낮지만 좁은/넓은 topic 차이를 직접 다루지 못함)
+
+## 2026-05-09 v3.3.3 / v3.3.4 first full LoCoMo run + retrieval-metric 발견
+
+**결정**: codex 가 추천한 default HP 로 v3.3.3 / v3.3.4 를 full LoCoMo 1986Q 1 회 평가. 결과 보고 + 다음 sweep 방향 확정.
+
+**관찰 (2026-05-09_v333_v334_full_6method_par REPORT)**:
+
+| method | acc | H@k | R@k | R-mh@k | P@k |
+|---|---:|---:|---:|---:|---:|
+| rag | 0.285 | 0.640 | 0.569 | 0.365 | 0.0732 |
+| rag-observation | **0.296** | (재실행 중) | (재실행 중) | (재실행 중) | (재실행 중) |
+| rag-summary | 0.273 | (재실행 중) | (재실행 중) | (재실행 중) | (재실행 중) |
+| v3.3.2 | 0.258 | 0.421 | 0.355 | 0.251 | 0.0033 |
+| v3.3.3 | 0.256 | 0.412 | 0.347 | 0.232 | 0.0033 |
+| v3.3.4 | 0.259 | **0.445** | **0.386** | **0.303** | 0.0029 |
+
+**핵심 발견**:
+1. **v3.3.3 의 acc 효과 0**: same-label restart 분기는 default HP (`restart_pe_threshold=0.5`) 에서 v3.3.2 와 동일 segmentation (n_topics 10.00, T1μ 25.5 모두 같음). restart 분기가 거의 발화 안 함 — threshold 너무 보수적이거나 cosine surrogate 에서 f0 score 가 repeat 를 거의 못 이김.
+2. **v3.3.4 가 retrieval 단에서 v3.3.2 대비 명확히 개선**: H@k +5.7%, R@k +8.7%, **R-multi-hop@k +20.7%**. 즉 calibrated likelihood 가 segmentation 을 더 의미있게 만든다. 그런데 acc 는 동일 — retrieval 개선이 LLM 답변으로 전달 안 됨.
+3. **hi-em 의 P@k 가 RAG 보다 20× 낮음** (0.003 vs 0.073): topic 단위 prefill 의 본질적 noise. 정답 turn 이 retrieved set 안에 있어도 noise 가 너무 많아 LLM 이 답을 못 잡는 가설.
+4. **RAG retrieval 우위 (H@k 0.64 vs hi-em 0.42)**: hi-em 의 STM/LTM 가 정답 turn 을 못 가져오는 편. acc gap 0.04 의 절반 이상은 retrieval 단 차이.
+
+**버그 수정 (이번 세션)**: `scripts/run_experiment.py:1334` 의 `hiem_cache` 활성화 set 에 v3.3.3 / v3.3.4 누락 → 매 질문마다 600-turn 대화 재 preload (200x 낭비) → 제거 후 30x 가속. 자동화: `is_hi_em_method()` regex helper 로 변경, prefix 매칭하므로 새 버전 추가 시 set 갱신 불필요.
+
+**REPORT 컬럼 보강**: H@k / R@k / R-multi-hop@k / P@k 컬럼이 summary.json 에는 있는데 `write_report` 가 출력 안 했던 것 수정. rag-summary / rag-observation 는 retrieved_dia_ids emit 안 하던 것도 수정 + 재실행.
+
+**다음 단계**:
+- v3.3.4 multi-hop 만 따로 acc breakdown 보기 (R-mh@k 가 +20% 인데 acc 영향 0 이 진짜인지 검증)
+- v3.3.3 의 restart 분기가 발화하는 HP 영역 sweep (`restart_pe_threshold ∈ {0.2, 0.3, 0.4}`, `restart_margin ∈ {0, -2, -5}` 음수도 시도)
+- v3.3.4 HP sweep (`pe_var_sigma0_sq ∈ {0.01, 0.04, 0.1}`, `pe_var_min_samples ∈ {3, 5, 10}`)
+- hi-em P@k bottleneck 검증: `k_turns_per_topic` 줄여 prefill 압축 → acc 효과 보기
+
+**영향 범위**: REPORT.md 컬럼 schema, decision-log, handoff, methodology 갱신 필요.

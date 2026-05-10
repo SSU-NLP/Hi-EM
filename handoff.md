@@ -33,20 +33,36 @@
 
 ## 현재 상태
 
-**마지막 업데이트**: 2026-05-08
-**현재 작업**: v3.3.1 + v3.3.2 experiment 완료. Hi-EM 라인이 LoCoMo 에서 처음으로 RAG/sliding 모든 baseline 을 이김.
+**마지막 업데이트**: 2026-05-09
+**현재 작업**: v3.3.3 (f0/restart) + v3.3.4 (per-topic σ²_k) 구현 완료, full LoCoMo 1986Q 1-shot 평가 완료. retrieval metric (H@k/R@k/R-mh@k/P@k) 도입 + REPORT 보강.
 
-핵심 결과:
-- **v3.3.1 default HP 가 mega-topic 의 직접 원인**이었음. cos=0.7, α=1, β=0.5 → T1μ=386 turn (single-topic). HP experiment 으로 cos=0.9, α=100, β=0.25 잡으면 T1μ=28.6, T2μ=23.2, T3μ=19.7 (multi-topic). acc 0.215 → 0.263.
-- **v3.3.2 도입**: SEM2 surprise → boundary 메커니즘을 explicit threshold 로 복원. `pe_threshold` CLI 옵션. v3.3.1 best HP 위에 `pe=0.5 + rnn_train_steps=3` 으로 acc **0.273**. rag-observation (0.258) 포함 모든 baseline 이김.
+**핵심 결과 (2026-05-09_v333_v334_full_6method_par REPORT)**:
+
+| method | acc | H@k | R@k | R-mh@k | P@k |
+|---|---:|---:|---:|---:|---:|
+| rag | 0.285 | 0.640 | 0.569 | 0.365 | 0.0732 |
+| rag-observation | **0.296** | (재실행) | (재실행) | (재실행) | (재실행) |
+| rag-summary | 0.273 | (재실행) | (재실행) | (재실행) | (재실행) |
+| v3.3.2 | 0.258 | 0.421 | 0.355 | 0.251 | 0.0033 |
+| v3.3.3 | 0.256 | 0.412 | 0.347 | 0.232 | 0.0033 |
+| v3.3.4 | 0.259 | **0.445** | **0.386** | **0.303** | 0.0029 |
+
+- **rag-observation 여전히 1위** (0.296, 어제 0.294 와 통계 동일).
+- **v3.3.3 의 acc 효과 0**: same-label restart 분기가 default HP 에서 거의 발화 안 함 (segmentation 통계 v3.3.2 와 동일).
+- **v3.3.4 가 retrieval 단에서 v3.3.2 대비 +20% R-mh@k**: calibrated likelihood 가 segmentation 을 더 의미있게 만듦. 그러나 acc 동일 — retrieval 개선이 LLM 답변으로 전달 안 됨.
+- **hi-em P@k = RAG 의 1/22**: topic 단위 prefill 의 본질적 noise. 정답 turn 이 set 안에 있어도 noise 가 너무 많아 LLM 이 답을 못 잡음 (가설).
+
+**오늘 한 일**:
+- v3.3.3 / v3.3.4 segmenter 구현 + orchestrator + run_experiment 와이어링
+- **버그 수정**: `hiem_cache` 활성화 set 에 v3.3.3 / v3.3.4 누락 → 200x preload 낭비. 자동화: `is_hi_em_method()` regex helper, prefix 매칭으로 새 버전 자동 활성화. `infrastructure.md` § 7 에 새 버전 추가 체크리스트 추가.
+- REPORT.md 컬럼 보강 — H@k / R@k / R-mh@k / P@k 출력 추가 (summary.json 에 데이터 있는데 출력 누락이었음). 풀네임 (`accuracy_overall`, `multi-hop` 등) 으로 복원.
+- rag-observation / rag-summary 의 `retrieved_dia_ids` emit 코드 추가 (locomo_loader 의 summary 에 `dia_ids` field 추가, observation 의 `evidence` 활용). 두 method 재실행 중.
 
 산출물:
-- `outputs/experiments/2026-05-08_v331_hpsweep/` — 5 configs HP experiment
-- `outputs/experiments/2026-05-08_v332_pesweep/` — 12 configs PE experiment
-- `outputs/experiments/2026-05-08_v332_pesweep/REPORT.md` — 전체 비교 표 (acc + qtype + T1/T2/T3 + T1max/T2max/T1var + gen_p50 + wall_s + RAG baselines)
-- `context/methodology/v3.3.2.md` — v3.3.2 알고리즘 + sweep 결과
-- `context/methodology/v3.3.1.md` — HP experiment 결과 추가
-- `context/06-decision-log.md` — 2026-05-08 entry
+- `outputs/experiments/2026-05-09_v333_v334_full_6method_par/REPORT.md` — full 비교 표
+- `src/hi_em/sem_core_v333_rnn_f0.py`, `sem_core_v334_rnn_var.py` — 새 segmenter 2종
+- `context/methodology/v3.3.3.md`, `v3.3.4.md`, `v3.3.3_impl_outline.md`, `v3.3.4_impl_outline.md`, `v3.3.3_v3.3.4_sweep_plan.md` — codex 설계 문서
+- `context/06-decision-log.md` — 2026-05-09 entry 3개 (v3.3.3 설계, v3.3.4 설계, full LoCoMo 1차 결과 + retrieval 발견)
 
 **과거 Phase**: Phase 2-Full 구현 완료 (P2F-2~6 + sanity). 신규 method `hi-em-full` 사용 가능.
 
@@ -135,7 +151,26 @@ uv run python scripts/experiment.py \
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
 
-### 다음: Phase 4-Re P2F-7 — 5-way sanity 비교 후 결정 분기
+### 다음 (2026-05-09 후속): retrieval bottleneck 분석 + v3.3.x HP sweep
+
+오늘 1차 결과: v3.3.4 가 R-mh@k +20% 향상해도 acc 동일 → **retrieval bottleneck 이 acc 의 진짜 원인이 아님**. 다음 우선순위:
+
+1. **multi-hop subset acc breakdown** — v3.3.4 의 R-mh@k +20% 가 mh acc 로 안 가는 이유:
+   - mh 만 따로 acc 비교 (현재 v3.3.4 mh=0.136, v3.3.2 mh=0.146 — *하락*)
+   - per-question 단위로 R-mh@k 와 acc correlation 보기. retrieval 잘 됐는데 acc 틀린 케이스 manual inspection (10-20개)
+   - 가설: prefill noise (P@k=0.003) 가 multi-hop synthesis 를 방해 → `k_turns_per_topic` 줄이는 sweep
+2. **v3.3.3 restart 분기 발화 확인** — default 로는 거의 발화 안 함. 더 공격적 HP sweep:
+   - `restart_pe_threshold ∈ {0.2, 0.3, 0.4}`
+   - `restart_margin ∈ {-5, -2, 0}` (음수 → restart 가 잠재적으로 더 자주 이김)
+   - 각 sweep 에서 boundary 발화 횟수 / restart 분기 승률 logging 추가
+3. **v3.3.4 HP sweep** — calibration 의 sweet spot:
+   - `pe_var_sigma0_sq ∈ {0.01, 0.04, 0.1}`
+   - `pe_var_min_samples ∈ {3, 5, 10}`
+   - `var_likelihood_weight ∈ {0.5, 1.0, 2.0}`
+4. **rag-observation / rag-summary retrieval metric 재실행 마치고 표 업데이트** — 진행 중 (PIDs 750286, 750290, ETA ~23:42)
+5. **k_turns_per_topic ablation** — hi-em P@k 향상 가설 검증. `k_turns_per_topic ∈ {3, 5, 10, 20}` × v3.3.2/4
+
+### Phase 4-Re P2F-7 — 5-way sanity 비교 후 결정 분기 (이전 세션 잔존)
 
 `hi-em-full` 도입으로 비교 method 5가지 (sliding/full/rag/hi-em/hi-em-full). 30Q stratified로 sanity → 결과로 (a) full 500, (b) HP experiment, (c) 다른 dataset, (d) Phase 5 정직 reframing 결정.
 
