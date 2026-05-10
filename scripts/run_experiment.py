@@ -83,6 +83,20 @@ def flatten_history(haystack_sessions: list[list[dict]]) -> list[dict]:
     return [t for session in haystack_sessions for t in session]
 
 
+# All HiEM-family methods. Prefix-match so a new version (e.g. v3.4.1)
+# automatically picks up cache + encoder + STM-topk gating. The `_build`
+# dispatch below + argparse choices still need the explicit version added.
+_HI_EM_METHOD_RE = re.compile(r"^hi-em(-full-v[\d.]+)?$")
+
+
+def is_hi_em_method(method: str) -> bool:
+    return bool(_HI_EM_METHOD_RE.match(method))
+
+
+def is_rag_method(method: str) -> bool:
+    return method in {"rag", "rag-summary", "rag-observation"}
+
+
 def git_sha() -> str | None:
     try:
         out = subprocess.check_output(
@@ -254,15 +268,21 @@ def run_rag_summary(extra_db, question, llm, model, encoder, k,
     top_idx = np.argsort(-sims)[: min(k, len(summaries))]
     chrono = sorted(int(i) for i in top_idx)
     blocks = []
+    retrieved_dia_ids: list[str] = []
     for i in chrono:
         s = summaries[i]
         blocks.append(f"[{s.get('date', '')}] Session {s['session_idx']} summary: {s['text']}")
+        retrieved_dia_ids.extend(s.get("dia_ids") or [])
     context = "\n\n".join(blocks)
     msgs = [
         {"role": "user", "content": context},
         {"role": "user", "content": question},
     ]
-    return llm.chat(msgs, model=model, **llm_kwargs), msgs, {"k_retrieved": len(chrono)}
+    extras = {
+        "k_retrieved": len(chrono),
+        "retrieved_dia_ids": retrieved_dia_ids,
+    }
+    return llm.chat(msgs, model=model, **llm_kwargs), msgs, extras
 
 
 def run_rag_observation(extra_db, question, llm, model, encoder, k,
@@ -289,15 +309,25 @@ def run_rag_observation(extra_db, question, llm, model, encoder, k,
     top_idx = np.argsort(-sims)[: min(k, len(obs))]
     chrono = sorted(int(i) for i in top_idx)
     blocks = []
+    retrieved_dia_ids: list[str] = []
     for i in chrono:
         o = obs[i]
         blocks.append(f"[{o.get('date', '')}] {o.get('speaker', '?')}: {o['text']}")
+        ev = o.get("evidence")
+        if isinstance(ev, list):
+            retrieved_dia_ids.extend(x for x in ev if isinstance(x, str))
+        elif isinstance(ev, str):
+            retrieved_dia_ids.append(ev)
     context = "\n".join(blocks)
     msgs = [
         {"role": "user", "content": context},
         {"role": "user", "content": question},
     ]
-    return llm.chat(msgs, model=model, **llm_kwargs), msgs, {"k_retrieved": len(chrono)}
+    extras = {
+        "k_retrieved": len(chrono),
+        "retrieved_dia_ids": retrieved_dia_ids,
+    }
+    return llm.chat(msgs, model=model, **llm_kwargs), msgs, extras
 
 
 class HiEMConvCache:
@@ -1258,16 +1288,11 @@ def main() -> None:
     rounds_n = max(1, (n_total + args.questions_per_round - 1) // args.questions_per_round)
     print(f"[data] {n_total} questions → {rounds_n} rounds × {args.questions_per_round}")
 
-    # STM top-K importance turn-count stats: all hi-em-full variants (v1 / v2 /
-    # v3.1.1 / v3.2.1 / v3.3.1). Round-level recording is gated by the
-    # ``HIEM_STM_TOPK_STATS_PATH`` env var (no-op without it). File-existence
-    # gate honors "그뒤로 그 파일이 있으면 다시 안만들게" (CLAUDE.md).
-    _topk_methods = {
-        "hi-em-full-v1", "hi-em-full-v2",
-        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1", "hi-em-full-v3.3.1",
-        "hi-em-full-v3.3.2", "hi-em-full-v3.3.3", "hi-em-full-v3.3.4",
-    }
-    if args.method in _topk_methods:
+    # STM top-K importance turn-count stats: all hi-em-full-v* variants.
+    # Round-level recording is gated by the ``HIEM_STM_TOPK_STATS_PATH`` env
+    # var (no-op without it). File-existence gate honors "그뒤로 그 파일이
+    # 있으면 다시 안만들게" (CLAUDE.md).
+    if is_hi_em_method(args.method) and args.method != "hi-em":
         explicit = os.environ.get("HIEM_STM_TOPK_STATS_PATH")
         topk_stats_path = (
             Path(explicit) if explicit
@@ -1281,12 +1306,7 @@ def main() -> None:
             print(f"[stm-topk-stats] writing per-round top-3/4/5 stats to {topk_stats_path}")
 
     # Encoder + LLM (heavy, do once outside the round loop).
-    needs_encoder = args.method in {
-        "rag", "rag-summary", "rag-observation",
-        "hi-em", "hi-em-full-v1", "hi-em-full-v2",
-        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1", "hi-em-full-v3.3.1",
-        "hi-em-full-v3.3.2", "hi-em-full-v3.3.3", "hi-em-full-v3.3.4",
-    }
+    needs_encoder = is_hi_em_method(args.method) or is_rag_method(args.method)
     encoder = (
         make_encoder(
             device=args.device,
@@ -1330,12 +1350,9 @@ def main() -> None:
     # LoCoMo-style benchmarks share a conversation across many test questions
     # (1 sample_id × ~200 Q). Build Hi-EM state once per sample to avoid the
     # 200× preload cost; each Q answers read-only via :meth:`HiEM.eval_query`.
+    # is_hi_em_method() prefix-matches so new versions auto-enable the cache.
     hiem_cache: HiEMConvCache | None = None
-    if benchmark == "locomo" and args.method in {
-        "hi-em", "hi-em-full-v1", "hi-em-full-v2",
-        "hi-em-full-v3.1.1", "hi-em-full-v3.2.1", "hi-em-full-v3.3.1",
-        "hi-em-full-v3.3.2",
-    }:
+    if benchmark == "locomo" and is_hi_em_method(args.method):
         hiem_cache = HiEMConvCache(
             ltm_root=ltm_root, encoder=encoder, llm=llm,
             model=args.model, llm_kwargs=llm_kwargs, args=args,
@@ -1346,9 +1363,7 @@ def main() -> None:
     # matrices so the encoder (which is lock-serialized inside QueryEncoder)
     # does each conversation's corpus exactly once instead of ~200 times.
     enc_cache: EncoderCache | None = None
-    if benchmark == "locomo" and args.method in {
-        "rag", "rag-summary", "rag-observation"
-    } and encoder is not None:
+    if benchmark == "locomo" and is_rag_method(args.method) and encoder is not None:
         enc_cache = EncoderCache(encoder=encoder)
         print("[enc-cache] enabled (per-sample_id embedding cache)")
 
@@ -1429,7 +1444,11 @@ def main() -> None:
     final["n_rounds"] = rounds_n
     save_json(exp_dir / "summary.json", final)
 
-    if args.method in _topk_methods and os.environ.get("HIEM_STM_TOPK_STATS_PATH"):
+    if (
+        is_hi_em_method(args.method)
+        and args.method != "hi-em"
+        and os.environ.get("HIEM_STM_TOPK_STATS_PATH")
+    ):
         from hi_em.stm_topk_stats import flush_aggregate
         written = flush_aggregate()
         if written:

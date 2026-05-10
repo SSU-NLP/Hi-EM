@@ -110,7 +110,12 @@ def _build_haystack_sessions(conversation: dict) -> list[list[dict]]:
 
 
 def _extract_summaries(sample: dict) -> list[dict]:
-    """Per-session summary records for rag-summary."""
+    """Per-session summary records for rag-summary.
+
+    ``dia_ids`` lists every turn dia_id in the source session so
+    downstream evaluators can compute H@k / R@k by treating a
+    retrieved summary as a coarse pointer to all turns it summarizes.
+    """
     conv = sample["conversation"]
     summaries = sample.get("session_summary", {}) or {}
     out: list[dict] = []
@@ -118,10 +123,13 @@ def _extract_summaries(sample: dict) -> list[dict]:
         text = summaries.get(f"session_{i}_summary")
         if not text:
             continue
+        turns_raw = conv.get(f"session_{i}", []) or []
+        dia_ids = [t.get("dia_id") for t in turns_raw if t.get("dia_id")]
         out.append({
             "session_idx": i,
             "date": conv.get(f"session_{i}_date_time", ""),
             "text": text,
+            "dia_ids": dia_ids,
         })
     return out
 

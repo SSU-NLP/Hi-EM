@@ -316,11 +316,13 @@ def write_report(experiment_dir: Path, experiment_name: str) -> None:
         rows.append((d, parse_overrides_from_log(d / "run.log")))
 
     header = (
-        "| method | notes | acc | mh | sh | tr | adv | od | "
-        "T1μ | T2μ | T3μ | T1max | T2max | T1var | n_topics | "
+        "| method | notes | accuracy_overall | "
+        "multi-hop | single-hop | temporal-reasoning | adversarial | open-domain | "
+        "H@k | R@k | R-multi-hop@k | P@k | "
+        "T1μ | T2μ | T3μ | T1max | T2max | T1var | STM_n_topics | "
         "gen_p50(s) | wall |"
     )
-    sep = "|" + "---|" * 17
+    sep = "|" + "---|" * 21
 
     # n_questions is identical across runs in one sweep (same data + limit/stratify).
     # Pull it out of the per-row table and report once in the header.
@@ -338,9 +340,12 @@ def write_report(experiment_dir: Path, experiment_name: str) -> None:
     lines.append(f"Generated: {datetime.now().isoformat(timespec='seconds')}\n")
     lines.append(f"Path: `{experiment_dir.relative_to(REPO)}/`\n")
     lines.append(f"n_questions: **{n_str}** (uniform across runs)\n")
-    lines.append("Columns: T1μ/T2μ/T3μ — mean STM top-1/2/3 topic turn-counts; "
+    lines.append("Columns: H@k/R@k/P@k — retrieval hit/recall/precision against "
+                 "LoCoMo answer-evidence turn ids; R-multi-hop@k — strict "
+                 "all-evidence-included rate on multi-hop questions only; "
+                 "T1μ/T2μ/T3μ — mean STM top-1/2/3 topic turn-counts; "
                  "T1var — variance of top-1 across rounds; "
-                 "n_topics — mean STM topic count per round; "
+                 "STM_n_topics — mean STM topic count per round; "
                  "gen_p50 — per-question generation latency p50; "
                  "wall — total run wall-clock (h/m/s); "
                  "notes — HPs the method actually consumes (incl. overrides).\n")
@@ -370,10 +375,16 @@ def write_report(experiment_dir: Path, experiment_name: str) -> None:
         od = s.get("accuracy_by_qtype/open-domain", "-")
         gen_p50 = s.get("gen_sec_p50", "-")
         wall = wall_seconds(log)
+        # Retrieval metrics (added 2026-05-09; older runs may lack them).
+        hk = s.get("H@k", "-")
+        rk = s.get("R@k", "-")
+        rmhk = s.get("R-multi-hop@k", "-")
+        pk = s.get("P@k", "-")
         notes = format_notes(method, cfg, ov)  # overrides folded into notes
         lines.append(
             f"| {method} ({d.name}) | {notes} | "
             f"{fmt(acc)} | {fmt(mh)} | {fmt(sh)} | {fmt(tr)} | {fmt(adv)} | {fmt(od)} | "
+            f"{fmt(hk)} | {fmt(rk)} | {fmt(rmhk)} | {fmt(pk,4)} | "
             f"{fmt(t1.get('mean'),1)} | {fmt(t2.get('mean'),1)} | {fmt(t3.get('mean'),1)} | "
             f"{t1.get('max','-')} | {t2.get('max','-')} | {fmt(t1.get('variance'),1)} | "
             f"{fmt(n_topics_avg(d),2)} | {fmt(gen_p50,2)} | {fmt_wall(wall)} |"

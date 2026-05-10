@@ -194,7 +194,9 @@ def aggregate_summary(per_q: list[dict[str, Any]]) -> dict[str, float]:
         out["accuracy_overall"] = float(np.mean(accs))
 
     for key in (
-        "prefill_tokens", "latency_sec",
+        "prefill_tokens",   # tiktoken-counted tokens (off when --no-token-count)
+        "prefill_n_msgs",   # message count fed to LLM (always recorded; cheap)
+        "latency_sec",
         # Per-call latency from OpenAIChatLLM.chat. ttft/tpot are 0.0 in
         # non-streaming mode (HIEM_LLM_STREAM=false); output_tokens and
         # gen_sec are populated regardless of stream mode.
