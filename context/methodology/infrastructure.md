@@ -15,7 +15,7 @@
 ## 1. `EncoderCache` — RAG 계열용 임베딩 캐시
 
 - **무엇**: `(sample_id, kind)` 키로 conversation 별 corpus 임베딩을 캐싱. `kind ∈ {"history", "summary", "observation"}`.
-- **어디**: `scripts/run_experiment.py:111-163`.
+- **어디**: `scripts/run_experiment.py` 의 `class EncoderCache`.
 - **왜**:
   - LoCoMo 한 conversation 에 ~200 질문이 같은 600-turn history 를 공유. 캐시 없으면 질문마다 600 turn 을 재인코딩 → 200×.
   - encoder 는 thread lock 으로 직렬화돼 있어 (`QueryEncoder.encode` 의 global Lock), worker 수를 늘려도 인코딩 비용은 그대로.
@@ -31,13 +31,14 @@
 ## 2. `HiEMConvCache` — Hi-EM 인스턴스 캐시 (per-conversation post-build state)
 
 - **무엇**: `(sample_id, method)` 키로 *대화 segmentation 이 끝난 시점의 HiEM 인스턴스* 를 캐시. 질문은 read-only `eval_query()` 로만 인스턴스를 사용.
-- **어디**: `scripts/run_experiment.py:256+`.
+- **어디**: `scripts/run_experiment.py` 의 `class HiEMConvCache`.
 - **왜**:
   - LoCoMo / LongMemEval 스타일에서 같은 600-turn history 에 200 질문을 던짐. 질문마다 LTM jsonl + segmenter centroid + STM round-promote 를 재구축하면 200× preload 비용.
   - 한 번 build → 모든 질문이 공유.
 - **행동 영향**:
-  - `hi-em-full-v1` / `v2` / `v3.1.1` / `v3.2.1` / `v3.3.1` 모두 — Hi-EM 라인 공통.
+  - `hi-em` 와 모든 `hi-em-full-vX.Y.Z` — `is_hi_em_method()` regex helper (`^hi-em(-full-v[\d.]+)?$`) 가 prefix 매칭하므로 새 버전 자동 활성화. 별도 set 갱신 불필요 (2026-05-09 리팩터).
   - segmentation 결과 자체는 변경 없음. 단지 같은 결과를 재계산하지 않을 뿐.
+  - **2026-05-09 버그 사례**: 도입 당시 explicit set 에 v3.3.3 / v3.3.4 누락 → 매 질문마다 600-turn 대화 재 preload (200x 낭비). regex helper 로 전환해 재발 차단.
 - **Lazy build + per-sample lock**: 첫 worker 가 sample 잠금을 잡고 build, 동일 sample 의 다른 worker 는 대기 후 캐시 공유. 다른 sample 들은 병렬로 build.
 - **반드시 read-only 사용**: 질문 처리는 `HiEM.eval_query` 로만 — 인스턴스 상태(centroid, count, prev_k) 를 mutate 하지 않음. mutate 하면 질문 순서가 결과를 바꿔버림.
 - **알려진 한계 / 변형 후보**:
@@ -70,7 +71,7 @@
       "reasoning": {"enabled": False},                     # Crts / OpenRouter
   }
   ```
-- **어디**: `scripts/run_experiment.py:775-782` (judge), `1112-1119` (main chat).
+- **어디**: `scripts/run_experiment.py` 의 judge 호출 + main chat 호출 두 곳에서 같은 `extra_body` dict 를 LLM kwargs 에 주입.
 - **왜**:
   - qwen / DeepSeek / Crts proxied 모델들은 reasoning mode 가 default ON 이면 답을 `message.reasoning` 또는 `<think>...</think>` 로 보냄.
   - Hi-EM 의 LLM 어댑터는 `message.content` 만 추출 → reasoning 모델이면 `content=None` 이 와서 모든 hypothesis 가 빈 문자열.
@@ -85,8 +86,8 @@
 ## 5. Retrieval policy — Hi-EM (선택된 topic 안에서)
 
 - **무엇**: `HiEM.eval_query` 가 질문 임베딩으로 top-K topic 을 고른 뒤, 각 topic 에서 *최근 N turn* 을 가져옴.
-- **어디**: `src/hi_em/memory_window.py:39+` (selection), `orchestrator.py` (eval_query).
-- **왜 / 한계**: `context/methodology/v1.md` 의 "알려진 한계 #5 (retrieval evidence-aware 아님)" 와 동일. v3.x 모든 버전이 이 정책을 그대로 상속.
+- **어디**: `src/hi_em/memory_window.py` (`select_memory_window`), `src/hi_em/orchestrator.py` (`HiEM.eval_query`).
+- **왜 / 한계**: 현재 retrieval 정책이 evidence-aware 가 아님. selected topic 이 정답 turn 을 포함하더라도 그 안의 어느 turn 이 답변에 결정적인지 모름 — *최근 N turn* 또는 *centroid 와 가까운 turn* heuristic 으로만 추리는 단계. v3.x 모든 버전이 이 정책을 그대로 상속. (decision-log 2026-05-09 entry 의 P@k 0.003 결과가 직접 증거 — H@k 는 0.42 (정답 retrieved) 이지만 P@k 는 0.003 (그 외 noise turn 다수).)
 - **행동 영향**: 모든 Hi-EM 변형의 QA 결과 — 답이 "오래된 turn" 또는 "centroid 와 떨어진 turn" 에 있으면 못 찾음.
 - **변형 후보** (아직 미적용):
   - 선택된 topic 안에서 turn-단위 cosine rerank
@@ -99,7 +100,7 @@
 ## 6. STM topic atomicity
 
 - **무엇**: STM 에 topic 이 들어갈 때 *통째로* 들어감. soft turn cap (`max_turns`) 보다 atomicity 가 우선.
-- **어디**: `src/hi_em/memory_window.py:12, 140`.
+- **어디**: `src/hi_em/memory_window.py` 의 `MemoryWindow` class docstring (불변식 정의) + `promote()` 메소드 (전체 turn list 강제 유입).
 - **왜**: 한 topic 의 의미를 깨지 않으려는 설계.
 - **한계**: 큰 topic (200 turn 짜리) 이 통째로 들어가면 prefill 폭주 (LoCoMo 19k token 사례, decision-log).
 - **변형 후보**: summary 수준에서만 atomicity 유지, 내부 turn 은 bounded chunk 만.
@@ -129,7 +130,14 @@
   - `k=v`: `run_experiment.py` 의 `--k v` 로 forward. HP override.
 - **Resume**: 같은 `--name` 으로 재실행하면 `<run_dir>/exit_code.txt = 0` 인 run 은 자동 skip. 중간에 죽어도 안전.
 - **출력**: `outputs/experiments/<name>/<label>/` 에 per-run run.log + results/ + stm_topk.json (hi-em-full-* 만). 모든 run 끝나면 `outputs/experiments/<name>/REPORT.md` 자동 생성.
-- **REPORT.md 컬럼** (2026-05-09~): `method | notes | acc | mh/sh/tr/adv/od | T1μ/T2μ/T3μ | T1max/T2max/T1var | n_topics | gen_p50(s) | wall`. 모든 run 이 동일 데이터·limit 으로 돌므로 `n_questions` 는 표 위 header 한 줄로 분리. `notes` 는 method 식별의 일부이므로 method 바로 옆에 둠 — 해당 method 가 실제로 사용하는 HP 한 줄 요약 (hi-em-full-* 는 segmenter+memory_window, rag* 는 rag_k, sliding 은 sliding_k) + override 가 있으면 끝에 `· override: k=v` 로 append. `experiment.json` 의 `config` 에서 추출.
+- **새 hi-em-full-vX.Y.Z 버전 추가 체크리스트** (2026-05-09):
+  1. `src/hi_em/sem_core_vXYZ_*.py` (segmenter) + `topic_vXYZ_*.py` (필요시) 신규.
+  2. `src/hi_em/orchestrator.py` 의 `version == "vX.Y.Z"` elif 분기 추가 + 새 HP 시그니처에 추가.
+  3. `scripts/run_experiment.py` 세 곳: (a) argparse `--method choices`, (b) `HiEMConvCache._build` 의 `elif method == "..."` HP 매핑, (c) 질문 dispatch 의 `seg_version = "vX.Y.Z"`. 새 HP 는 argparse + `v3_extra` dict + `run_hi_em_full` kwargs 에 propagate.
+  4. **자동 적용**: hiem_cache enable / encoder needed / STM topk recording 은 prefix `hi-em(-full-v\d+\.\d+\.\d+)?` 로 매칭해 자동 활성화 (`is_hi_em_method` 헬퍼). 별도 set 갱신 불필요.
+  5. `tests/test_vXYZ_*.py` 추가 + `context/methodology/vX.Y.Z.md` (한 줄 정의 / 수식 / SEM 계승 / HP / 한계 / 변형) + `decision-log` entry.
+
+- **REPORT.md 컬럼** (2026-05-09~): `method | notes | accuracy_overall | multi-hop | single-hop | temporal-reasoning | adversarial | open-domain | H@k | R@k | R-multi-hop@k | P@k | T1μ/T2μ/T3μ | T1max/T2max/T1var | STM_n_topics | gen_p50(s) | wall`. 모든 run 이 동일 데이터·limit 으로 돌므로 `n_questions` 는 표 위 header 한 줄로 분리. `notes` 는 method 식별의 일부이므로 method 바로 옆에 둠 — 해당 method 가 실제로 사용하는 HP 한 줄 요약 (hi-em-full-* 는 segmenter+memory_window, rag* 는 rag_k, sliding 은 sliding_k) + override 가 있으면 끝에 `· override: k=v` 로 append. retrieval 지표 4종 (H@k/R@k/R-multi-hop@k/P@k) 은 LoCoMo `evidence` (정답 turn `dia_id` 리스트) 와 method 가 prefill 한 turn `dia_id` 의 교집합으로 계산. `experiment.json` 의 `config` 에서 HP 를, `summary.json` 에서 metric 을 추출.
 - **Aggregate-only 모드**: `--aggregate-only` 로 실험 안 돌리고 REPORT.md 만 재생성.
 - **legacy**: `scripts/legacy/` 에 옛 per-experiment shell 스크립트 + per-aggregator 보존됨 (참고용).
 
