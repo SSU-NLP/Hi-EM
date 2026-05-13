@@ -836,3 +836,320 @@ v3.1 Bounded Cosine MAP와 v3.2 Cosine Prediction Error는 TopiOCQA/TIAGE에서 
 - hi-em P@k bottleneck 검증: `k_turns_per_topic` 줄여 prefill 압축 → acc 효과 보기
 
 **영향 범위**: REPORT.md 컬럼 schema, decision-log, handoff, methodology 갱신 필요.
+
+---
+
+## 2026-05-10 — v3.3.3-2 / v3.3.4-2 강화안 1차 sanity sweep + iter2 재설계 결정
+
+**컨텍스트**: 사용자 요구 — v3.3.3 / v3.3.4 강화안 (md 의존 X, 깊이 재설계) 도입. 사용자 자율 모드 ("엔터 안 누름"). codex 권장 (`019e10f0-...`):
+- v3.3.3-2: boundary-start prototype top-M f0 + posterior-odds restart (`p_rst > 0.35`)
+- v3.3.4-2: per-topic σ² Bayesian shrinkage (`σ_eff² = (n/(n+c))σ_k² + (c/(n+c))σ_0²`, default c=8) + optional robust MAD-EMA scale
+
+**구현**: `src/hi_em/sem_core_v333_2.py`, `sem_core_v334_2.py` 추가. orchestrator dispatch + `scripts/run_experiment.py` method 등록 + CLI flag + cache `_build` 매핑.
+
+**버그 발견 + 수정**: `_HI_EM_METHOD_RE = r"^hi-em(-full-v[\d.]+)?$"` regex 가 dash(`-`) 미허용 → `hi-em-full-v3.3.3-2` 매치 실패 → `needs_encoder=False` → encoder None → 첫 sanity 6 runs 가 18 초로 즉시 fail (`'NoneType' object has no attribute 'dim'`). Fix: `[\w.\-]+`.
+
+**iter1 sanity 결과** (`outputs/experiments/2026-05-10_v33x_2_iter1/`, LoCoMo --limit 200 stratified, 196 Q × 3 run/method):
+
+| method | acc | acc_mh | H@k | R@k | R-mh@k | T1μ | T1var | n_topics |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| rag-observation | 0.267 | 0.135 | 0.647 | 0.524 | 0.422 | — | — | 0 |
+| v3.3.3 | 0.254 ± 0.006 | 0.137 | 0.310 | 0.226 | **0.201** | 25.7 | 47.5 | 9.88 |
+| **v3.3.3-2** | 0.255 ± 0.004 | 0.134 | **0.323** | **0.234** | **0.185** | 26.3 | **72.0** | 9.81 |
+| v3.3.4 | 0.245 ± 0.001 | 0.136 | 0.255 | 0.165 | 0.189 | 47.5 | 18.8 | 4.81 |
+| **v3.3.4-2** | **0.253 ± 0.001** | **0.153** | 0.254 | 0.157 | 0.194 | 61.3 | 27.5 | **3.24** |
+
+**판정**:
+- **v3.3.3-2 → 재구현 (iter2 v3.3.3-3)**. acc 향상 없음 (+0.001), R-mh@k 회귀 (-0.016), T1var 폭증 (47→72). 가설: posterior threshold 0.35 너무 낮아 restart 과다 발화 → episode 분산 → multi-hop strict 회수 손실.
+- **v3.3.4-2 → 유지**. acc +0.008 (std 0.001 대비 8σ), acc_mh +0.017. shrinkage 가 fewer/larger topic 으로 안정화. retrieval 거의 유지. → full LoCoMo 1986Q × 3 runs (`outputs/experiments/2026-05-10_v3342_full/`) 진행 중.
+
+**iter2 v3.3.3-3 재설계** (codex thread 이어서, `agentId: a4f3e7b1468a14b3f`):
+1. restart 보수화: `restart_p_threshold=0.5` + `restart_prob_margin=0.15` + `episode_min_span=4` (hysteresis).
+2. prototype softening: top-M `max` → `(1-γ)cos(s,mean) + γ·logmeanexp(cos(s,p))`, `γ=0.25`.
+3. **episode atomicity 를 retrieval layer 에서 직접 구현** (iter1 미구현 핵심): segmenter 가 `(topic, episode)` 발급 + retrieval `R(i) = a·cos(q,s_i) + b·S_topic + e·S_episode - g·zPE - r·recency` 3단 rerank.
+
+SEM 계승 정당화: prototype f0 / shrinkage 둘 다 SEM2 에 직접 없음. 정당화 (1) SEM2 controlled VAE 자극에서는 추가 자유도 불필요, (2) sCRP / Bayes / local MAP / scene dynamics 와 직교, (3) 본 entry append. (자세히는 `context/methodology/v3.3.3-2.md`, `v3.3.4-2.md`.)
+
+**TIAGE (병행 결과)** (`outputs/experiments/2026-05-10_tiage_iter1/REPORT.md`): default LoCoMo HP 가 TIAGE 짧은 dialog 에 부적합 → v3.3.x 6 method 모두 동일 corner case (R=1.0, n_topics=15.6 = every-transition prediction). method 차이 분간 불가. 다음 iteration 에서 TIAGE-specific HP grid sweep 필요.
+
+**영향 범위**: methodology v3.3.3-2.md / v3.3.4-2.md 신규, infrastructure.md (regex bug 항목 추가 예정), README / handoff / architecture (cascade 검사 대상).
+
+---
+
+## 2026-05-10 — v3.3.3-2 / v3.3.3-3 폐기 결정 + iter3 v3.3.3-4 (retrieval atomicity)
+
+**결정**: v3.3.3-2 (iter1) 와 v3.3.3-3 (iter2) **둘 다 폐기**. iter3 v3.3.3-4 가 대체.
+
+**근거**:
+
+| method | iter | acc | R-mh@k | T1var | 판정 |
+|---|---|---:|---:|---:|---|
+| v3.3.3 baseline | — | 0.254 ± 0.005 | 0.213 | 44.2 | reference |
+| v3.3.3-2 | 1 | 0.255 ± 0.001 | 0.185 (-0.016) | 60.0 (+12.5) | 회귀 (R-mh + T1var) |
+| v3.3.3-3 | 2 | 0.247 ± 0.007 (-0.007) | 0.193 (-0.020) | 51.4 (+7.2) | acc 추가 회귀, R-mh 부분 회복만 |
+
+**핵심 검증 결과**: **segmentation 만 변경하는 방향의 한계 확인**. iter1 codex 권장 (`019e10f0-...`) 의 핵심이 "(topic, episode) 단위 retrieval atomicity" 였는데 segmentation 변경만 적용 → prefill 에 효과 안 옴. v3.3.3-2 prototype f0, v3.3.3-3 hysteresis + softening 모두 cosmetic (acc 안 옴).
+
+**보존 정책 (CLAUDE.md "archive 는 의도적 폐기")**:
+- 코드 (`src/hi_em/sem_core_v333_2.py`, `sem_core_v333_3.py`, orchestrator dispatch, run_experiment.py method choices) **그대로 유지** — 재현성 + 향후 ablation 비교 + iter3 codex 가 v3.3.3-3 hysteresis 부분 reference 한다고 명시.
+- methodology 파일 (`v3.3.3-2.md`, `v3.3.3-3.md`) 에 **DEPRECATED 헤더 + 후속 링크** 추가.
+- archive 디렉토리 이동 안 함 — 단일 파일 단위라 archive/ 의 디렉토리 폐기 정책에 맞지 않음.
+
+**iter3 v3.3.3-4 설계** (codex thread `019e10f0-...` 이어서, agent `a2b9ffe8f8011b9af`):
+
+1. **Segmenter minimal**: v3.3.3 baseline + 보수화 (`restart_p_threshold=0.5`, `restart_prob_margin=0.15`, `episode_min_span=8`, `f0_proto_weight=0`, `f0_proto_max=1`). v3.3.3-3 의 hysteresis 만 살리고 prototype 사실상 비활성.
+2. **(topic_id, episode_id) atomic retrieval**:
+   - `assign()` 이 `(topic_id, episode_id)` emit
+   - STM/LTM 에 `episode_id` 저장
+   - `eval_query` 에서 episode-level rerank: `R(i) = a·cos(q,s_i) + b·S_topic + e·S_episode - g·zPE - r·recency` (a=1.0, b=0.10, e=0.35, g=0.05, r=0.03)
+3. **`promotion_threshold = 0.3`** (default 0.5 → 0.3): STM 진입 임계 낮춰 evidence-bearing topic 살림.
+4. **Dormant LTM safety net** (`dormant_ltm_top_n=8`): STM 못 들어간 topic 중 query cosine top-N 추가 → promotion miss 회피.
+
+**SEM 계승**: episode = SEM2 `new_token()` 직접 대응. retrieval rerank / dormant LTM safety net 는 SEM 외 (QA readout 정책) 이지만 비학습 + 비파괴적 추가.
+
+**병행 도구**: dormant evidence audit (`compute_dormant_evidence_audit`) — 모든 hi-em-full method 에 적용. STM 못 들어간 topic 중 evidence 몰린 비율 측정. 사용자 가설 ("importance score 정책 자체에 문제") 직접 검증.
+
+**다음 단계**: (1) audit 도구 구현, (2) v3.3.3-4 segmenter + retrieval rerank + dormant safety net 구현, (3) iter3 sanity (v3.3.3 baseline / v3.3.3-4 / v3.3.4-2 비교).
+
+---
+
+## 2026-05-11 v3.3.3-4 구현 + iter1 sanity 시작
+
+**구현 완료**:
+- `src/hi_em/sem_core_v333_4.py` — `assign()` 이 `(topic_id, is_boundary, episode_id)` 3-tuple 반환. v3.3.3 baseline + 보수화 default (`restart_p_threshold=0.5, restart_prob_margin=0.15, episode_min_span=8, f0_proto_max=1, f0_proto_weight=0.0`). 6 종 diagnostic counter (assigns / label_change / same_label_restart / repeat_wins / restart_wins / hysteresis_blocked) 인스턴스에 보존.
+- `src/hi_em/orchestrator.py`:
+  - `_assign_with_episode()` wrapper — 모든 segmenter 의 2-tuple/3-tuple return 을 통일.
+  - `_episode_rerank_prefill(q)` — `(topic_id, episode_id)` 그룹 score → top-K + dormant LTM safety net.
+  - v3.3.3-4 dispatch 시 자동 set: `retrieval_mode="episode_rerank"`, `dormant_ltm_top_n=8`, `promotion_threshold=0.3`.
+  - 모든 turn dict 에 `episode_id` 필드 추가 (`_make_turn`, preload, eval_query path).
+- `scripts/run_experiment.py`:
+  - `_HI_EM_METHOD_RE` regex 수정 (`[\w.\-]+`) — `hi-em-full-v3.3.3-4` 같이 dash 포함된 버전이 `is_hi_em_method()` true 가 되도록. (이전엔 `[\d.]+` 만 허용해 dash 가 빠지면 encoder None → `'NoneType' object has no attribute dim'` 에러로 18 초 만에 망가짐.)
+  - method choices / `HiEMConvCache._build` HP map / dispatch 세 곳에 v3.3.3-4 추가.
+  - `compute_dormant_evidence_audit(entry, hi)` 추가 — 모든 hi-em-full method 에 자동 적용 (LoCoMo evidence 있을 때만 emit).
+  - 새 CLI: `--episode-top-k`, `--dormant-ltm-top-n`, `--rerank-{query,topic,episode}-weight`, `--rerank-pe-penalty`, `--rerank-recency-weight`, `--restart-p-threshold`, `--restart-prob-margin`, `--episode-min-span` 등.
+- `src/hi_em/eval_logging.py` `aggregate_summary` — `dormant_ev_rate`, `n_topics_with_ev`, `top_ev_topic_promoted` 평균 추가.
+- `scripts/experiment.py` REPORT.md 컬럼 — `dormant_ev_rate`, `top_ev_promoted` 추가.
+- `context/methodology/v3.3.3-4.md` 신규 + README/infrastructure cascade.
+
+**Smoke (5Q LoCoMo)**: `acc=0.059`, dispatch 정상 — segmenter / retrieval rerank / dormant safety net / audit 모두 호출됨 검증.
+
+**iter1 sanity 시작 (`outputs/experiments/2026-05-11_v3334_iter1/`)**: LoCoMo limit=200 stratified, workers=25, no-thinking. 6 runs:
+- v3.3.3 baseline ×3 (seed 42/43/44)
+- v3.3.3-4 ×3 (seed 42/43/44)
+
+검증 목표 (codex 가이드):
+1. R-mh@k 회복 + 향상 (v3.3.3 0.213 ≤ v3.3.3-4)
+2. acc +0.005 이상 (1σ 이상)
+3. dormant_ev_rate baseline 대비 의미있는 감소
+4. T1var 안정 (v3.3.3 47.5 ± 10.7 수준 유지)
+
+
+---
+
+## 2026-05-11 v3.3.3-4 iter1 sanity 결과 + 판정 (codex 위임)
+
+**3-seed 평균 (LoCoMo 200Q stratified)**:
+
+| 지표 | v3.3.3 (×3) | v3.3.3-4 (×3) | Δ |
+|---|---:|---:|---:|
+| acc | 0.2547 ± 0.0010 | 0.2551 ± 0.0020 | +0.0004 (noise) |
+| H@k | 0.3226 ± 0.0109 | 0.6389 ± 0.0080 | +0.316 (29σ) |
+| R-mh@k | 0.2000 ± 0.0186 | 0.4112 ± 0.0100 | +0.211 (11σ) |
+| P@k | 0.0030 ± 0.0000 | 0.0260 ± 0.0007 | +0.023 (~30×) |
+| dormant_ev_rate | 0.9397 ± 0.0096 | 0.9555 ± 0.0074 | +0.016 |
+| top_ev_topic_promoted | 0.0534 ± 0.0160 | 0.0513 ± 0.0138 | -0.002 (noise) |
+
+**판정 (codex thread `ab18160235a3fc644`)**: **method 채택 X — importance policy 재설계 우선**.
+
+근거:
+- retrieval 단 폭증 (H@k 2 배, P@k 30 배) 인데 acc 는 noise 안. retrieval 향상이 LLM 답으로 안 옮음 (prefill dilution / LLM 한계 / multi-hop reasoning gap 후보).
+- promotion_threshold 0.5 → 0.3 완화에도 `top_ev_topic_promoted` 가 회복 안 됨 → threshold miscalibration 아님, 정책 자체가 query-time evidence relevance 신호를 안 갖고 있음.
+- `topic_importance.py::compute_importance()` 사용 신호: count / mention EMA / recency / neighbor prior. **query relevance, episode evidence density, answer-time need 부재.**
+
+**다음 단계**:
+1. **`_episode_rerank_prefill()` 코드 vs 문서 weighted formula 불일치 수정** (먼저 작은 fix).
+2. **LLM-side ablation**: `episode_top_k ∈ {1,2,3}` × `dormant_ltm_top_n ∈ {4,8}` — prefill dilution 가설 검증.
+3. **보조 sweep**: `stm_max_topics` 확장 + `promotion_threshold` 0.3/0.2/0.1/0.0 sanity.
+4. **importance policy 재설계 (codex 위임 예정)**: SEM 정신 안 깨고 query-time relevance / episode salience 통합. SEM 외 메커니즘이지만 segmentation posterior 변경 없는 non-destructive readout 이면 정당화 가능.
+
+**SEM 정당화 후보 (재설계 시)**:
+- [SEM 있음] episode-level scoring (이미 구현, 문서 vs 코드 불일치 수정).
+- [SEM 없음, 도입 가능] topic-level evidence aggregation (비지도 readout, segmentation 영향 X).
+- [SEM 없음, 도입 가능] query-time importance recompute (LTM topic backwrite X).
+
+
+---
+
+## 2026-05-11 audit metric 보강 (집중도 직접 측정)
+
+**변경**: `compute_dormant_evidence_audit` 에 3 개 metric 추가:
+- `n_dormant_topics_with_ev` — dormant 안 evidence-bearing topic 수
+- `dormant_top_topic_n_ev` — top dormant topic 안 evidence 절대 수
+- `dormant_top_topic_share` — top dormant topic 비중 (= top_n_ev / dormant_total). **1.0 → 한 dormant topic 에 다 몰림**
+
+**왜**:
+사용자 지적: 기존 audit (`dormant_ev_rate`, `top_ev_topic_promoted`, `n_topics_with_ev`) 는 "STM 못 들어간 비율" 만 측정. 원래 가설 ("dormant topic 들 중 evidence 가 *몰린* topic 이 있는가") 의 *집중도* 는 직접 안 봄. iter1 결과 `dormant_ev_rate=0.94, n_topics_with_ev=1.87` 에서 집중도가 *간접적으로* 높을 거라 추정만 가능. 이번 보강으로 직접 측정.
+
+**해석 가이드**:
+- `dormant_top_topic_share ≥ 0.7` → 한 dormant topic 에 evidence 집중. promotion policy 만 고치면 회수 가능 (importance redesign 효율 높음).
+- `dormant_top_topic_share ≤ 0.4` → dormant 안에서도 흩어짐. segmentation 단계 cause 가능성 (evidence-bearing turn 들이 잘못 분리됨).
+- 0.4~0.7 → 중간. 둘 다 필요.
+
+**v3.3.4 audit 1986Q full run 재시작** (`outputs/experiments/2026-05-11_v334_audit_full/`): 보강된 metric 으로 측정. ~수시간 소요.
+
+**cascade**: `eval_logging.py aggregate_summary` + `experiment.py` REPORT 컬럼 + `infrastructure.md § 7b` 모두 업데이트.
+
+
+---
+
+## 2026-05-11 v3.3.4 audit full LoCoMo (1986Q) 완료 — dormant 집중도 직접 검증
+
+**`outputs/experiments/2026-05-11_v334_audit_full/`** (1986Q × 1 run, audit 보강 metric 적용).
+
+| 지표 | 값 |
+|---|---:|
+| acc | 0.258 |
+| H@k | 0.430 |
+| R-mh@k | 0.300 |
+| P@k | 0.003 |
+| **dormant_ev_rate** | **0.701** |
+| **top_ev_topic_promoted** | **0.307** |
+| n_topics_with_ev | 1.44 |
+| **n_dormant_topics_with_ev** | **1.06** |
+| **dormant_top_topic_n_ev** | **0.79** |
+| **dormant_top_topic_share** | **0.641** |
+
+**핵심 결과**:
+
+1. **`dormant_top_topic_share = 0.64`** — dormant 안에서 evidence 가 한 topic 에 64% 집중. 사용자 가설 ("한 dormant topic 에 evidence 가 몰려 있다") **부분 컨펌** (완전 100% 아님 — 36% 는 흩어짐).
+2. **n_dormant_topics_with_ev = 1.06** — dormant 안 evidence 보유 topic 수 평균 1 개 → 대부분의 conv 에서 dormant evidence 는 단일 topic 에 모임.
+3. **top_ev_topic_promoted = 0.31** — full 에서는 정답 top topic 의 STM 진입 비율 31%. 200Q sanity (0.05) 보다 6 배 높음. full data 가 evidence-rich conv 비중이 커 promotion 확률도 높음.
+
+**해석**:
+- ROI 명확: promotion policy 만 고쳐도 evidence 의 ~64% 회수 가능 (한 dormant topic 만 STM 올림).
+- 나머지 36% 는 여러 dormant topics 에 흩어져 있음 → segmentation level 또는 multi-evidence-topic 검색 정책 필요.
+- 이 결과는 codex iter1 판정 ("**importance policy 재설계 우선**") 의 직접 증거.
+
+**다음 단계 (확정)**:
+1. `_episode_rerank_prefill()` 코드 vs 문서 weighted formula 불일치 수정.
+2. `episode_top_k × dormant_ltm_top_n` ablation (acc 정체 dilution 가설 검증).
+3. **importance policy 재설계** (codex 새 thread 위임): query-time evidence relevance / episode salience aggregation / topic-level salience — SEM 외 메커니즘이지만 segmentation posterior backwrite 없는 readout 으로 정당화.
+4. 보조: `stm_max_topics` cap 확장 sanity sweep.
+
+
+---
+
+## 2026-05-11 Retrieval = importance only (CLAUDE.md 최상위 설계 제약 추가)
+
+**결정**: Hi-EM query-time retrieval 에서 query embedding cosine matching (RAG-style) 영구 폐기. **importance score + topic_id atomicity 만으로 retrieval 결정.**
+
+**근거**:
+- SEM 정신상 "지금 working memory 에 무엇이 있어야 하는가" 는 importance score 가 결정. 이미 결정된 STM 위에서 query-time cosine 으로 *다시* ranking → 두 메커니즘 경쟁 → 정합성 깨짐.
+- v3.3.3-4 의 hybrid (importance + cosine) 가 retrieval 지표는 폭증시켰지만 acc 정체. cosine 우회로 importance policy 의 부실 (dormant_ev_rate 0.70~0.94) 이 가려짐.
+- 근본 해결: importance policy 자체 강화. cosine 우회 X.
+
+**구체적 폐기 대상**:
+- `_episode_rerank_prefill()` 의 `max cos(q, embedding)` 기반 episode scoring → topic importance + episode 내부 salience 로 교체.
+- `dormant_ltm_top_n` cosine top-N fallback → topic_id 기반 explicit fetch 또는 promotion threshold 인하로 교체.
+- 모든 v3.x 계열 retrieval 정책 재검토.
+
+**CLAUDE.md 추가 위치**: SEM 계승 원칙 § 바로 뒤. 신규 § "Retrieval 은 importance score 만으로 한다 (최상위 설계 제약, 2026-05-11)".
+
+**다음 단계**:
+1. retrieval 재설계 (codex 위임): importance-only retrieval 의 구체적 알고리즘 + episode-level salience 계산 + LTM fetch 정책 + acc 회복 가능성 평가.
+2. 그 위에 importance policy 자체 보강 (어차피 codex iter1 판정의 재설계 우선 항목).
+
+**SEM 계승 정당화 (이 규칙 자체)**:
+- SEM/SEM2 의 retrieval 은 working memory (현재 segmented + active topic) 자체를 readout. query-aware re-ranking 없음. 본 규칙은 그 정신을 명시화한 것.
+- 단 segmentation level 에서 의미 매칭 (cos(s, μ_k)) 은 SEM2 likelihood 로 정당화됨 (계속 사용). retrieval 단의 cosine 만 폐기.
+
+이 결정은 매우 중요해서 CLAUDE.md 최상위 규칙으로 박음. 향후 어떤 retrieval 메커니즘 제안도 본 규칙 통과해야 함.
+
+
+---
+
+## 2026-05-11 v3.3.3-4 importance-only retrieval 구현 완료 (codex thread `aad9876319aea12cf`)
+
+**구현**:
+- `_episode_rerank_prefill(q)` → `_importance_prefill()` 로 rename + 단순화
+- 함수 본체: `stm.all_turns()` sorted by turn_id. **그 외 어떤 query-time scoring 없음.**
+- query embedding `q` 인자 제거 (사용 안 함).
+- `dormant_ltm_top_n` cosine top-N fallback 완전 폐기.
+- `episode_top_k`, `rerank_*_weight` HP 들 노이즈 — 무시됨 (코드에서 안 쓰임).
+- v3.3.3-4 dispatch default: `retrieval_mode="importance_only"` (이전 "episode_rerank"), `promotion_threshold=0.3` 유지.
+- `RoundProcessor.latest_importance` property 추가 — diagnostic 용 (직접 retrieval 에는 사용 안 함).
+
+**SEM 정당화** (codex 정리):
+- SEM/SEM2 의 retrieval 은 working memory (현재 segmented + active topic) 자체를 readout. query-aware re-ranking 없음. 본 변경은 그 정신을 명시화.
+- Segmentation level 의 의미 매칭 (cos(s, μ_k)) 은 SEM2 likelihood 로 정당화됨 — 계속 사용. retrieval 단의 cosine 만 폐기.
+- importance-only retrieval 자체는 SEM 정신 완전 일치 (cosine RAG hybrid 보다 오히려 정통).
+
+**예상 acc 영향** (codex 분석):
+- 제공 데이터 (200Q sanity / 1986Q full) 모두 cosine hybrid 로 H@k 두 배 올라도 acc 동일 → "evidence 더 넣으면 acc 오른다" 가설 미지지.
+- importance policy 강화는 retrieval recall (H@k, R-mh@k) 개선에 효과 가능, acc 는 별도 병목 (multi-hop reasoning, P@k=0.003 즉 noise turn 다수, prompt dilution).
+- 따라서 cosine 폐기 후 retrieval 지표는 떨어질 수 있지만, acc 손실은 제한적일 가능성. **acc 회복 레버는 cosine 이 아니라 importance policy 강화.**
+
+**다음 단계**:
+1. **검증 실험** — v3.3.3-4 importance-only 200Q sanity (3 seeds) vs v3.3.3 baseline. retrieval 지표 회귀 + acc 영향 측정.
+2. **Importance policy 강화** (별도 codex thread): unsupervised internal density signals (revisit count, boundary frequency, PE salience, neighbor centrality, persistence) 를 `compute_importance()` 에 추가. SEM 외 메커니즘이지만 SEM 의 PE/boundary/scene dynamics 철학과 정합. 3-step 정당화 적용.
+3. v3.3.3-4 methodology 파일 업데이트 (이미 완료).
+
+**Codex 권장 우선순위**: minimal retrieval 변경 (현재 완료) → 200Q sanity 검증 → importance policy 강화 (메인 acc 회복 레버).
+
+**Smoke test 결과** (5Q + 20Q smoke run): pipeline 정상 동작 (error_rate=0). 작은 sample 에서 retrieval 지표 baseline 수준 (H@k=0.05 — 20Q noise) — 이건 데이터 양 문제, 200Q+ 에서 본격 검증 필요.
+
+
+---
+
+## 2026-05-11 Importance policy v2 도입 (codex thread `a7b7046c387f8a434`)
+
+**진단** (200Q iter2 importance-only sanity 결과 기반):
+- promotion_threshold 0.5 → 0.3 완화에도 `top_ev_topic_promoted` 가 0.062 → 0.053 (오히려 미세 감소).
+- 즉 threshold 인하만으로는 dormant evidence topic 의 *rank* 가 안 올라감.
+- `compute_importance()` v1 (count + EMA + recency + neighbor) 이 evidence-rich-but-quiet topic 을 구조적으로 낮게 평가:
+  - recency/EMA 편향 (조용한 topic 매번 0 근처)
+  - count 항이 큰 topic peak anchor 됨 (normalize=1.0 정규화 효과)
+  - query/evidence relevance 무지 (cosine 폐기 후 SEM 내부 signal 필요)
+
+**처방 — compute_importance v2 (additive 통합)**:
+
+$$raw_I(t) = w_1 s_{count} + w_2 s_{freq} + w_3 s_{recency} + w_4 s_{nbr} + w_5 s_{PE} + w_6 s_{boundary} + w_7 s_{span}$$
+
+새 항 (모두 SEM-internal, unsupervised, bounded [0,1]):
+- $s_{PE}$ = `clip((0.7·μ_PE + 0.3·max_PE) / PE_ref, 0, 1)` — SEM2 prediction error 직접 연결.
+- $s_{boundary}$ = `1 − exp(−B_t / B_ref)` — SEM2 event boundary count.
+- $s_{span}$ = `1 − exp(−(last − first + 1) / S_ref)` — persistence (scene dynamics 장기 흔적).
+
+기존 항도 보강:
+- $s_{count}$ = `log1p(min(n, n_cap)) / log1p(n_cap)` — count cap (default 30) 으로 대형 topic anchor 약화.
+- 다른 3 항은 기존 v1 유지.
+
+**default weights**: `(w1, w2, w3, w4, w5, w6, w7) = (0.70, 0.60, 0.45, 0.35, 0.90, 0.70, 0.25)`
+**default refs**: `n_cap=30, pe_ref=1.0, boundary_ref=3.0, span_ref=12.0, min_floor=0.10`
+
+**SEM 정당화** (CLAUDE.md 3-step):
+- PE salience: SEM/SEM2 의 prediction error 와 직접 연결. promotion 용 적분이 원 SEM 구성요소는 아니지만 (SEM 에 없음, decision-log 기록), supervised label 안 쓰고 unsupervised event surprise 신호. SEM event boundary 철학과 충돌 없음.
+- Boundary frequency: v3.3.3-4 가 이미 `episode_id` emit. boundary 풍부 = scene structure 풍부. SEM event dynamics 정신과 정합.
+- Persistence span: scene dynamics 의 장기 흔적 요약. recency 와 별개로 "오래 유지된 latent scene" 의 안정성. 낮은 weight 보조항.
+
+**구현**:
+- `src/hi_em/topic_importance.py::compute_importance_v2()` 추가 (기존 함수와 backward-compat).
+- `src/hi_em/sem_core_v333_4.py` — 각 assign() 마다 PE running mean/max 추적 + `pe_stats()` / `boundary_counts()` accessor 노출.
+- `src/hi_em/round_processor.py` — `importance_version`, `salience_provider` (segmenter ref) 인자 추가.
+- `src/hi_em/orchestrator.py` — v3.3.3-4 dispatch 가 `importance_version="v2"` 자동 default + 7-tuple weights.
+- `scripts/run_experiment.py` — `--importance-version`, `--importance-alpha nargs='+'` 추가.
+
+**검증 실험**: `2026-05-11_imp_v2_sanity` — 200Q × 6 runs (v3.3.3 baseline ×3 vs v3.3.3-4 importance v2 ×3).
+
+**검증 목표**:
+- `top_ev_topic_promoted`: 0.053 → **0.12+** (메인 성공 조건)
+- `dormant_ev_rate`: 0.95 → 0.85 이하
+- `H@k`/`R-mh@k`: cosine 없이 v333 baseline 수준 회복
+- `acc`: codex 추정 ceiling 0.28~0.32 (LLM 한계 고려)
+
+**실패 모드 / 한계**:
+- 새 항이 noise 일 가능성 (특히 PE outlier 영향, segmentation 과보상)
+- multi-evidence-topic ~36% 는 importance 만으로 못 잡음 (dormant_top_share=0.64 의 ceiling)
+- LLM ceiling — retrieval 개선해도 acc 비례 X (cosine hybrid 도 H@k 두 배 올랐는데 acc 0)
+
+**Smoke (20Q)**: pipeline 정상 (error_rate=0). 본격 평가는 200Q sanity 결과.

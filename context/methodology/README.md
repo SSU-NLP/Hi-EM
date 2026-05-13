@@ -24,8 +24,14 @@ v1   (Gaussian likelihood, flat history)
                             ├→ v3.3.2   (+ SEM2 surprise → hard boundary on PE spike)
                             │   │
                             │   ├→ v3.3.3   (+ SEM2 f0 / same-label restart 분기 복원)
+                            │   │     │
+                            │   │     ├→ v3.3.3-2   [DEPRECATED] boundary-start prototype top-M f0 + posterior-odds restart
+                            │   │     ├→ v3.3.3-3   [DEPRECATED] + restart hysteresis + prototype softening
+                            │   │     └→ v3.3.3-4   minimal segmenter + (topic, episode) atomic retrieval + dormant LTM safety
                             │   │
-                            │   └→ v3.3.4   (hard PE → per-topic σ²_k 로 calibrated likelihood)
+                            │   ├→ v3.3.4   (hard PE → per-topic σ²_k 로 calibrated likelihood)
+                            │   │     │
+                            │   │     └→ v3.3.4-2   per-topic σ²_k Bayesian shrinkage (η_k = n_k/(n_k+c))
 ```
 
 ## 한 줄 요약
@@ -39,7 +45,11 @@ v1   (Gaussian likelihood, flat history)
 | [v3.3.1](v3.3.1.md) | `HiEMSegmenterV331` | μ_k 대신 per-topic GRU 예측 ŝ_k로 cos 점수 |
 | [v3.3.2](v3.3.2.md) | `HiEMSegmenterV332` | + `max_k cos < 1−pe_threshold` 면 새 topic 강제 (SEM2 surprise) |
 | [v3.3.3](v3.3.3.md) | `HiEMSegmenterV333` | + 같은 label 의 repeat / restart 분기 (`log_likelihood_f0` 복원) |
+| [v3.3.3-2](v3.3.3-2.md) ⚠ DEPRECATED | `HiEMSegmenterV333_2` | boundary-start prototype top-M f0 + posterior-odds restart |
+| [v3.3.3-3](v3.3.3-3.md) ⚠ DEPRECATED | `HiEMSegmenterV333_3` | + restart hysteresis + prototype softening (mean+logmeanexp) |
+| [v3.3.3-4](v3.3.3-4.md) | `HiEMSegmenterV333_4` | minimal segmenter + (topic, episode) atomic retrieval + dormant LTM safety net |
 | [v3.3.4](v3.3.4.md) | `HiEMSegmenterV334` | hard PE rule 제거, likelihood 를 `−PE²/(2σ_k²)` 로 calibrate |
+| [v3.3.4-2](v3.3.4-2.md) | `HiEMSegmenterV334_2` | + per-topic σ²_k Bayesian shrinkage (η_k = n_k/(n_k+c)) |
 
 ## 버전별 hyperparameter 요약 (current LoCoMo sweep value)
 
@@ -72,7 +82,7 @@ v1   (Gaussian likelihood, flat history)
 | `τ` (tau) | — | 50 | 50 | 50 | 50 | 50 | 50 |
 | `cos` (cos_threshold) | — | 0.3★ | 0.9★ | 0.9★ | 0.9★ | 0.9 | 0.9 |
 | `β` (beta) | — | — | 0.25★ | 0.25★ | 0.25★ | 0.25 | 0.25 |
-| `pe_threshold` | — | — | — | — | 0.5★ | 0.5 | (unused unless `hard_pe_fallback=True`) |
+| `pe_threshold` | — | — | — | — | 0.5★ | 0.5 | - |
 | `rnn_train_steps` | — | — | — | 1 | 3★ | 3 | 3 |
 | `restart_pe_threshold` | — | — | — | — | — | 0.5 | — |
 | `restart_margin` | — | — | — | — | — | 0.0 | — |
@@ -84,14 +94,11 @@ v1   (Gaussian likelihood, flat history)
 | `pe_var_min_sq` | — | — | — | — | — | — | 1e-4 |
 | `pe_var_max_sq` | — | — | — | — | — | — | 0.25 |
 | `var_likelihood_weight` | — | — | — | — | — | — | 1.0 |
-| `hard_pe_fallback` | — | — | — | — | — | — | False |
 
-memory_window HP (모든 hi-em-full 버전 공통):
+STM HP (모든 hi-em-full 버전 공통):
 
 | HP | default |
 |---|---|
-| `k_topics` | 3 |
-| `k_turns_per_topic` | 5 |
 | `stm_max_topics` | 10 |
 | `stm_max_turns` | 200 |
 | `promotion_threshold` | 0.5 |

@@ -95,6 +95,16 @@
   - 시간 필터
   - 질문 유형별 retrieval 전략 분리
 
+### 5b. v3.3.3-4 retrieval atomicity (`(topic_id, episode_id)` 단위)
+
+- **무엇**: v3.3.3-4 만 사용. STM 의 모든 turn 을 `(topic_id, episode_id)` 그룹으로 묶고 episode 단위로 score → top-K episode 안 turn 을 통째로 prefill.
+- **어디**: `src/hi_em/orchestrator.py` `HiEM._episode_rerank_prefill()`. `retrieval_mode == "episode_rerank"` 일 때 `eval_query` 가 호출.
+- **score**: `R(ep) = a·max_i cos(q,s_i) + b·S_topic + e·S_episode − g·z̄PE − r·recency` (defaults `a=1.0, b=0.10, e=0.35, g=0.05, r=0.03`, `episode_top_k=3`).
+- **dormant LTM safety net**: `dormant_ltm_top_n=8` (default for v3.3.3-4) — STM 못 들어간 LTM topic 중 query cosine 상위 N turn 을 추가로 prefill. promotion miss backstop.
+- **promotion_threshold default override**: v3.3.3-4 는 0.5 → 0.3 (evidence-bearing topic 의 STM 진입을 늘림).
+- **다른 method 에 대해**: `retrieval_mode == "stm_all_turns"` (기본) 로 폴백 — 기존 동작 변경 없음. 이 retrieval 변경은 v3.3.3-4 전용.
+- **한계**: token budget 으로 turn cut 시 atomicity 깨짐 (현재 fallback 동작). dormant LTM 도 LTM 분포 자체가 promotion 이력 종속이라 backstop 효과는 audit 으로 확인 필요.
+
 ---
 
 ## 6. STM topic atomicity
@@ -103,6 +113,12 @@
 - **어디**: `src/hi_em/memory_window.py` 의 `MemoryWindow` class docstring (불변식 정의) + `promote()` 메소드 (전체 turn list 강제 유입).
 - **왜**: 한 topic 의 의미를 깨지 않으려는 설계.
 - **한계**: 큰 topic (200 turn 짜리) 이 통째로 들어가면 prefill 폭주 (LoCoMo 19k token 사례, decision-log).
+- **STM cap HP (HiEM common, sweep 시 함께 고려)**:
+  - `stm_max_topics` (default 10) — STM 안 동시 유지 topic 수 cap. evict 정책에 영향.
+  - `stm_max_turns` (default 200) — STM 전체 turn 수 cap. **prefill 길이를 직접 결정** → LLM latency / token cost 직결.
+  - `promotion_threshold` (default 0.5) — round-end 시 STM 진입할 topic 의 importance 임계.
+  - `importance_alpha`, `lambda_r`, `lambda_freq`, `min_floor` — importance 함수 파라미터 (round_processor).
+  - 이 5 종은 segmenter version 과 직교하지만 retrieval 분포·acc 에 큰 영향. v3.3.x sweep 시 segmenter HP 와 함께 검토.
 - **변형 후보**: summary 수준에서만 atomicity 유지, 내부 turn 은 bounded chunk 만.
 
 ---
@@ -140,6 +156,42 @@
 - **REPORT.md 컬럼** (2026-05-09~): `method | notes | accuracy_overall | multi-hop | single-hop | temporal-reasoning | adversarial | open-domain | H@k | R@k | R-multi-hop@k | P@k | T1μ/T2μ/T3μ | T1max/T2max/T1var | STM_n_topics | gen_p50(s) | wall`. 모든 run 이 동일 데이터·limit 으로 돌므로 `n_questions` 는 표 위 header 한 줄로 분리. `notes` 는 method 식별의 일부이므로 method 바로 옆에 둠 — 해당 method 가 실제로 사용하는 HP 한 줄 요약 (hi-em-full-* 는 segmenter+memory_window, rag* 는 rag_k, sliding 은 sliding_k) + override 가 있으면 끝에 `· override: k=v` 로 append. retrieval 지표 4종 (H@k/R@k/R-multi-hop@k/P@k) 은 LoCoMo `evidence` (정답 turn `dia_id` 리스트) 와 method 가 prefill 한 turn `dia_id` 의 교집합으로 계산. `experiment.json` 의 `config` 에서 HP 를, `summary.json` 에서 metric 을 추출.
 - **Aggregate-only 모드**: `--aggregate-only` 로 실험 안 돌리고 REPORT.md 만 재생성.
 - **legacy**: `scripts/legacy/` 에 옛 per-experiment shell 스크립트 + per-aggregator 보존됨 (참고용).
+
+---
+
+## 7b. Dormant evidence audit (importance-policy 진단)
+
+- **무엇**: 각 hi-em-full 질문에 대해 STM 에 못 들어간 LTM topic 들 중 정답 evidence 가 모인 비율을 측정.
+- **어디**: `scripts/run_experiment.py` `compute_dormant_evidence_audit(entry, hi)`. round summary 에 합쳐져 `summary.json` → `eval_logging.aggregate_summary` 가 `dormant_ev_rate`, `n_topics_with_ev`, `top_ev_topic_promoted` 로 노출.
+- **언제 emit**: `is_hi_em_method()` true + LoCoMo entry 에 `evidence` (dia_id 리스트) 존재할 때만.
+- **메트릭**:
+  - `dormant_ev_rate` = (LTM-only topic 안 evidence turn 수) / (전체 evidence turn 수). 1 에 가까울수록 정답이 dormant 에 몰려있다는 뜻 → importance score 가 evidence-bearing topic 을 STM 못 올림.
+  - `top_ev_topic_promoted` = evidence 가 가장 많이 몰린 topic (전체 기준) 이 STM 안에 있는지 (0/1).
+  - `n_topics_with_ev` = evidence 가 1+ 개 들어있는 topic 수 (다항 evidence 분포 가늠).
+  - **(2026-05-11 추가, dormant 안 집중도 직접 측정)**
+  - `n_dormant_topics_with_ev` = dormant 안 evidence-bearing topic 수.
+  - `dormant_top_topic_n_ev` = dormant topic 중 evidence 가 가장 많이 몰린 topic 의 evidence 개수.
+  - `dormant_top_topic_share` = `dormant_top_topic_n_ev / dormant_ev_count`. **1.0 → 한 dormant topic 에 dormant evidence 가 다 몰림** (사용자 가설 강력 지지, promotion fix 만으로 회수 가능). **낮음 → dormant 안에서도 흩어짐** (segmentation 단계 cause 가능성 부각).
+- **왜**: importance score / promotion threshold 정책 자체에 문제가 있는지 직접 진단. 사용자 가설 ("정답 topic 이 STM 못 올라가서 retrieval 미스") 검증 도구. `dormant_top_topic_share` 가 가설의 "집중도" 를 직접 측정.
+- **행동 영향**: v3.3.3-4 의 `promotion_threshold=0.3` + dormant LTM safety net 이 설계 변경의 직접 motivation. 모든 hi-em-full method 에 자동 적용되어 비교 가능.
+
+---
+
+## 7c. Evidence→topic concentration audit (segmentation 진단)
+
+- **무엇**: LoCoMo 의 question 별 evidence dia_id 들이 *몇 개의 Hi-EM topic 으로 흩어졌는지* 를 post-hoc 으로 측정. importance / retrieval policy 와 분리된 *순수 segmentation 품질* 신호.
+- **어디**: `scripts/analyze_evidence_topics.py` (CLI). `scripts/experiment.py` 의 `run_method` 가 hi-em 류 run 완료 직후 자동 호출.
+- **언제 emit**: `working_state/ltm/<conv>_<method>/<conv>.jsonl` (dia_id → topic_id 매핑) 이 존재하는 모든 hi-em run. 비-hi-em (rag/sliding/full) 은 silently no-op.
+- **산출물 (per run)**:
+  - `<run_dir>/per_question_evidence_topics.csv` — 1986 행 (LoCoMo 전체). 컬럼: `qid, cat, n_ev, n_ev_found, n_topics_used, evidence_dia_ids, evidence_topics, topic_breakdown`.
+  - `<run_dir>/evidence_topic_summary.json` — qtype 별 (mh / sh / temp / od / adv) `_topics_per_q` (= 평균 `n_topics_used`, n_ev≥2 question 만), `_all1_pct`, `_mean_n_ev`, `_n_q`.
+- **REPORT 노출**: `mh_topics/q`, `sh_topics/q`, `temp_topics/q`, `od_topics/q` 컬럼. 작을수록 segmenter 가 evidence 를 적은 수 topic 에 co-locate.
+- **해석**:
+  - **mh_topics/q** 가 ~3 부근 (evidence 가 거의 다른 topic) + acc 낮음 → multi-hop evidence 가 본질적으로 다른 session/dia 분산. segmentation HP 로 추가 개선 여지 작음 → importance policy 가 책임.
+  - **sh_topics/q** 가 1 에서 멀어짐 → 같은 dia 인접 evidence 가 다른 topic 으로 갈리는 *false-positive boundary*. segmentation HP (cos_threshold, sigma0_sq 등) 로 직접 개선 가능.
+  - same-dia split vs cross-dia split 분리는 CSV `evidence_dia_ids` 로 사용자 측에서 추가 분석.
+- **왜**: HP sweep (segmentation) ↔ importance policy 의 *책임 귀속* 분리. 이전엔 acc / H@k 로 두 가지가 합성되어 보였음.
+- **행동 영향**: 모든 hi-em-full method 에 자동 적용. 새 sweep 마다 별도 명령 없이 REPORT 에 컬럼 노출.
 
 ---
 

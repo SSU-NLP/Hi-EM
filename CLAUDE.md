@@ -33,6 +33,28 @@ Hi-EM은 SEM / SEM2 계승 모델이다. **SEM(원논문) / SEM2(`nicktfranklin/
 
 이유: SEM 계승이라는 정체성을 잃으면 Hi-EM은 그저 "임의로 조합된 retrieval heuristic"이 된다. 새 메커니즘은 SEM에서 빠진 기능을 복원하거나, SEM 가정의 한계를 명시적으로 인정한 위에서만 추가한다.
 
+## Retrieval 은 importance score 만으로 한다 (최상위 설계 제약, 2026-05-11)
+
+**Hi-EM 의 query-time retrieval 은 오직 SEM importance score 기반이다. Query embedding 과의 cosine matching (RAG-style) 을 retrieval 단에 도입하지 않는다.**
+
+이유:
+- SEM 정신상 "지금 working memory 에 무엇이 있어야 하는가" 는 importance score 가 결정. 그 결정이 이미 끝난 다음, query-time 에 cosine 으로 다시 ranking 하면 두 메커니즘 (SEM importance + RAG cosine) 이 *경쟁* 하며 정합성 깨짐.
+- importance policy 가 부실해서 cosine 으로 우회하면, 실제 문제 (importance 자체 부정확) 가 가려짐. 근본 해결 미룸.
+- SEM 모든 변형 (v3.x 계열) 의 retrieval 은 STM 안 topic 의 turn 들을 *통째로* prefill 하는 atomicity + importance ordering 으로만 해결되어야 함.
+
+구체적 적용:
+1. **STM 안 retrieval**: STM 의 모든 turn 또는 importance 상위 K topic 의 turn 을 통째로 prefill. **각 turn 에 대한 query cosine 계산 / ranking 금지.**
+2. **LTM fetch (라운드 중간 / promotion miss 시)**: 필요한 topic_id 를 *정확히 일치* 시켜 가져옴. cosine top-N 같은 fallback 금지. "어떤 topic_id 가 필요한가" 자체는 segmentation (현재 turn 의 assigned topic) 또는 importance 기반.
+3. **Episode-level retrieval (v3.3.3-4 계열)**: episode 단위 atomicity 는 유지. 단 episode score 계산에서 query cosine 항 제거. score = topic importance + episode 내부 salience (importance EMA 등) + recency 보정. **query 와의 의미 거리 사용 금지.**
+4. **Dormant LTM safety net**: cosine top-N 으로 dormant turn 끌어오는 정책 폐기 대상. 대안 — promotion threshold 인하, importance policy 자체 강화, topic_id 기반 explicit fetch.
+
+도입 검토 예외 조건:
+- 만약 cosine 을 *재도입* 하려면 (예: query-aware salience 추정 같은 SEM 외 readout), CLAUDE.md SEM 계승 § 의 3-step 정당화 + 본 규칙 명시적 예외 표시 + decision-log 모두 필수. **default 답변은 "안 한다."**
+
+이 규칙은 v3.3.3-4 의 `_episode_rerank_prefill()` 의 cosine-based scoring 을 폐기 대상으로 만들고, `dormant_ltm_top_n` 의 cosine top-N fallback 도 폐기 대상으로 만든다. 전체 retrieval 정책 재설계가 본 규칙 도입의 직접 결과.
+
+decision-log 2026-05-11 entry 참조.
+
 ## Step 완료 프로토콜 (최상위 강제 규칙)
 
 ### 1단계: 3-angle Self-Audit (check_step_done 실행 **전**)
@@ -62,6 +84,30 @@ python scripts/check_step_done.py
 ### 금지
 
 - self-audit 건너뛰고 곧장 `check_step_done.py`만 돌려 통과시키기 금지. 스크립트 통과는 **필요조건이지 충분조건이 아니다.**
+
+## 실험 결과 저장 (최상위 강제 규칙)
+
+**어떤 벤치마크든 (LoCoMo / TIAGE / TopiOCQA / LongMemEval / 기타) 모든 실험 결과는 `outputs/experiments/<name>/REPORT.md` 한 곳에 저장한다.** 다른 위치 (`outputs/reports/`, `outputs/` 루트, 임의 디렉토리) 에 실험 결과 REPORT 를 만들지 않는다.
+
+### REPORT.md 필수 구성
+
+자동 생성된 표만으로는 부족하다. 모든 REPORT.md 는 다음 섹션을 **자세하고 명확하게** 포함한다:
+
+1. **실험 setup** — 목적 / 데이터 (path + n_conv/n_turn/n_question) / 방법 list / HP (실제 사용한 default + override) / seed / metric 정의 / 비교 baseline.
+2. **결과 표** — mean ± std (3-run 이상) + 핵심 지표 + best 강조.
+3. **해석** — 숫자가 의미하는 것, 왜 이런 패턴이 나오는지, 어디까지가 noise 범위 안인지.
+4. **판정** — iteration 내에서 method 별 향상/동일/회귀 분류, 다음 iteration 결정 (재구현 / 다음 단계 / 보류).
+5. **한계 / 검증 미해결** — HP 적합성, seed 부재, atomicity, 표본 크기 등 솔직 기록 (제거 금지).
+
+자동 생성된 짧은 표만 남긴 REPORT 는 미완성으로 간주.
+
+### outputs/reports/ 의 역할 (정정)
+
+`outputs/reports/` 는 **실험 결과 저장 금지**. cross-experiment methodology 비교, design rationale doc, 일반 분석 등 **단일 실험에 귀속되지 않는 문서** 만 둔다. (이전 정책에서 "TIAGE/TopiOCQA segmentation 비교"를 `reports/` 에 두던 관행은 본 규칙으로 대체됨.)
+
+### Single-script 실험에도 적용
+
+`scripts/run_*.py` 형태의 단독 script (예: `run_tiage_full_compare.py`) 도 default output 을 `outputs/experiments/<name>/REPORT.md` 로 둔다. `--name` 인자 + 그 폴더 안에 self-contained.
 
 ## 산출물 / 실험 디렉토리 사용법 (canonical, 최상위 규칙)
 
@@ -100,7 +146,7 @@ outputs/                  # 모든 active/historical generated. top-level 1개.
 ├── experiments/             # experiment.py 산출 — self-contained
 │   └── <name>/<run_label>/{run.log, exit_code.txt, stm_topk.json, results/...}
 ├── runs/                    # run_experiment.py 단독 실행 (날짜 subdir 누적)
-├── reports/                 # 독립 분석 MD (committed: TIAGE/TopiOCQA segmentation 비교 등)
+├── reports/                 # cross-experiment methodology/design 분석 MD only. 실험 결과 저장 금지 (위 § "실험 결과 저장" 참조).
 └── design/                  # 설계 문서 (committed)
 
 archive/                  # *의도적으로 폐기* 한 것만 (시간 흐름 무관)
