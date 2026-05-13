@@ -68,7 +68,9 @@ class HiEM:
         stm_max_topics: int = 10,
         stm_max_turns: int = 200,
         promotion_threshold: float = 0.5,
-        importance_alpha: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        importance_alpha: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0),
+        importance_version: str = "v1",
+        importance_v2_extra: dict | None = None,
         lambda_r: float = 0.5,
         lambda_freq: float = 0.5,
         min_floor: float = 0.1,
@@ -98,6 +100,26 @@ class HiEM:
         pe_var_max_sq: float = 0.25,
         var_likelihood_weight: float = 1.0,
         hard_pe_fallback: bool = False,
+        # ---- v3.3.3-2 only (prototype f0 + posterior odds) ----------
+        f0_proto_max: int = 4,
+        restart_p_threshold: float = 0.35,
+        restart_pe_min: float = 0.0,
+        # ---- v3.3.3-3 only (restart hysteresis + prototype softening)
+        restart_prob_margin: float = 0.15,
+        episode_min_span: int = 4,
+        f0_proto_weight: float = 0.25,
+        # ---- v3.3.4-2 only (σ² shrinkage + robust scale) ------------
+        pe_var_shrink_c: float = 8.0,
+        pe_var_robust: bool = False,
+        # ---- v3.3.3-4 only (retrieval atomicity + dormant LTM) ------
+        retrieval_mode: str = "stm_all_turns",  # or "episode_rerank"
+        episode_top_k: int = 4,
+        dormant_ltm_top_n: int = 0,             # 0 → off
+        rerank_query_weight: float = 1.0,
+        rerank_topic_weight: float = 0.10,
+        rerank_episode_weight: float = 0.35,
+        rerank_pe_penalty: float = 0.05,
+        rerank_recency_weight: float = 0.03,
         # -------------------------------------------------------------
         **llm_kwargs: Any,
     ) -> None:
@@ -176,6 +198,95 @@ class HiEM:
                 var_likelihood_weight=var_likelihood_weight,
                 hard_pe_fallback=hard_pe_fallback,
             )
+        elif version == "v3.3.3-2":
+            from hi_em.sem_core_v333_2 import HiEMSegmenterV333_2
+            self._segmenter = HiEMSegmenterV333_2(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                rnn_train_steps=rnn_train_steps,
+                rnn_max_context=rnn_max_context,
+                rnn_min_history=rnn_min_history,
+                f0_tau=f0_tau,
+                f0_min_starts=f0_min_starts,
+                f0_proto_max=f0_proto_max,
+                restart_p_threshold=restart_p_threshold,
+                restart_pe_min=restart_pe_min,
+            )
+        elif version == "v3.3.3-3":
+            from hi_em.sem_core_v333_3 import HiEMSegmenterV333_3
+            self._segmenter = HiEMSegmenterV333_3(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                rnn_train_steps=rnn_train_steps,
+                rnn_max_context=rnn_max_context,
+                rnn_min_history=rnn_min_history,
+                f0_tau=f0_tau,
+                f0_min_starts=f0_min_starts,
+                f0_proto_max=f0_proto_max,
+                f0_proto_weight=f0_proto_weight,
+                restart_p_threshold=restart_p_threshold,
+                restart_prob_margin=restart_prob_margin,
+                episode_min_span=episode_min_span,
+                restart_pe_min=restart_pe_min,
+            )
+        elif version == "v3.3.3-4":
+            from hi_em.sem_core_v333_4 import HiEMSegmenterV333_4
+            self._segmenter = HiEMSegmenterV333_4(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                rnn_train_steps=rnn_train_steps,
+                rnn_max_context=rnn_max_context,
+                rnn_min_history=rnn_min_history,
+                f0_tau=f0_tau,
+                f0_min_starts=f0_min_starts,
+                f0_proto_max=f0_proto_max,
+                f0_proto_weight=f0_proto_weight,
+                restart_p_threshold=restart_p_threshold,
+                restart_prob_margin=restart_prob_margin,
+                episode_min_span=episode_min_span,
+                restart_pe_min=restart_pe_min,
+            )
+            # v3.3.3-4 default (2026-05-11 재설계): importance-only retrieval
+            # + importance v2 (PE + boundary + persistence) policy.
+            if retrieval_mode == "stm_all_turns":
+                retrieval_mode = "importance_only"
+            if promotion_threshold == 0.5:
+                promotion_threshold = 0.3
+            # importance v2: codex 2026-05-11 권장 default weights (7-tuple)
+            # (w1 count, w2 freq, w3 recency, w4 nbr, w5 PE, w6 boundary, w7 span)
+            if importance_version == "v1" and importance_alpha == (1.0, 1.0, 1.0, 1.0):
+                importance_version = "v2"
+                importance_alpha = (0.70, 0.60, 0.45, 0.35, 0.90, 0.70, 0.25)
+        elif version == "v3.3.4-2":
+            from hi_em.sem_core_v334_2 import HiEMSegmenterV334_2
+            self._segmenter = HiEMSegmenterV334_2(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                rnn_train_steps=rnn_train_steps,
+                rnn_max_context=rnn_max_context,
+                rnn_min_history=rnn_min_history,
+                pe_var_decay=pe_var_decay,
+                pe_var_min_samples=pe_var_min_samples,
+                pe_var_sigma0_sq=pe_var_sigma0_sq,
+                pe_var_min_sq=pe_var_min_sq,
+                pe_var_max_sq=pe_var_max_sq,
+                var_likelihood_weight=var_likelihood_weight,
+                hard_pe_fallback=hard_pe_fallback,
+                pe_var_shrink_c=pe_var_shrink_c,
+                pe_var_robust=pe_var_robust,
+            )
         elif version == "v2":
             self._segmenter = HiEMSegmenter(
                 dim=encoder.dim, alpha=alpha, lmda=lmda, sigma0_sq=sigma0_sq
@@ -183,7 +294,8 @@ class HiEM:
         else:
             raise ValueError(
                 f"unknown HiEM version: {version!r} "
-                "(expected 'v2', 'v3.1.1', 'v3.2.1', 'v3.3.1', 'v3.3.2', 'v3.3.3', or 'v3.3.4')"
+                "(expected 'v2', 'v3.1.1', 'v3.2.1', 'v3.3.1', 'v3.3.2', "
+                "'v3.3.3', 'v3.3.4', 'v3.3.3-2', 'v3.3.4-2', 'v3.3.3-3', or 'v3.3.3-4')"
             )
         self._k_topics = k_topics
         self._k_turns_per_topic = k_turns_per_topic
@@ -191,6 +303,18 @@ class HiEM:
         self._response_filter = response_filter
         self._llm_kwargs = llm_kwargs
         self._next_turn_id = 0
+
+        # Retrieval policy (v3.3.3-4 episode rerank + dormant LTM safety).
+        self._retrieval_mode = retrieval_mode
+        self._episode_top_k = episode_top_k
+        self._dormant_ltm_top_n = dormant_ltm_top_n
+        self._rerank_w = {
+            "q": rerank_query_weight,
+            "topic": rerank_topic_weight,
+            "episode": rerank_episode_weight,
+            "pe": rerank_pe_penalty,
+            "recency": rerank_recency_weight,
+        }
 
         # Phase 2-Full STM wiring
         self._use_stm = use_stm
@@ -210,6 +334,9 @@ class HiEM:
                 lambda_freq=lambda_freq,
                 min_floor=min_floor,
                 clear_stm_each_round=round_clear_stm,
+                importance_version=importance_version,
+                importance_v2_extra=importance_v2_extra or {},
+                salience_provider=self._segmenter,
             )
         else:
             self._stm = None
@@ -218,6 +345,34 @@ class HiEM:
     # ------------------------------------------------------------------
     # Public properties (debug / tests)
     # ------------------------------------------------------------------
+
+    def _importance_prefill(self) -> list[dict[str, Any]]:
+        """v3.3.3-4 retrieval — importance-only (CLAUDE.md 최상위 규칙, 2026-05-11).
+
+        STM membership 자체가 importance gate (round-end promotion + eviction
+        에서 이미 결정됨). Query time 에는 그대로 dump. query-aware ranking 없음.
+
+        반환: STM 의 모든 turn 을 turn_id 오름차순으로. (topic, episode) atomicity
+        는 STM atomicity (topic 단위 promote / evict) 가 자연 보장.
+        """
+        if self._stm is None:
+            return []
+        turns = list(self._stm.all_turns())
+        turns.sort(key=lambda t: int(t.get("turn_id", 0)))
+        return turns
+
+    def _assign_with_episode(self, q: np.ndarray) -> tuple[int, bool, int]:
+        """Wrapper around ``segmenter.assign`` that always returns
+        ``(topic_id, is_boundary, episode_id)``.
+
+        Older segmenters return only ``(topic_id, is_boundary)``; we default
+        ``episode_id=0`` so downstream code can uniformly handle the field.
+        Only v3.3.3-4 emits a real per-turn episode id.
+        """
+        out = self._segmenter.assign(q)
+        if isinstance(out, tuple) and len(out) == 3:
+            return int(out[0]), bool(out[1]), int(out[2])
+        return int(out[0]), bool(out[1]), 0
 
     @property
     def stm(self) -> MemoryWindow | None:
@@ -245,7 +400,7 @@ class HiEM:
         q = np.asarray(self._encoder.encode([user_text])[0])
 
         # 2. segment (mutates segmenter state)
-        topic_id, is_boundary = self._segmenter.assign(q)
+        topic_id, is_boundary, episode_id = self._assign_with_episode(q)
 
         # 3. snapshot topic state
         self._ltm.update_state(self.conv_id, self._snapshot_state())
@@ -258,7 +413,10 @@ class HiEM:
                 ltm_turns = self._ltm.load_turns(self.conv_id, topic_id=topic_id)
                 if ltm_turns:
                     self._stm.promote(topic_id, ltm_turns)
-            prefill = self._stm.all_turns()
+            if self._retrieval_mode in ("episode_rerank", "importance_only"):
+                prefill = self._importance_prefill()
+            else:
+                prefill = self._stm.all_turns()
         else:
             prefill = select_memory_window(
                 q, self._ltm, self.conv_id, self._k_topics, self._k_turns_per_topic
@@ -279,12 +437,14 @@ class HiEM:
 
         # 7. persist user + assistant turns (LTM dual-write + STM working buffer)
         user_turn = self._make_turn(
-            self._next_turn_id, "user", user_text, q.tolist(), topic_id, is_boundary
+            self._next_turn_id, "user", user_text, q.tolist(), topic_id,
+            is_boundary, episode_id=episode_id,
         )
         self._ltm.append_turn(self.conv_id, user_turn)
         self._next_turn_id += 1
         assistant_turn = self._make_turn(
-            self._next_turn_id, "assistant", stored_response, None, topic_id, False
+            self._next_turn_id, "assistant", stored_response, None, topic_id, False,
+            episode_id=episode_id,
         )
         self._ltm.append_turn(self.conv_id, assistant_turn)
         self._next_turn_id += 1
@@ -354,18 +514,21 @@ class HiEM:
         if self._stm is not None:
             topic_id = self._segmenter.predict_topic(q)
             stm_hit = self._stm.has(topic_id)
-            stm_turns = self._stm.all_turns()
-            if stm_hit:
-                prefill = stm_turns
+            if self._retrieval_mode in ("episode_rerank", "importance_only"):
+                prefill = self._importance_prefill()
             else:
-                ltm_turns = self._ltm.load_turns(self.conv_id, topic_id=topic_id)
-                if ltm_turns:
-                    merged = {t["turn_id"]: t for t in stm_turns}
-                    for t in ltm_turns:
-                        merged.setdefault(t["turn_id"], t)
-                    prefill = sorted(merged.values(), key=lambda t: t["turn_id"])
-                else:
+                stm_turns = self._stm.all_turns()
+                if stm_hit:
                     prefill = stm_turns
+                else:
+                    ltm_turns = self._ltm.load_turns(self.conv_id, topic_id=topic_id)
+                    if ltm_turns:
+                        merged = {t["turn_id"]: t for t in stm_turns}
+                        for t in ltm_turns:
+                            merged.setdefault(t["turn_id"], t)
+                        prefill = sorted(merged.values(), key=lambda t: t["turn_id"])
+                    else:
+                        prefill = stm_turns
         else:
             topic_id = -1
             stm_hit = None
@@ -474,14 +637,16 @@ class HiEM:
         emb_by_turn_idx = {idx: user_embs[k] for k, idx in enumerate(user_indices)}
 
         last_topic_id = 0
+        last_episode_id = 0
         for i, t in enumerate(turns):
             role = t["role"]
             text = t["content"]
             ts = t.get("ts", datetime.now(timezone.utc).isoformat())
             if role == "user":
                 q = emb_by_turn_idx[i]
-                topic_id, is_boundary = self._segmenter.assign(q)
+                topic_id, is_boundary, episode_id = self._assign_with_episode(q)
                 last_topic_id = topic_id
+                last_episode_id = episode_id
                 self._ltm.append_turn(
                     self.conv_id,
                     {
@@ -491,6 +656,7 @@ class HiEM:
                         "text": text,
                         "embedding": q.tolist(),
                         "topic_id": topic_id,
+                        "episode_id": episode_id,
                         "is_boundary": is_boundary,
                         "dia_id": t.get("dia_id"),
                     },
@@ -505,6 +671,7 @@ class HiEM:
                         "text": text,
                         "embedding": None,
                         "topic_id": last_topic_id,
+                        "episode_id": last_episode_id,
                         "is_boundary": False,
                         "dia_id": t.get("dia_id"),
                     },
@@ -528,14 +695,16 @@ class HiEM:
         emb_by_turn_idx = {idx: user_embs[k] for k, idx in enumerate(user_indices)}
 
         last_topic_id = 0
+        last_episode_id = 0
         for i, t in enumerate(turns):
             role = t["role"]
             text = t["content"]
             ts = t.get("ts", datetime.now(timezone.utc).isoformat())
             if role == "user":
                 q = emb_by_turn_idx[i]
-                topic_id, is_boundary = self._segmenter.assign(q)
+                topic_id, is_boundary, episode_id = self._assign_with_episode(q)
                 last_topic_id = topic_id
+                last_episode_id = episode_id
                 self._ltm.append_turn(
                     self.conv_id,
                     {
@@ -545,6 +714,7 @@ class HiEM:
                         "text": text,
                         "embedding": q.tolist(),
                         "topic_id": topic_id,
+                        "episode_id": episode_id,
                         "is_boundary": is_boundary,
                         "dia_id": t.get("dia_id"),
                     },
@@ -607,6 +777,7 @@ class HiEM:
         embedding: list[float] | None,
         topic_id: int,
         is_boundary: bool,
+        episode_id: int = 0,
     ) -> dict[str, Any]:
         return {
             "turn_id": turn_id,
@@ -615,6 +786,7 @@ class HiEM:
             "text": text,
             "embedding": embedding,
             "topic_id": topic_id,
+            "episode_id": episode_id,
             "is_boundary": is_boundary,
         }
 

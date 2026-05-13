@@ -134,3 +134,102 @@ def compute_importance(
         scaled = raw
 
     return {tid: max(min_floor, v) for tid, v in scaled.items()}
+
+
+# ----------------------------------------------------------------------
+# Importance v2 — 2026-05-11 codex 재설계 (CLAUDE.md "Retrieval = importance
+# only" 규칙 도입 후 dormant evidence 회수 위해 새 unsupervised salience 항 추가).
+# ----------------------------------------------------------------------
+def compute_importance_v2(
+    state: dict[str, Any],
+    round_now: int,
+    mention_log: dict[int, list[int]],
+    prev_importance: dict[int, float] | None = None,
+    neighbor_weights: dict[int, dict[int, float]] | None = None,
+    pe_stats: dict[int, dict[str, float]] | None = None,
+    boundary_counts: dict[int, int] | None = None,
+    *,
+    alpha: tuple[float, float, float, float, float, float, float] = (
+        0.70, 0.60, 0.45, 0.35, 0.90, 0.70, 0.25,
+    ),
+    lambda_r: float = 0.5,
+    lambda_freq: float = 0.5,
+    min_floor: float = 0.1,
+    n_cap: int = 30,
+    pe_ref: float = 1.0,
+    boundary_ref: float = 3.0,
+    span_ref: float = 12.0,
+    normalize: bool = True,
+) -> dict[int, float]:
+    """Importance v2 — adds PE/boundary/persistence to v1's 4 terms.
+
+    raw_I(t) = w1 s_count + w2 s_freq + w3 s_recency + w4 s_nbr
+             + w5 s_PE + w6 s_boundary + w7 s_span
+
+    All sub-terms bounded in [0, 1]. ``pe_stats`` / ``boundary_counts`` optional —
+    when missing, those terms degrade to 0 (backward-compat with non-v3.3.3-4
+    segmenters).
+    """
+    if not state.get("topics"):
+        return {}
+
+    # Accept short alpha (4-tuple from v1 default) — pad with codex defaults
+    # for the 3 new salience weights so v333 dispatch can opt into v2 via
+    # `--importance-version v2` without explicit 7-tuple.
+    if len(alpha) < 7:
+        defaults7 = (0.70, 0.60, 0.45, 0.35, 0.90, 0.70, 0.25)
+        alpha = tuple(alpha) + defaults7[len(alpha):]
+    w1, w2, w3, w4, w5, w6, w7 = alpha[:7]
+    pe_stats = pe_stats or {}
+    boundary_counts = boundary_counts or {}
+    raw: dict[int, float] = {}
+
+    log_n_cap = math.log1p(max(1, n_cap))
+    for t in state["topics"]:
+        tid = t["topic_id"]
+        rounds = mention_log.get(tid, [])
+        n_t = min(int(t.get("count", 0)), n_cap)
+        s1 = math.log1p(n_t) / log_n_cap if log_n_cap > 0 else 0.0
+        s2 = _ema_frequency(rounds, round_now, lambda_freq)
+        if rounds:
+            last_round = max(rounds)
+            s3 = math.exp(-lambda_r * (round_now - last_round))
+        else:
+            s3 = 0.0
+        s4 = 0.0
+        if prev_importance and neighbor_weights and tid in neighbor_weights:
+            for j, w in neighbor_weights[tid].items():
+                s4 += w * prev_importance.get(j, 0.0)
+
+        pe = pe_stats.get(tid, {})
+        pe_mean = float(pe.get("mean", 0.0))
+        pe_max = float(pe.get("max", 0.0))
+        if pe_ref > 0:
+            s5 = min(1.0, max(0.0, (0.7 * pe_mean + 0.3 * pe_max) / pe_ref))
+        else:
+            s5 = 0.0
+
+        b = float(boundary_counts.get(tid, 0))
+        s6 = 1.0 - math.exp(-b / max(boundary_ref, 1e-9)) if b > 0 else 0.0
+
+        if rounds:
+            span = max(rounds) - min(rounds) + 1
+            s7 = 1.0 - math.exp(-span / max(span_ref, 1e-9))
+        else:
+            s7 = 0.0
+
+        raw[tid] = (
+            w1 * s1 + w2 * s2 + w3 * s3 + w4 * s4
+            + w5 * s5 + w6 * s6 + w7 * s7
+        )
+
+    if normalize:
+        peak = max(raw.values()) if raw else 0.0
+        if peak > 0:
+            scaled = {tid: v / peak for tid, v in raw.items()}
+        else:
+            scaled = {tid: 0.0 for tid in raw}
+    else:
+        scaled = raw
+
+    return {tid: max(min_floor, v) for tid, v in scaled.items()}

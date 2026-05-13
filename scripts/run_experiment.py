@@ -86,7 +86,7 @@ def flatten_history(haystack_sessions: list[list[dict]]) -> list[dict]:
 # All HiEM-family methods. Prefix-match so a new version (e.g. v3.4.1)
 # automatically picks up cache + encoder + STM-topk gating. The `_build`
 # dispatch below + argparse choices still need the explicit version added.
-_HI_EM_METHOD_RE = re.compile(r"^hi-em(-full-v[\d.]+)?$")
+_HI_EM_METHOD_RE = re.compile(r"^hi-em(-full-v[\w.\-]+)?$")
 
 
 def is_hi_em_method(method: str) -> bool:
@@ -112,6 +112,76 @@ def git_sha() -> str | None:
 def _collect_dia_ids(turns: list[dict]) -> list[str]:
     """Collect non-empty dia_id values from a list of turn dicts."""
     return [t["dia_id"] for t in turns if t.get("dia_id")]
+
+
+def compute_dormant_evidence_audit(
+    entry: dict, hi,
+) -> dict[str, float]:
+    """Audit: how much evidence sits in topics that did NOT make it into STM.
+
+    Tests user hypothesis ("retrieval is gated by importance-score policy,
+    not just segmentation"). Generic across all hi-em-full methods.
+
+    Output keys (all per-Q):
+        dormant_ev_count       — # of evidence dias in LTM-only (dormant) topics
+        dormant_ev_rate        — dormant_ev_count / total_ev_in_topics
+        n_topics_with_ev       — distinct topics that contain ≥1 evidence turn
+        top_ev_topic_promoted  — 1.0 if topic with most evidence overall is in STM
+        n_dormant_topics_with_ev — distinct dormant topics holding ≥1 evidence
+        dormant_top_topic_n_ev — max evidence count in any single dormant topic
+        dormant_top_topic_share — dormant_top_topic_n_ev / dormant_ev_count
+                                   (1.0 = all dormant ev concentrated in one topic;
+                                    low = spread across many dormant topics)
+    Returns ``{}`` for entries that should be excluded:
+        adversarial / empty evidence / non-hi-em method (hi.stm is None).
+    """
+    if int(entry.get("category", 0)) == 5:
+        return {}
+    ev_dia = {x for x in (entry.get("evidence") or []) if isinstance(x, str)}
+    if not ev_dia:
+        return {}
+    if getattr(hi, "stm", None) is None:
+        return {}
+
+    all_turns = hi._ltm.load_turns(hi.conv_id)
+    dia_to_topic: dict[str, int] = {}
+    for t in all_turns:
+        d = t.get("dia_id")
+        if d:
+            dia_to_topic.setdefault(d, t["topic_id"])
+
+    stm_topics = hi.stm.current_topics()
+    topic_ev_count: dict[int, int] = {}
+    dormant_topic_ev_count: dict[int, int] = {}
+    dormant = 0
+    for dia in ev_dia:
+        tid = dia_to_topic.get(dia)
+        if tid is None:
+            continue
+        topic_ev_count[tid] = topic_ev_count.get(tid, 0) + 1
+        if tid not in stm_topics:
+            dormant += 1
+            dormant_topic_ev_count[tid] = dormant_topic_ev_count.get(tid, 0) + 1
+
+    total = sum(topic_ev_count.values())
+    if total == 0:
+        return {}
+    top_tid = max(topic_ev_count.items(), key=lambda x: x[1])[0]
+    out: dict[str, float] = {
+        "dormant_ev_count": float(dormant),
+        "dormant_ev_rate": dormant / total,
+        "n_topics_with_ev": float(len(topic_ev_count)),
+        "top_ev_topic_promoted": 1.0 if top_tid in stm_topics else 0.0,
+        "n_dormant_topics_with_ev": float(len(dormant_topic_ev_count)),
+    }
+    if dormant > 0:
+        top_dormant_n = max(dormant_topic_ev_count.values())
+        out["dormant_top_topic_n_ev"] = float(top_dormant_n)
+        out["dormant_top_topic_share"] = top_dormant_n / dormant
+    else:
+        out["dormant_top_topic_n_ev"] = 0.0
+        out["dormant_top_topic_share"] = 0.0
+    return out
 
 
 def compute_evidence_metrics(
@@ -381,7 +451,9 @@ class HiEMConvCache:
         elif method in ("hi-em-full-v1", "hi-em-full-v2",
                         "hi-em-full-v3.1.1", "hi-em-full-v3.2.1",
                         "hi-em-full-v3.3.1", "hi-em-full-v3.3.2",
-                        "hi-em-full-v3.3.3", "hi-em-full-v3.3.4"):
+                        "hi-em-full-v3.3.3", "hi-em-full-v3.3.4",
+                        "hi-em-full-v3.3.3-2", "hi-em-full-v3.3.4-2", "hi-em-full-v3.3.3-3",
+                        "hi-em-full-v3.3.3-4"):
             if method == "hi-em-full-v3.1.1":
                 v3_extra = {
                     "version": "v3.1.1",
@@ -457,6 +529,99 @@ class HiEMConvCache:
                     "var_likelihood_weight": a.var_likelihood_weight,
                     "hard_pe_fallback": a.hard_pe_fallback,
                 }
+            elif method == "hi-em-full-v3.3.3-2":
+                v3_extra = {
+                    "version": "v3.3.3-2",
+                    "tau": a.tau,
+                    "cos_threshold": a.cos_threshold,
+                    "beta": a.beta,
+                    "pe_threshold": a.pe_threshold,
+                    "rnn_hidden_dim": a.rnn_hidden_dim,
+                    "rnn_lr": a.rnn_lr,
+                    "rnn_train_steps": a.rnn_train_steps,
+                    "rnn_max_context": a.rnn_max_context,
+                    "rnn_min_history": a.rnn_min_history,
+                    "f0_tau": a.f0_tau,
+                    "f0_min_starts": a.f0_min_starts,
+                    "f0_proto_max": a.f0_proto_max,
+                    "restart_p_threshold": a.restart_p_threshold,
+                    "restart_pe_min": a.restart_pe_min,
+                }
+            elif method == "hi-em-full-v3.3.4-2":
+                v3_extra = {
+                    "version": "v3.3.4-2",
+                    "tau": a.tau,
+                    "cos_threshold": a.cos_threshold,
+                    "beta": a.beta,
+                    "pe_threshold": a.pe_threshold,
+                    "rnn_hidden_dim": a.rnn_hidden_dim,
+                    "rnn_lr": a.rnn_lr,
+                    "rnn_train_steps": a.rnn_train_steps,
+                    "rnn_max_context": a.rnn_max_context,
+                    "rnn_min_history": a.rnn_min_history,
+                    "pe_var_decay": a.pe_var_decay,
+                    "pe_var_min_samples": a.pe_var_min_samples,
+                    "pe_var_sigma0_sq": a.pe_var_sigma0_sq,
+                    "pe_var_min_sq": a.pe_var_min_sq,
+                    "pe_var_max_sq": a.pe_var_max_sq,
+                    "var_likelihood_weight": a.var_likelihood_weight,
+                    "hard_pe_fallback": a.hard_pe_fallback,
+                    "pe_var_shrink_c": a.pe_var_shrink_c,
+                    "pe_var_robust": a.pe_var_robust,
+                }
+            elif method == "hi-em-full-v3.3.3-3":
+                v3_extra = {
+                    "version": "v3.3.3-3",
+                    "tau": a.tau,
+                    "cos_threshold": a.cos_threshold,
+                    "beta": a.beta,
+                    "pe_threshold": a.pe_threshold,
+                    "rnn_hidden_dim": a.rnn_hidden_dim,
+                    "rnn_lr": a.rnn_lr,
+                    "rnn_train_steps": a.rnn_train_steps,
+                    "rnn_max_context": a.rnn_max_context,
+                    "rnn_min_history": a.rnn_min_history,
+                    "f0_tau": a.f0_tau,
+                    "f0_min_starts": a.f0_min_starts,
+                    "f0_proto_max": a.f0_proto_max,
+                    "f0_proto_weight": a.f0_proto_weight,
+                    "restart_p_threshold": a.restart_p_threshold,
+                    "restart_prob_margin": a.restart_prob_margin,
+                    "episode_min_span": a.episode_min_span,
+                    "restart_pe_min": a.restart_pe_min,
+                }
+            elif method == "hi-em-full-v3.3.3-4":
+                v3_extra = {
+                    "version": "v3.3.3-4",
+                    "tau": a.tau,
+                    "cos_threshold": a.cos_threshold,
+                    "beta": a.beta,
+                    "pe_threshold": a.pe_threshold,
+                    "rnn_hidden_dim": a.rnn_hidden_dim,
+                    "rnn_lr": a.rnn_lr,
+                    "rnn_train_steps": a.rnn_train_steps,
+                    "rnn_max_context": a.rnn_max_context,
+                    "rnn_min_history": a.rnn_min_history,
+                    "f0_tau": a.f0_tau,
+                    "f0_min_starts": a.f0_min_starts,
+                    "f0_proto_max": a.f0_proto_max,
+                    "f0_proto_weight": a.f0_proto_weight,
+                    "restart_p_threshold": a.restart_p_threshold,
+                    "restart_prob_margin": a.restart_prob_margin,
+                    "episode_min_span": a.episode_min_span,
+                    "restart_pe_min": a.restart_pe_min,
+                    # v3.3.3-4 retrieval atomicity
+                    "retrieval_mode": "episode_rerank",
+                    "episode_top_k": a.episode_top_k,
+                    "dormant_ltm_top_n": a.dormant_ltm_top_n,
+                    "rerank_query_weight": a.rerank_query_weight,
+                    "rerank_topic_weight": a.rerank_topic_weight,
+                    "rerank_episode_weight": a.rerank_episode_weight,
+                    "rerank_pe_penalty": a.rerank_pe_penalty,
+                    "rerank_recency_weight": a.rerank_recency_weight,
+                    # promotion_threshold 는 common dict 에서 처리됨 (중복 방지).
+                    # 사용자가 별도 override 안 하면 orchestrator 가 0.3 으로 auto-set.
+                }
             else:
                 v3_extra = {}
             hi = HiEM(
@@ -466,6 +631,7 @@ class HiEMConvCache:
                 stm_max_turns=a.stm_max_turns,
                 promotion_threshold=a.promotion_threshold,
                 importance_alpha=tuple(a.importance_alpha),
+                importance_version=a.importance_version,
                 lambda_r=a.lambda_r,
                 lambda_freq=a.lambda_freq,
                 min_floor=a.min_floor,
@@ -528,6 +694,7 @@ def run_hi_em_full(history, question, llm, model, encoder, ltm_root, conv_id,
                    *, alpha, lmda, sigma0_sq, round_size,
                    stm_max_topics, stm_max_turns, promotion_threshold,
                    importance_alpha, lambda_r, lambda_freq, min_floor,
+                   importance_version="v1",
                    version="v2", tau=50.0, cos_threshold=0.7, beta=0.5,
                    pe_threshold=1.0,
                    rnn_hidden_dim=32, rnn_lr=1e-3, rnn_train_steps=1,
@@ -538,6 +705,9 @@ def run_hi_em_full(history, question, llm, model, encoder, ltm_root, conv_id,
                    pe_var_sigma0_sq=0.04, pe_var_min_sq=1e-4,
                    pe_var_max_sq=0.25, var_likelihood_weight=1.0,
                    hard_pe_fallback=False,
+                   f0_proto_max=4, restart_p_threshold=0.35, restart_pe_min=0.0,
+                   pe_var_shrink_c=8.0, pe_var_robust=False,
+                   restart_prob_margin=0.15, episode_min_span=4, f0_proto_weight=0.25,
                    **llm_kwargs):
     """Phase 2-Full: STM-stateful HiEM (v2 Gaussian, v3.1 cosine MAP, or v3.2 cosine MAP + sub-linear count)."""
     if ltm_root.exists():
@@ -553,6 +723,7 @@ def run_hi_em_full(history, question, llm, model, encoder, ltm_root, conv_id,
         stm_max_turns=stm_max_turns,
         promotion_threshold=promotion_threshold,
         importance_alpha=tuple(importance_alpha),
+        importance_version=importance_version,
         lambda_r=lambda_r,
         lambda_freq=lambda_freq,
         min_floor=min_floor,
@@ -578,6 +749,14 @@ def run_hi_em_full(history, question, llm, model, encoder, ltm_root, conv_id,
         pe_var_max_sq=pe_var_max_sq,
         var_likelihood_weight=var_likelihood_weight,
         hard_pe_fallback=hard_pe_fallback,
+        f0_proto_max=f0_proto_max,
+        restart_p_threshold=restart_p_threshold,
+        restart_pe_min=restart_pe_min,
+        pe_var_shrink_c=pe_var_shrink_c,
+        pe_var_robust=pe_var_robust,
+        restart_prob_margin=restart_prob_margin,
+        episode_min_span=episode_min_span,
+        f0_proto_weight=f0_proto_weight,
         **llm_kwargs,
     )
     hi.preload_history(history)
@@ -615,6 +794,7 @@ def run_hi_em_full_v2(haystack_sessions, question, llm, model, encoder,
         stm_max_turns=stm_max_turns,
         promotion_threshold=promotion_threshold,
         importance_alpha=tuple(importance_alpha),
+        importance_version=importance_version,
         lambda_r=lambda_r,
         lambda_freq=lambda_freq,
         min_floor=min_floor,
@@ -687,6 +867,10 @@ def phase_run(
                 len(hi.stm.current_topics()) if hi.stm else 0
             )
             extras["stm_turns"] = hi.stm.total_turns() if hi.stm else 0
+        # Dormant evidence audit (importance-score policy diagnostic).
+        audit = compute_dormant_evidence_audit(entry, hi)
+        if audit:
+            extras.update(audit)
         return response, debug["messages"], extras
 
     def process(entry: dict) -> dict:
@@ -722,7 +906,9 @@ def phase_run(
             elif args.method in ("hi-em", "hi-em-full-v1", "hi-em-full-v2",
                                  "hi-em-full-v3.1.1", "hi-em-full-v3.2.1",
                                  "hi-em-full-v3.3.1", "hi-em-full-v3.3.2",
-                                 "hi-em-full-v3.3.3", "hi-em-full-v3.3.4"):
+                                 "hi-em-full-v3.3.3", "hi-em-full-v3.3.4",
+                                 "hi-em-full-v3.3.3-2", "hi-em-full-v3.3.4-2", "hi-em-full-v3.3.3-3",
+                        "hi-em-full-v3.3.3-4"):
                 if hiem_cache is not None:
                     # LoCoMo path: build state once per sample_id,
                     # answer each question read-only via eval_query.
@@ -743,7 +929,9 @@ def phase_run(
                     elif args.method in ("hi-em-full-v1", "hi-em-full-v3.1.1",
                                           "hi-em-full-v3.2.1", "hi-em-full-v3.3.1",
                                           "hi-em-full-v3.3.2", "hi-em-full-v3.3.3",
-                                          "hi-em-full-v3.3.4"):
+                                          "hi-em-full-v3.3.4",
+                                          "hi-em-full-v3.3.3-2", "hi-em-full-v3.3.4-2", "hi-em-full-v3.3.3-3",
+                        "hi-em-full-v3.3.3-4"):
                         if args.method == "hi-em-full-v3.1.1":
                             seg_version = "v3.1.1"
                         elif args.method == "hi-em-full-v3.2.1":
@@ -756,6 +944,14 @@ def phase_run(
                             seg_version = "v3.3.3"
                         elif args.method == "hi-em-full-v3.3.4":
                             seg_version = "v3.3.4"
+                        elif args.method == "hi-em-full-v3.3.3-2":
+                            seg_version = "v3.3.3-2"
+                        elif args.method == "hi-em-full-v3.3.4-2":
+                            seg_version = "v3.3.4-2"
+                        elif args.method == "hi-em-full-v3.3.3-3":
+                            seg_version = "v3.3.3-3"
+                        elif args.method == "hi-em-full-v3.3.3-4":
+                            seg_version = "v3.3.3-4"
                         else:
                             seg_version = "v2"
                         hyp, msgs, extras = run_hi_em_full(
@@ -769,6 +965,7 @@ def phase_run(
                             stm_max_turns=args.stm_max_turns,
                             promotion_threshold=args.promotion_threshold,
                             importance_alpha=args.importance_alpha,
+                            importance_version=args.importance_version,
                             lambda_r=args.lambda_r,
                             lambda_freq=args.lambda_freq,
                             min_floor=args.min_floor,
@@ -793,6 +990,14 @@ def phase_run(
                             pe_var_max_sq=args.pe_var_max_sq,
                             var_likelihood_weight=args.var_likelihood_weight,
                             hard_pe_fallback=args.hard_pe_fallback,
+                            f0_proto_max=args.f0_proto_max,
+                            restart_p_threshold=args.restart_p_threshold,
+                            restart_pe_min=args.restart_pe_min,
+                            pe_var_shrink_c=args.pe_var_shrink_c,
+                            pe_var_robust=args.pe_var_robust,
+                            restart_prob_margin=args.restart_prob_margin,
+                            episode_min_span=args.episode_min_span,
+                            f0_proto_weight=args.f0_proto_weight,
                             **llm_kwargs,
                         )
                     else:  # hi-em-full-v2
@@ -807,6 +1012,7 @@ def phase_run(
                             stm_max_turns=args.stm_max_turns,
                             promotion_threshold=args.promotion_threshold,
                             importance_alpha=args.importance_alpha,
+                            importance_version=args.importance_version,
                             lambda_r=args.lambda_r,
                             lambda_freq=args.lambda_freq,
                             min_floor=args.min_floor,
@@ -1046,7 +1252,12 @@ def main() -> None:
                             "hi-em-full-v3.3.2",
                             # SEM2 f0 / restart branch (v3.3.3)
                             # Per-topic PE variance calibration (v3.3.4)
-                            "hi-em-full-v3.3.3", "hi-em-full-v3.3.4"])
+                            "hi-em-full-v3.3.3", "hi-em-full-v3.3.4",
+                            # v3.3.3 강화 (prototype f0 + posterior odds)
+                            # v3.3.4 강화 (σ² shrinkage + robust scale)
+                            # v3.3.3-3 강화 (restart hysteresis + softening, iter2)
+                            "hi-em-full-v3.3.3-2", "hi-em-full-v3.3.4-2",
+                            "hi-em-full-v3.3.3-3", "hi-em-full-v3.3.3-4"])
     p.add_argument("--benchmark", choices=["longmemeval", "locomo"],
                    default=None,
                    help="Benchmark spec. Default inferred from --data path "
@@ -1107,9 +1318,15 @@ def main() -> None:
     p.add_argument("--stm-max-turns", type=int, default=stm_cfg["max_turns"])
     p.add_argument("--promotion-threshold", type=float,
                    default=stm_cfg["promotion_threshold"])
-    p.add_argument("--importance-alpha", type=float, nargs=4,
-                   metavar=("A1", "A2", "A3", "A4"),
-                   default=imp_cfg["alpha"])
+    p.add_argument("--importance-alpha", type=float, nargs="+",
+                   metavar="W",
+                   default=imp_cfg["alpha"],
+                   help="Importance weights. v1 expects 4 (count/freq/recency/nbr); "
+                        "v2 expects 7 (+ PE/boundary/persistence).")
+    p.add_argument("--importance-version", default="v1",
+                   choices=["v1", "v2"],
+                   help="v2 adds PE/boundary/persistence salience (codex 2026-05-11). "
+                        "Auto-set to v2 for hi-em-full-v3.3.3-4 if left at v1.")
     p.add_argument("--lambda-r", type=float, default=imp_cfg["lambda_r"])
     p.add_argument("--lambda-freq", type=float, default=imp_cfg["lambda_freq"])
     p.add_argument("--min-floor", type=float, default=imp_cfg["min_floor"])
@@ -1177,10 +1394,76 @@ def main() -> None:
                    help="v3.3.4 only: layer the v3.3.2 hard PE-boundary on "
                         "top of the calibrated MAP. Off by default — v3.3.4 "
                         "core relies on likelihood-ratio alone.")
+    # v3.3.3-2 only — prototype f0 + posterior-odds restart
+    p.add_argument("--f0-proto-max", type=int, default=4,
+                   help="v3.3.3-2 only: max boundary-start prototypes per topic "
+                        "(replaces single f0 centroid).")
+    p.add_argument("--restart-p-threshold", type=float, default=0.35,
+                   help="v3.3.3-2 only: same-label restart posterior threshold "
+                        "(softmax over repeat/restart). Replaces hard PE gate.")
+    p.add_argument("--restart-pe-min", type=float, default=0.0,
+                   help="v3.3.3-2 only: optional safety floor on repeat PE before "
+                        "considering restart. 0 = always consider.")
+    # v3.3.4-2 only — σ² shrinkage + robust scale
+    p.add_argument("--pe-var-shrink-c", type=float, default=8.0,
+                   help="v3.3.4-2 only: Bayesian shrinkage strength. "
+                        "σ_eff² = (n/(n+c))·σ_k² + (c/(n+c))·σ_0². "
+                        "0 → no shrinkage (= v3.3.4).")
+    def _str_to_bool(v: str) -> bool:
+        if isinstance(v, bool):
+            return v
+        return str(v).lower() in {"true", "1", "yes", "on", "t", "y"}
+
+    p.add_argument("--pe-var-robust", type=_str_to_bool, default=False,
+                   nargs="?", const=True,
+                   help="v3.3.4-2 only: use 1.4826·MAD EMA in place of squared-"
+                        "deviation EMA. Off by default. Accepts True/False so "
+                        "experiment.py override (pe_var_robust=True) works.")
+    # v3.3.3-3 only — restart hysteresis + prototype softening
+    p.add_argument("--restart-prob-margin", type=float, default=0.15,
+                   help="v3.3.3-3 only: required (p_rst - p_rep) margin "
+                        "in addition to p_rst > restart_p_threshold.")
+    p.add_argument("--episode-min-span", type=int, default=4,
+                   help="v3.3.3-3 only: minimum turns between same-label "
+                        "restart boundaries (hysteresis).")
+    p.add_argument("--f0-proto-weight", type=float, default=0.25,
+                   help="v3.3.3-3 only: γ in f0sim = (1-γ)cos(s,mean) + "
+                        "γ·logmeanexp(cos(s,p)). Softens top-M max.")
+    # v3.3.3-4 only — retrieval atomicity + dormant LTM safety net
+    p.add_argument("--episode-top-k", type=int, default=4,
+                   help="v3.3.3-4 only: # of episodes to keep in prefill.")
+    p.add_argument("--dormant-ltm-top-n", type=int, default=8,
+                   help="v3.3.3-4 only: top-N LTM user turns from dormant "
+                        "topics (not in STM) by query cosine to add as safety net.")
+    p.add_argument("--rerank-query-weight", type=float, default=1.0,
+                   help="v3.3.3-4 retrieval rerank: query cosine weight.")
+    p.add_argument("--rerank-topic-weight", type=float, default=0.10,
+                   help="v3.3.3-4 retrieval rerank: topic-score weight.")
+    p.add_argument("--rerank-episode-weight", type=float, default=0.35,
+                   help="v3.3.3-4 retrieval rerank: episode-score weight.")
+    p.add_argument("--rerank-pe-penalty", type=float, default=0.05,
+                   help="v3.3.3-4 retrieval rerank: PE outlier soft penalty.")
+    p.add_argument("--rerank-recency-weight", type=float, default=0.03,
+                   help="v3.3.3-4 retrieval rerank: recency soft bonus.")
+    p.add_argument("--promotion-threshold-override", type=float, default=None,
+                   help="Override --promotion-threshold (legacy alias). 0.3 "
+                        "is v3.3.3-4 recommended default (auto-set by orchestrator).")
     p.add_argument("--no-token-count", action="store_true")
     p.add_argument("--results-root", default=str(DEFAULT_RESULTS_ROOT))
     p.add_argument("--wandb-project", default="hi-em-phase4")
+    p.add_argument("--seed", type=int, default=None,
+                   help="Seed for numpy + torch (segmenter init / RNN init). "
+                        "LLM temperature stochasticity is unaffected.")
     args = p.parse_args()
+
+    if args.seed is not None:
+        import random as _random
+        import torch as _torch
+        _random.seed(args.seed)
+        np.random.seed(args.seed)
+        _torch.manual_seed(args.seed)
+        if _torch.cuda.is_available():
+            _torch.cuda.manual_seed_all(args.seed)
 
     # Backwards-compat aliases: old method names normalize to new ones.
     _METHOD_ALIASES = {

@@ -1,25 +1,24 @@
-"""Online MAP segmenter — v3.3.2 + SEM2 f0 restart branch (v3.3.3).
+"""Online MAP segmenter — v3.3.3-2 강화안 (v3.3.3-3).
 
-Hi-EM-full-v3.3.3 keeps every term of v3.3.2 but restores SEM2's
-``log_likelihood_f0`` *restart* path. SEM2 computes two likelihoods
-against the previous event ``k_prev``:
+v3.3.3-2 의 LoCoMo iter1 sanity 결과 (acc ≈동일, R-mh@k -0.016, T1var 47→72):
+restart 분기가 너무 자주 발화하여 한 topic 안 multi-hop evidence 가 episode
+단위로 분산되고 segmentation 결정이 RNN init seed 에 흔들리는 문제. 본
+버전은 다음 보수화로 그 회귀를 흡수하는 것이 목표.
 
-    repeat:  log_likelihood_next(x_prev, x_curr)   — direct continuation
-    restart: log_likelihood_f0(x_curr)             — same event label,
-                                                     new episode start
+1. **Restart 발화 보수화**:
+   - posterior threshold ↑ (`restart_p_threshold` default `0.5`)
+   - posterior margin (`restart_prob_margin` default `0.15`): `p_rst - p_rep > margin`
+   - minimum-span hysteresis (`episode_min_span` default `4`): 직전 restart 후
+     최소 turn 간격 안에서는 restart 비활성
 
-The MAP score for ``k_prev`` is the maximum of the two. When the
-restart branch wins (by an optional margin), the assignment stays on
-the same topic but the turn is marked as a boundary — i.e. "same
-label, new episode". v1 / v3.1.1 / v3.3.x prior to this version
-collapsed both paths into a single repeat score, so a same-label
-restart could only become a boundary by spawning a brand-new topic.
+2. **Prototype softening**: top-M `max` (seed-민감) → mean + logmeanexp 혼합
+   - `f0sim = (1-γ) cos(s, mean(P)) + γ · logmeanexp_p cos(s, p)`
+   - `γ = f0_proto_weight` (default `0.25`).
 
-f0 centroid: episode-start embedding running mean kept per topic.
-Cold-start (`f0_count < f0_min_starts`) falls back to the topic's
-ordinary centroid `mu`. ``restart_pe_threshold`` guards against
-restart winning when the repeat prediction is already very good — by
-default, only consider restart when repeat PE > 0.5.
+3. (Episode atomicity 의 retrieval-layer 통합은 별도 iter3 에서 STM 측 변경
+   포함하여 다룸. 본 버전은 segmentation 만 변경.)
+
+학습 추가 없음. RNN train_steps 와 latency 은 v3.3.3 / v3.3.3-2 와 동일.
 """
 
 from __future__ import annotations
@@ -34,8 +33,16 @@ from hi_em.scrp import sticky_crp_unnormed
 from hi_em.topic_v331_rnn import TopicV33RNN
 
 
-class HiEMSegmenterV333:
-    """v3.3.2 + per-topic f0 centroid / SEM2 restart branch."""
+def _logmeanexp(values: list[float]) -> float:
+    if not values:
+        return -math.inf
+    m = max(values)
+    s = sum(math.exp(v - m) for v in values)
+    return m + math.log(s / len(values))
+
+
+class HiEMSegmenterV333_3:
+    """v3.3.3-2 + restart hysteresis + prototype softening."""
 
     def __init__(
         self,
@@ -52,26 +59,40 @@ class HiEMSegmenterV333:
         rnn_train_steps: int = 3,
         rnn_max_context: int = 8,
         rnn_min_history: int = 2,
-        # v3.3.3 only
-        restart_pe_threshold: float = 0.5,
-        restart_margin: float = 0.0,
+        # v3.3.3 carryover
         f0_tau: float | None = None,
         f0_min_starts: int = 2,
+        # v3.3.3-2 carryover
+        f0_proto_max: int = 4,
+        # v3.3.3-3 only
+        restart_p_threshold: float = 0.5,
+        restart_prob_margin: float = 0.15,
+        episode_min_span: int = 4,
+        f0_proto_weight: float = 0.25,
+        restart_pe_min: float = 0.0,
     ) -> None:
         if not 0.0 < beta <= 1.0:
             raise ValueError(f"beta must be in (0, 1], got {beta}")
-        if rnn_lr <= 0:
-            raise ValueError(f"rnn_lr must be > 0, got {rnn_lr}")
         if rnn_train_steps < 0:
             raise ValueError(f"rnn_train_steps must be >= 0, got {rnn_train_steps}")
         if not 0.0 <= pe_threshold <= 1.0:
             raise ValueError(f"pe_threshold must be in [0, 1], got {pe_threshold}")
-        if not 0.0 <= restart_pe_threshold <= 2.0:
+        if f0_proto_max < 1:
+            raise ValueError(f"f0_proto_max must be >= 1, got {f0_proto_max}")
+        if not 0.0 < restart_p_threshold < 1.0:
             raise ValueError(
-                f"restart_pe_threshold must be in [0, 2], got {restart_pe_threshold}"
+                f"restart_p_threshold must be in (0, 1), got {restart_p_threshold}"
             )
-        if f0_min_starts < 1:
-            raise ValueError(f"f0_min_starts must be >= 1, got {f0_min_starts}")
+        if not 0.0 <= restart_prob_margin < 1.0:
+            raise ValueError(
+                f"restart_prob_margin must be in [0, 1), got {restart_prob_margin}"
+            )
+        if episode_min_span < 1:
+            raise ValueError(f"episode_min_span must be >= 1, got {episode_min_span}")
+        if not 0.0 <= f0_proto_weight <= 1.0:
+            raise ValueError(
+                f"f0_proto_weight must be in [0, 1], got {f0_proto_weight}"
+            )
 
         self.dim = dim
         self.alpha = alpha
@@ -87,10 +108,15 @@ class HiEMSegmenterV333:
         self.rnn_max_context = rnn_max_context
         self.rnn_min_history = rnn_min_history
 
-        self.restart_pe_threshold = restart_pe_threshold
-        self.restart_margin = restart_margin
         self.f0_tau = tau if f0_tau is None else f0_tau
         self.f0_min_starts = f0_min_starts
+        self.f0_proto_max = f0_proto_max
+        self.f0_proto_weight = f0_proto_weight
+
+        self.restart_p_threshold = restart_p_threshold
+        self.restart_prob_margin = restart_prob_margin
+        self.episode_min_span = episode_min_span
+        self.restart_pe_min = restart_pe_min
 
         self.model = EventRNN(input_dim=dim, hidden_dim=rnn_hidden_dim)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=rnn_lr)
@@ -98,23 +124,17 @@ class HiEMSegmenterV333:
         self.counts: np.ndarray = np.zeros(k_max, dtype=np.int64)
         self.prev_k: int | None = None
 
-        # f0 state (parallel to self.topics).
-        self._f0_centroids: list[np.ndarray] = []
+        # f0 prototype state.
+        self._f0_protos: list[list[np.ndarray]] = []
+        self._f0_means: list[np.ndarray] = []
         self._f0_counts: list[int] = []
 
-        # PE / boundary stats for importance v2 (2026-05-11). Optional usage —
-        # RoundProcessor reads via pe_stats() / boundary_counts() accessors.
-        self._pe_mean: list[float] = []
-        self._pe_max: list[float] = []
-        self._pe_count: list[int] = []
-        self._n_boundaries: list[int] = []
+        # Episode hysteresis: per-topic, turns since last episode-start.
+        self._episode_age: list[int] = []
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    def _new_cluster_score(self, s: np.ndarray) -> float:
-        return self.tau * self.cos_threshold
 
     def _new_topic(self) -> TopicV33RNN:
         return TopicV33RNN(
@@ -131,12 +151,10 @@ class HiEMSegmenterV333:
     def _ensure_topic_slot(self, k: int) -> None:
         while len(self.topics) <= k:
             self.topics.append(self._new_topic())
-            self._f0_centroids.append(np.zeros(self.dim, dtype=np.float64))
+            self._f0_protos.append([])
+            self._f0_means.append(np.zeros(self.dim, dtype=np.float64))
             self._f0_counts.append(0)
-            self._pe_mean.append(0.0)
-            self._pe_max.append(0.0)
-            self._pe_count.append(0)
-            self._n_boundaries.append(0)
+            self._episode_age.append(0)
 
     def _surprise_forces_new(self, s: np.ndarray) -> bool:
         if not self.topics or self.pe_threshold >= 1.0:
@@ -158,37 +176,56 @@ class HiEMSegmenterV333:
         return None
 
     def _f0_score(self, k: int, s: np.ndarray) -> float:
-        """Cosine score against topic ``k``'s f0 centroid.
+        """Softened f0 score: (1-γ) cos(s, mean) + γ logmeanexp_p cos(s, p).
 
-        Cold-start (`f0_count < f0_min_starts`) falls back to the
-        ordinary centroid ``mu``.
+        Cold-start (count < f0_min_starts) → topic centroid mu fallback.
         """
-        if self._f0_counts[k] < self.f0_min_starts:
+        if self._f0_counts[k] < self.f0_min_starts or not self._f0_protos[k]:
             ref = self.topics[k].mu
-        else:
-            ref = self._f0_centroids[k]
-        n = float(np.linalg.norm(ref))
-        if n <= 1e-12:
-            return 0.0
-        return float(np.dot(ref / n, s))
+            n = float(np.linalg.norm(ref))
+            if n <= 1e-12:
+                return 0.0
+            return float(np.dot(ref / n, s))
+        # Mean prototype.
+        mean = self._f0_means[k]
+        nm = float(np.linalg.norm(mean))
+        cos_mean = float(np.dot(mean / max(nm, 1e-12), s)) if nm > 1e-12 else 0.0
+        # logmeanexp over individual prototypes (numerical stable softmax of cos).
+        cos_vals = [float(np.dot(p, s)) for p in self._f0_protos[k]]
+        soft_max = _logmeanexp(cos_vals)
+        gamma = self.f0_proto_weight
+        return (1.0 - gamma) * cos_mean + gamma * soft_max
 
     def _update_f0(self, k: int, s: np.ndarray) -> None:
-        """Update topic ``k``'s f0 centroid with a fresh episode-start sample."""
         self._f0_counts[k] += 1
-        delta = s - self._f0_centroids[k]
-        self._f0_centroids[k] = self._f0_centroids[k] + delta / self._f0_counts[k]
-        nrm = float(np.linalg.norm(self._f0_centroids[k]))
+        s_unit = s / max(float(np.linalg.norm(s)), 1e-12)
+        s_unit = s_unit.astype(np.float64)
+        # Update running mean (un-normalized; normalized at score time).
+        n = self._f0_counts[k]
+        self._f0_means[k] = self._f0_means[k] + (s_unit - self._f0_means[k]) / n
+        # Append / merge into prototype list.
+        protos = self._f0_protos[k]
+        if len(protos) < self.f0_proto_max:
+            protos.append(s_unit)
+            return
+        best_i, best_v = 0, -2.0
+        for i, p in enumerate(protos):
+            v = float(np.dot(p, s_unit))
+            if v > best_v:
+                best_v, best_i = v, i
+        merged = (protos[best_i] + s_unit) / 2.0
+        nrm = float(np.linalg.norm(merged))
         if nrm > 1e-12:
-            self._f0_centroids[k] = self._f0_centroids[k] / nrm
+            merged = merged / nrm
+        protos[best_i] = merged
 
     # ------------------------------------------------------------------
-    # Score / branch selection
+    # Score / branch
     # ------------------------------------------------------------------
 
     def _scores_with_repeat_restart(
         self, s: np.ndarray, prior: np.ndarray, active: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Compute MAP scores. For ``k == prev_k`` track repeat / restart."""
         log_scores = np.empty(active.shape[0], dtype=np.float64)
         repeat_scores = np.full(active.shape[0], -np.inf, dtype=np.float64)
         restart_scores = np.full(active.shape[0], -np.inf, dtype=np.float64)
@@ -196,33 +233,25 @@ class HiEMSegmenterV333:
             k_int = int(k)
             log_prior = math.log(prior[k_int])
             if k_int >= len(self.topics):
-                log_scores[i] = log_prior + self._new_cluster_score(s)
+                log_scores[i] = log_prior + self.tau * self.cos_threshold
                 continue
             repeat_lik = self.tau * self.topics[k_int].log_likelihood(s)
             repeat = log_prior + repeat_lik
             repeat_scores[i] = repeat
             if k_int == self.prev_k:
-                # SEM2 restart branch: subtract sticky lambda from prior,
-                # use f0 likelihood instead of repeat.
                 base = max((self.counts[k_int] + 1) ** self.beta, 1e-300)
                 log_prior_no_sticky = math.log(base)
                 f0_lik = self.f0_tau * self._f0_score(k_int, s)
                 restart = log_prior_no_sticky + f0_lik
                 restart_scores[i] = restart
-                # gate restart by repeat-PE: only consider restart when
-                # repeat prediction is *not* very good
                 pe_repeat = self.topics[k_int].prediction_error(s)
-                if pe_repeat > self.restart_pe_threshold:
+                if pe_repeat >= self.restart_pe_min:
                     log_scores[i] = max(repeat, restart)
                 else:
                     log_scores[i] = repeat
             else:
                 log_scores[i] = repeat
         return log_scores, repeat_scores, restart_scores
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def assign(self, s: np.ndarray) -> tuple[int, bool]:
         prior = sticky_crp_unnormed(
@@ -241,56 +270,45 @@ class HiEMSegmenterV333:
             chosen_idx = int(np.argmax(log_scores))
         k = int(active[chosen_idx])
 
-        # Boundary determination.
+        # Posterior odds + margin + hysteresis for same-label restart.
         is_restart = False
         if (
             self.prev_k is not None
             and k == self.prev_k
             and not math.isinf(restart_scores[chosen_idx])
+            and not math.isinf(repeat_scores[chosen_idx])
         ):
+            r = restart_scores[chosen_idx]
+            p = repeat_scores[chosen_idx]
+            m = max(r, p)
+            er = math.exp(r - m)
+            ep = math.exp(p - m)
+            denom = er + ep
+            p_rst = er / denom
+            p_rep = ep / denom
+            age = self._episode_age[k] if k < len(self._episode_age) else 0
             if (
-                restart_scores[chosen_idx]
-                > repeat_scores[chosen_idx] + self.restart_margin
+                p_rst > self.restart_p_threshold
+                and (p_rst - p_rep) > self.restart_prob_margin
+                and age >= self.episode_min_span
             ):
                 is_restart = True
 
         self._ensure_topic_slot(k)
-        # PE running stats (for importance v2 salience export). Before topic.update.
-        if self.counts[k] >= 1:
-            pe = float(self.topics[k].prediction_error(s))
-            pe = max(0.0, min(2.0, pe))
-            n_prev = self._pe_count[k]
-            n_new = n_prev + 1
-            self._pe_mean[k] = (self._pe_mean[k] * n_prev + pe) / n_new
-            self._pe_max[k] = max(self._pe_max[k], pe)
-            self._pe_count[k] = n_new
-        # update topic state (RNN + centroid)
         self.topics[k].update(s)
         self.counts[k] += 1
 
         is_label_change = self.prev_k is not None and k != self.prev_k
         is_boundary = is_label_change or is_restart
-        # f0 update on episode-start: every boundary (incl. new topic) and
-        # the very first turn of a brand-new topic.
+
         if is_boundary or self.counts[k] == 1:
             self._update_f0(k, s)
-            self._n_boundaries[k] += 1
+            self._episode_age[k] = 0
+        else:
+            self._episode_age[k] += 1
 
         self.prev_k = k
         return k, is_boundary
-
-    def pe_stats(self) -> dict[int, dict[str, float]]:
-        return {
-            k: {"mean": float(self._pe_mean[k]), "max": float(self._pe_max[k]),
-                "count": int(self._pe_count[k])}
-            for k in range(len(self.topics)) if self._pe_count[k] > 0
-        }
-
-    def boundary_counts(self) -> dict[int, int]:
-        return {
-            k: int(self._n_boundaries[k])
-            for k in range(len(self.topics)) if self.counts[k] > 0
-        }
 
     def predict_topic(self, s: np.ndarray) -> int:
         if not self.topics:

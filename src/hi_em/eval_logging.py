@@ -237,4 +237,17 @@ def aggregate_summary(per_q: list[dict[str, Any]]) -> dict[str, float]:
             out[key] = float(np.mean(vals))
             out[f"{key}_n"] = float(len(vals))
 
+    # Dormant evidence audit (hi-em only, importance-policy diagnostic).
+    # `dormant_top_topic_share` directly answers "is dormant evidence
+    # concentrated in one topic (high → promotion fix is enough) vs spread
+    # (low → segmentation-level cause)."
+    for key in (
+        "dormant_ev_rate", "n_topics_with_ev", "top_ev_topic_promoted",
+        "n_dormant_topics_with_ev", "dormant_top_topic_n_ev",
+        "dormant_top_topic_share",
+    ):
+        vals = [r[key] for r in per_q if key in r]
+        if vals:
+            out[key] = float(np.mean(vals))
+
     return out

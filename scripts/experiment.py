@@ -167,6 +167,21 @@ def run_method(
         logf.write(f"\n[exit] {exp_id} rc={rc}\n")
         logf.write(f"=== END {datetime.now().isoformat()} ===\n")
     exit_path.write_text(str(rc))
+
+    # On success, run the post-hoc evidence→topic analyzer. No-op for
+    # non-hi-em methods (the analyzer silently skips when working_state
+    # is absent). Failure is non-fatal — REPORT will just miss the
+    # topics/q columns for this run.
+    if rc == 0:
+        try:
+            subprocess.run(
+                ["uv", "run", "python", "scripts/analyze_evidence_topics.py",
+                 "--run", str(run_dir)],
+                cwd=REPO, check=False,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            print(f"[warn] analyze_evidence_topics failed for {label}: {e}")
     return rc
 
 
@@ -251,6 +266,16 @@ def load_topk(run_dir: Path) -> dict:
     return json.loads(tk.read_text()) if tk.exists() else {}
 
 
+def load_evidence_topic_summary(run_dir: Path) -> dict:
+    p = run_dir / "evidence_topic_summary.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return {}
+
+
 def n_topics_avg(run_dir: Path) -> float:
     rj = run_dir / "stm_topk.rounds.jsonl"
     if not rj.exists():
@@ -319,10 +344,13 @@ def write_report(experiment_dir: Path, experiment_name: str) -> None:
         "| method | notes | accuracy_overall | "
         "multi-hop | single-hop | temporal-reasoning | adversarial | open-domain | "
         "H@k | R@k | R-multi-hop@k | P@k | "
+        "dormant_ev_rate | top_ev_promoted | "
+        "n_dormant_top | dormant_top_n_ev | dormant_top_share | "
+        "mh_topics/q | sh_topics/q | temp_topics/q | od_topics/q | "
         "T1μ | T2μ | T3μ | T1max | T2max | T1var | STM_n_topics | "
         "gen_p50(s) | wall |"
     )
-    sep = "|" + "---|" * 21
+    sep = "|" + "---|" * 30
 
     # n_questions is identical across runs in one sweep (same data + limit/stratify).
     # Pull it out of the per-row table and report once in the header.
@@ -343,6 +371,10 @@ def write_report(experiment_dir: Path, experiment_name: str) -> None:
     lines.append("Columns: H@k/R@k/P@k — retrieval hit/recall/precision against "
                  "LoCoMo answer-evidence turn ids; R-multi-hop@k — strict "
                  "all-evidence-included rate on multi-hop questions only; "
+                 "{mh,sh,temp,od}_topics/q — mean number of distinct topics that "
+                 "evidence turns of a question landed in, restricted to questions "
+                 "with n_evidence≥2 (smaller = segmenter co-locates evidence; "
+                 "computed by scripts/analyze_evidence_topics.py); "
                  "T1μ/T2μ/T3μ — mean STM top-1/2/3 topic turn-counts; "
                  "T1var — variance of top-1 across rounds; "
                  "STM_n_topics — mean STM topic count per round; "
@@ -380,11 +412,28 @@ def write_report(experiment_dir: Path, experiment_name: str) -> None:
         rk = s.get("R@k", "-")
         rmhk = s.get("R-multi-hop@k", "-")
         pk = s.get("P@k", "-")
+        # Dormant evidence audit (added 2026-05-10; hi-em only, older runs lack).
+        # 2026-05-11 추가: dormant 안 집중도 (top_share) — "한 dormant topic 에
+        # evidence 가 몰려있는가" 직접 측정.
+        dor_rate = s.get("dormant_ev_rate", "-")
+        top_prom = s.get("top_ev_topic_promoted", "-")
+        n_dor_top = s.get("n_dormant_topics_with_ev", "-")
+        dor_top_n = s.get("dormant_top_topic_n_ev", "-")
+        dor_top_share = s.get("dormant_top_topic_share", "-")
+        # Evidence→topic concentration (added 2026-05-13; hi-em only).
+        ets = load_evidence_topic_summary(d)
+        mh_t = ets.get("mh_topics_per_q", "-")
+        sh_t = ets.get("sh_topics_per_q", "-")
+        temp_t = ets.get("temp_topics_per_q", "-")
+        od_t = ets.get("od_topics_per_q", "-")
         notes = format_notes(method, cfg, ov)  # overrides folded into notes
         lines.append(
             f"| {method} ({d.name}) | {notes} | "
             f"{fmt(acc)} | {fmt(mh)} | {fmt(sh)} | {fmt(tr)} | {fmt(adv)} | {fmt(od)} | "
             f"{fmt(hk)} | {fmt(rk)} | {fmt(rmhk)} | {fmt(pk,4)} | "
+            f"{fmt(dor_rate,3)} | {fmt(top_prom,3)} | "
+            f"{fmt(n_dor_top,2)} | {fmt(dor_top_n,2)} | {fmt(dor_top_share,3)} | "
+            f"{fmt(mh_t,2)} | {fmt(sh_t,2)} | {fmt(temp_t,2)} | {fmt(od_t,2)} | "
             f"{fmt(t1.get('mean'),1)} | {fmt(t2.get('mean'),1)} | {fmt(t3.get('mean'),1)} | "
             f"{t1.get('max','-')} | {t2.get('max','-')} | {fmt(t1.get('variance'),1)} | "
             f"{fmt(n_topics_avg(d),2)} | {fmt(gen_p50,2)} | {fmt_wall(wall)} |"

@@ -29,7 +29,7 @@ from typing import Any
 
 from hi_em.ltm import LTM
 from hi_em.memory_window import MemoryWindow
-from hi_em.topic_importance import compute_importance
+from hi_em.topic_importance import compute_importance, compute_importance_v2
 
 log = logging.getLogger(__name__)
 
@@ -56,11 +56,14 @@ class RoundProcessor:
         stm: MemoryWindow,
         *,
         threshold: float = 0.5,
-        alpha: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        alpha: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0),
         lambda_r: float = 0.5,
         lambda_freq: float = 0.5,
         min_floor: float = 0.1,
         clear_stm_each_round: bool = False,
+        importance_version: str = "v1",
+        importance_v2_extra: dict | None = None,
+        salience_provider: object | None = None,
     ) -> None:
         self.conv_id = conv_id
         self._ltm = ltm
@@ -71,6 +74,10 @@ class RoundProcessor:
         self._lambda_freq = lambda_freq
         self._min_floor = min_floor
         self._clear_stm_each_round = clear_stm_each_round
+        self._importance_version = importance_version
+        self._importance_v2_extra = importance_v2_extra or {}
+        # salience_provider 는 segmenter 객체 (pe_stats() / boundary_counts() 메소드)
+        self._salience_provider = salience_provider
 
         self._round_idx: int = 0
         self._mention_log: dict[int, list[int]] = {}
@@ -95,6 +102,13 @@ class RoundProcessor:
     def neighbor_weights(self) -> dict[int, dict[int, float]]:
         with self._lock:
             return {src: dict(neigh) for src, neigh in self._neighbor_weights.items()}
+
+    @property
+    def latest_importance(self) -> dict[int, float]:
+        """Latest computed normalized importance (post-round). Empty before
+        first round. Used by importance-only retrieval (CLAUDE.md 최상위 규칙)."""
+        with self._lock:
+            return dict(self._prev_importance)
 
     # ----------------------------------------------------------------
     # Sync entry
@@ -126,19 +140,44 @@ class RoundProcessor:
                 self._round_idx += 1
                 return RoundResult(round_idx, {}, [], [], [], 0)
 
-            # Normalized importance per spec ("topic_importance 계산 후 정규화").
-            importance = compute_importance(
-                state,
-                round_now=round_idx,
-                mention_log=self._mention_log,
-                prev_importance=self._prev_importance,
-                neighbor_weights=self._neighbor_weights,
-                alpha=self._alpha,
-                lambda_r=self._lambda_r,
-                lambda_freq=self._lambda_freq,
-                min_floor=self._min_floor,
-                normalize=True,
-            )
+            # Normalized importance. v1 = original 4-term formula.
+            # v2 = + PE / boundary / persistence (codex 2026-05-11 재설계).
+            if self._importance_version == "v2":
+                pe_stats = None
+                boundary_counts = None
+                if self._salience_provider is not None:
+                    if hasattr(self._salience_provider, "pe_stats"):
+                        pe_stats = self._salience_provider.pe_stats()
+                    if hasattr(self._salience_provider, "boundary_counts"):
+                        boundary_counts = self._salience_provider.boundary_counts()
+                importance = compute_importance_v2(
+                    state,
+                    round_now=round_idx,
+                    mention_log=self._mention_log,
+                    prev_importance=self._prev_importance,
+                    neighbor_weights=self._neighbor_weights,
+                    pe_stats=pe_stats,
+                    boundary_counts=boundary_counts,
+                    alpha=self._alpha,
+                    lambda_r=self._lambda_r,
+                    lambda_freq=self._lambda_freq,
+                    min_floor=self._min_floor,
+                    normalize=True,
+                    **self._importance_v2_extra,
+                )
+            else:
+                importance = compute_importance(
+                    state,
+                    round_now=round_idx,
+                    mention_log=self._mention_log,
+                    prev_importance=self._prev_importance,
+                    neighbor_weights=self._neighbor_weights,
+                    alpha=self._alpha,
+                    lambda_r=self._lambda_r,
+                    lambda_freq=self._lambda_freq,
+                    min_floor=self._min_floor,
+                    normalize=True,
+                )
 
             promoted: list[int] = []
             with self._stm.lock:  # atomic round transition (bug 9 fix)
