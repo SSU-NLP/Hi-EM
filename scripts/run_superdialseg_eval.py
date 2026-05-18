@@ -48,13 +48,13 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 from hi_em.embedding import QueryEncoder  # noqa: E402
 from hi_em.sem_core_v339 import HiEMSegmenterV339  # noqa: E402
-from hi_em.sem_core_v3310 import HiEMSegmenterV3310  # noqa: E402
+from hi_em.sem_core_v411 import HiEMSegmenterV411  # noqa: E402
 
 SDS = REPO / "benchmarks" / "superdialseg_data"
 CACHE = REPO / "outputs" / "runs" / "_misc"
 TIAGE_DELTA_STAR = 0.5557  # v3.3.9 TIAGE-train δ*
-# v3.3.10 TIAGE-train calibration best (v3310_delta_star_train.md):
-V3310_M, V3310_RHO, V3310_A, V3310_DSTAR = 2, 0.7, 0.5, 0.5594
+# v4.1.1 TIAGE-train calibration best (v411_delta_star_train.md):
+V411_M, V411_RHO, V411_A, V411_DSTAR = 2, 0.7, 0.5, 0.5594
 
 
 def total_score(f1: float, pk: float, wd: float) -> float:
@@ -143,7 +143,7 @@ def best_theta(dialogs, embs):
 
 
 def delta_eff_seq(emb, m, rho, a):
-    """v3.3.10 δ_eff = a·δ_prev + (1-a)·δ_ctx, causal (mirrors segmenter)."""
+    """v4.1.1 δ_eff = a·δ_prev + (1-a)·δ_ctx, causal (mirrors segmenter)."""
     out = []
     for t in range(1, len(emb)):
         pa, pb = emb[t - 1], emb[t]
@@ -192,10 +192,10 @@ def seg_pred(emb, delta_star):
     return [1 if ids[i] != ids[i + 1] else 0 for i in range(len(ids) - 1)] + [0]
 
 
-def seg_pred_v3310(emb, delta_star):
-    seg = HiEMSegmenterV3310(
+def seg_pred_v411(emb, delta_star):
+    seg = HiEMSegmenterV411(
         dim=emb.shape[1], alpha=1.0, lmda=10.0, delta_star=delta_star,
-        ctx_window=V3310_M, ctx_decay=V3310_RHO, ctx_blend_a=V3310_A)
+        ctx_window=V411_M, ctx_decay=V411_RHO, ctx_blend_a=V411_A)
     import torch
     torch.manual_seed(0)
     ids = [seg.assign(s.astype(np.float64))[0] for s in emb]
@@ -246,9 +246,9 @@ def main() -> None:
 
     print("[3/3] eval")
     theta = best_theta(dialogs, embs)  # δ_prev oracle (prev-cos / v3.3.9)
-    theta10 = best_thr_generic(  # δ_eff oracle (v3.3.10 blend)
+    theta10 = best_thr_generic(  # δ_eff oracle (v4.1.1 blend)
         dialogs, embs,
-        lambda e: delta_eff_seq(e, V3310_M, V3310_RHO, V3310_A))
+        lambda e: delta_eff_seq(e, V411_M, V411_RHO, V411_A))
 
     # δ* calibrated on a SEPARATE split (no test leakage) — the proper
     # tuned number vs TIAGE-δ* zero-shot and vs test-oracle upper bound.
@@ -261,15 +261,15 @@ def main() -> None:
         cth = best_theta(cdia, cemb)
         cth10 = best_thr_generic(
             cdia, cemb,
-            lambda e: delta_eff_seq(e, V3310_M, V3310_RHO, V3310_A))
+            lambda e: delta_eff_seq(e, V411_M, V411_RHO, V411_A))
         print(f"  [calib] δ*_prev={cth:.4f}  δ*_eff={cth10:.4f}")
         cal_rows = [
             eval_method(
                 f"v3.3.9 @{cds}-{csp}-δ*={cth:.3f} (calibrated)",
                 dialogs, embs, lambda e: seg_pred(e, cth)),
             eval_method(
-                f"v3.3.10 @{cds}-{csp}-δ*={cth10:.3f} (calibrated)",
-                dialogs, embs, lambda e: seg_pred_v3310(e, cth10)),
+                f"v4.1.1 @{cds}-{csp}-δ*={cth10:.3f} (calibrated)",
+                dialogs, embs, lambda e: seg_pred_v411(e, cth10)),
         ]
     rows = cal_rows + [
         eval_method(f"prevcos @oracleθ={theta:.3f} (similarity ceiling)",
@@ -279,12 +279,12 @@ def main() -> None:
         eval_method(f"v3.3.9 @oracle-δ*={theta:.3f} (upper bound)",
                     dialogs, embs, lambda e: seg_pred(e, theta)),
         eval_method(
-            f"v3.3.10 @TIAGE-cfg(m{V3310_M},ρ{V3310_RHO},a{V3310_A},"
-            f"δ*{V3310_DSTAR}) (zero-shot)",
-            dialogs, embs, lambda e: seg_pred_v3310(e, V3310_DSTAR)),
+            f"v4.1.1 @TIAGE-cfg(m{V411_M},ρ{V411_RHO},a{V411_A},"
+            f"δ*{V411_DSTAR}) (zero-shot)",
+            dialogs, embs, lambda e: seg_pred_v411(e, V411_DSTAR)),
         eval_method(
-            f"v3.3.10 @oracle-δ*={theta10:.3f} (upper bound)",
-            dialogs, embs, lambda e: seg_pred_v3310(e, theta10)),
+            f"v4.1.1 @oracle-δ*={theta10:.3f} (upper bound)",
+            dialogs, embs, lambda e: seg_pred_v411(e, theta10)),
     ]
     for r in rows:
         r["score"] = total_score(r["f1"], r["pk"], r["wd"])

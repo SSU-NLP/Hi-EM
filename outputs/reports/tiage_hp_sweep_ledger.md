@@ -58,12 +58,20 @@ multi-qa-mpnet (우리 기본; 문헌 인코더 정합은 미확정 caveat).
 | ″ | ″ | **v3.3.10 @TIAGE-cfg (zero-shot)** | **0.463** | 0.432 | 0.471 | **0.541** | 0.316 |
 | ″ | ″ | v3.3.10 @oracle-δ* | 0.446 | 0.458 | 0.470 | 0.663 | 0.545 |
 
-**판정**: v3.3.10 > v3.3.9 on **Score·WD·predrate**(과분절 억제, codex
-causal-window 예측 실증 — TIAGE +0.006 노이즈는 잡담 특유 가림이었음);
-F1 은 v3.3.9 우위(경계 덜 찍어 recall↓ ↔ WD↑). 인접-cosine unsupervised
-**천장 ≈ F1 0.46 / Score 0.45**(전 oracle 행 수렴) → 문헌 0.55~0.65 는
-unsupervised 도달 불가 = supervised regime 시사. 직접 우열주장 금지
-(인코더·supervised 미확정).
+| `2026-05-18_dialseg711_test_v3310` | dialseg711 test (711d/19350t, bnd 0.142) | prev-cos@oracleθ (천장) | 0.590 | 0.536 | 0.322 | 0.389 | 0.236 |
+| ″ | ″ | v3.3.9 @TIAGE-δ* (zero-shot) | 0.514 | 0.492 | 0.394 | 0.534 | 0.368 |
+| ″ | ″ | **v3.3.10 @TIAGE-cfg (zero-shot)** | **0.590** | **0.549** | 0.325 | 0.415 | 0.269 |
+| ″ | ″ | v3.3.10 @oracle-δ* (상한) | **0.629** | 0.560 | 0.285 | 0.319 | 0.154 |
+
+**판정 (superseg + dialseg711 종합)**: v3.3.10 > v3.3.9 일관 —
+superseg Score 0.460→0.463·WD 0.589→0.541; **dialseg711 Score
+0.514→0.590(+0.076)·F1 0.492→0.549** zero-shot. causal-window 가
+표준벤치 2개에서 가치 입증 (TIAGE +0.006 은 잡담 특유 가림). dialseg711
+은 v3.3.10 zero-shot 이 유사도 천장(0.590) 매칭, oracle Pk 0.285/WD
+0.319 = unsupervised 문헌 경쟁권. superseg 는 인접-cosine 천장 ≈ F1
+0.46(잡담형이라 낮음). **벤치별로 천장이 다름** — dialseg711(합성,
+경계 선명) 은 유사도 방법 적합, superseg/tiage 는 어려움. 직접
+우열주장 금지(인코더·supervised·split 미확정).
 
 ---
 
@@ -76,10 +84,13 @@ unsupervised 도달 불가 = supervised regime 시사. 직접 우열주장 금�
 - **v3.3.10 TIAGE test** — train +0.006(노이즈)라 full sweep 폐기.
   단 SuperDialseg 에서 Score/WD 이득 확인됨 → TIAGE test 1회는
   cross-check 가치만(낮음).
-- **Dialseg711 test** (711d/19350t, zero-shot 표준벤치) — 어댑터
-  준비됨(`run_superdialseg_eval.py --dataset dialseg711`), 미실행.
-- **superseg δ* val-calibration** — 현재 v3.3.x 는 TIAGE-δ* zero-shot
-  전이. superseg validation 으로 δ* 재calibration 시 향상 여지(미실행).
+- ~~Dialseg711 test~~ **완료** (`2026-05-18_dialseg711_test_v3310`,
+  위 표) — v3.3.10 zero-shot 이 유사도 천장 매칭.
+- **superseg δ* val-calibration** — 진행 예정 (`--calib-dataset
+  superseg --calib-split validation`). 현재 TIAGE-δ* zero-shot 전이라
+  향상 여지(특히 superseg). rename(v4.1.1) 후 실행.
+- **v3.3.10 → v4.1.1 rename** — 사용자 지시(2026-05-18), Dialseg711
+  후. 새 메이저 라인(prev-cos identity+causal-window).
 - **인코더 정합 ablation** (all-mpnet-base-v2 등 문헌 정합) — 미실행.
 - **strong-similarity 천장(codex C)**: TextTiling-SBERT depth — 부분
   대체됨(oracle 행이 천장 ≈0.46 확정). 정밀 depth-method 는 미실행.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""v3.3.10 δ* train-calibration (no test leakage).
+"""v4.1.1 δ* train-calibration (no test leakage).
 
-At η=1 the v3.3.10 MAP decision reduces to a hard cut on
+At η=1 the v4.1.1 MAP decision reduces to a hard cut on
 ``δ_eff = a·δ_prev + (1-a)·δ_ctx`` (codex 2026-05-18: prior-corrected
 B0 makes repeat-vs-fresh ≡ δ_eff < δ*). δ_eff depends ONLY on the
 sentence embeddings + (m, ρ, a) — not on the sCRP/MAP loop — so the
@@ -25,7 +25,7 @@ sys.path.insert(0, str(REPO / "src"))
 from hi_em.embedding import QueryEncoder  # noqa: E402
 
 DATA = REPO / "benchmarks" / "tiage" / "data" / "personachat" / "anno"
-OUT = REPO / "outputs" / "runs" / "_misc" / "v3310_delta_star_train.md"
+OUT = REPO / "outputs" / "runs" / "_misc" / "v411_delta_star_train.md"
 
 GRID_M = [2, 3, 4]
 GRID_RHO = [0.5, 0.7, 0.9]
@@ -102,7 +102,7 @@ def main() -> None:
 
     rows.sort(key=lambda r: -r[4])
     lines = [
-        "# v3.3.10 δ* train-calibration (TIAGE train, no test leakage)",
+        "# v4.1.1 δ* train-calibration (TIAGE train, no test leakage)",
         f"n_conv={len(dialogs)} n_trans={int(ok.sum())} "
         f"GT_shifts={int(g.sum())}",
         "δ_eff = a·δ_prev + (1-a)·δ_ctx ; boundary when δ_eff ≥ δ*. "
@@ -121,7 +121,7 @@ def main() -> None:
         f"δ*={rows[0][3]:.4f} (train F1 {rows[0][4]:.3f})",
         "",
         "→ Evaluate the top configs ONCE on TIAGE test with these fixed "
-        "δ* (scripts/run_tiage_full_compare.py, v3.3.10). a=1.0 "
+        "δ* (scripts/run_tiage_full_compare.py, v4.1.1). a=1.0 "
         "≈ v3.3.9 reference; gain over it = causal-window value.",
     ]
     OUT.parent.mkdir(parents=True, exist_ok=True)

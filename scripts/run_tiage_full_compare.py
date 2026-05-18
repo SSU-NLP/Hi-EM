@@ -45,7 +45,7 @@ from hi_em.sem_core_v336 import HiEMSegmenterV336  # noqa: E402
 from hi_em.sem_core_v337 import HiEMSegmenterV337  # noqa: E402
 from hi_em.sem_core_v338 import HiEMSegmenterV338  # noqa: E402
 from hi_em.sem_core_v339 import HiEMSegmenterV339  # noqa: E402
-from hi_em.sem_core_v3310 import HiEMSegmenterV3310  # noqa: E402
+from hi_em.sem_core_v411 import HiEMSegmenterV411  # noqa: E402
 
 
 DATA_DIR = REPO_ROOT / "benchmarks" / "tiage" / "data" / "personachat" / "anno"
@@ -186,8 +186,8 @@ def _factory_v339(dim):
     return HiEMSegmenterV339(dim=dim, alpha=1.0, lmda=10.0)
 
 
-def _factory_v3310(dim):
-    return HiEMSegmenterV3310(dim=dim, alpha=1.0, lmda=10.0)
+def _factory_v411(dim):
+    return HiEMSegmenterV411(dim=dim, alpha=1.0, lmda=10.0)
 
 
 METHODS = [
@@ -204,7 +204,7 @@ METHODS = [
     ("v3.3.7", _factory_v337, True),
     ("v3.3.8", _factory_v338, True),
     ("v3.3.9", _factory_v339, True),
-    ("v3.3.10", _factory_v3310, True),
+    ("v4.1.1", _factory_v411, True),
 ]
 
 
@@ -219,7 +219,7 @@ SWEEP_CLASSES = {
     "v3.3.6": HiEMSegmenterV336,
     "v3.3.7": HiEMSegmenterV337,
     "v3.3.9": HiEMSegmenterV339,
-    "v3.3.10": HiEMSegmenterV3310,
+    "v4.1.1": HiEMSegmenterV411,
 }
 
 # Stage A coarse grid (27 combos/method). Override via --grid.

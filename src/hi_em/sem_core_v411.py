@@ -48,7 +48,7 @@ from hi_em.scrp import sticky_crp_unnormed
 from hi_em.topic_v336 import TopicV336
 
 
-class HiEMSegmenterV3310:
+class HiEMSegmenterV411:
     """v3.3.9 + causal-window δ (codex 2026-05-18 (A); identity dynamics).
 
     v3.3.9 used δ_prev = 1-cos(s_{t-1}, s_t) — the SINGLE previous
@@ -147,13 +147,13 @@ class HiEMSegmenterV3310:
         # train F1 0.437 @ cos_th 0.4443, n_conv=300 — test never touched)
         sigma_delta_c: float = 0.0625,  # σδ² = c·δ*² (codex: temperature, 1/16)
         sigma_delta_sq: float | None = None,  # explicit override of c·δ*²
-        # v3.3.10 — causal-window δ (codex 2026-05-18 (A))
+        # v4.1.1 — causal-window δ (codex 2026-05-18 (A))
         ctx_window: int = 3,  # m: # past utterances in context vector
         ctx_decay: float = 0.7,  # ρ: geometric decay (recent weighted more)
         ctx_blend_a: float = 0.5,  # a: δ_adj = a·δ_prev + (1-a)·δ_ctx
         # NOTE δ* default below is the v3.3.9 prev-cos value — a PLACEHOLDER.
         # It MUST be re-estimated on TIAGE train for each (m,ρ,a) before
-        # any test eval (scripts/calibrate_v3310_delta_star.py).
+        # any test eval (scripts/calibrate_v411_delta_star.py).
         var_likelihood_weight: float = 1.0,
         hard_pe_fallback: bool = False,
         # v3.3.5 cold-start gating
@@ -402,7 +402,7 @@ class HiEMSegmenterV3310:
         return 1.0 - float(np.dot(a, b) / (na * nb))
 
     def _delta_ctx(self, s: np.ndarray) -> float | None:
-        """v3.3.10: δ_ctx = 1 - cos(c_{t-1}, s), where
+        """v4.1.1: δ_ctx = 1 - cos(c_{t-1}, s), where
         c_{t-1} = normalize(Σ_{i=1..m} ρ^{i-1} s_{t-i}) over the causal
         window (most-recent weighted most). None before any past turn."""
         if not self._recent:
@@ -424,7 +424,7 @@ class HiEMSegmenterV3310:
         return self.use_rnn and self.eta_prev < 1.0
 
     def _delta_eff(self, k: int, s: np.ndarray) -> float:
-        """v3.3.10: δ_adj = a·δ_prev + (1-a)·δ_ctx (causal-window blend),
+        """v4.1.1: δ_adj = a·δ_prev + (1-a)·δ_ctx (causal-window blend),
         then δ_eff² = η·δ_adj² + (1-η)·δ_model². RNN (δ_model) skipped
         when not _uses_rnn (η=1 or use_rnn=False) → δ_eff = δ_adj,
         identical result, no GRU forward. Falls back before s_{t-1} /
@@ -628,7 +628,7 @@ class HiEMSegmenterV3310:
         self.prev_k = k
         s_copy = np.array(s, dtype=np.float64, copy=True)
         self._prev_s = s_copy  # s_{t-1}
-        self._recent.append(s_copy)  # causal window (v3.3.10)
+        self._recent.append(s_copy)  # causal window (v4.1.1)
         if len(self._recent) > self.ctx_window:
             del self._recent[0]
         return k, is_boundary

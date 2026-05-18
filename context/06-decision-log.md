@@ -1438,3 +1438,21 @@ $$raw_I(t) = w_1 s_{count} + w_2 s_{freq} + w_3 s_{recency} + w_4 s_{nbr} + w_5 
 3. **인접-cosine unsupervised 천장 ≈ F1 0.46 / Score 0.45** (prev-cos·v3.3.9·v3.3.10 oracle 전부 수렴). 문헌 0.55~0.65 는 unsupervised 도달 불가 → **supervised regime** 강하게 시사 (codex SOTA-caveat 실증). 인코더·split·supervised 미확정이라 외부 우열 주장 금지.
 
 **영향**: 신규 벤치/스크립트/데이터 + ledger 를 전 seg벤치로 확장(`outputs/reports/tiage_hp_sweep_ledger.md`) + handoff 갱신. 다음: Dialseg711 eval(어댑터 준비됨), superseg-val δ* 재calibration(현재 TIAGE-δ* zero-shot 전이라 향상 여지), 인코더 정합 ablation, η=1 RNN-skip fast-path(eval ~4배 가속 — RNN dead-weight forward 제거). v3.3.10 은 SuperDialseg Score-우위라 default 승격 후보(단 F1 trade·δ* 미보정이라 보류, superseg-val calibration 후 재판정).
+
+---
+
+## 2026-05-18 — Dialseg711 결과 + v3.3.10 → v4.1.1 rename (새 메이저 라인) (사용자 지시)
+
+**Dialseg711 test (711d/19350t/bnd 0.142, 공식 SuperDialseg metric, `outputs/experiments/2026-05-18_dialseg711_test_v3310/`)**:
+- prev-cos@oracleθ(천장): Score 0.590 / F1 0.536 / Pk 0.322 / WD 0.389
+- v3.3.9 @TIAGE-δ* zero-shot: Score 0.514 / F1 0.492 / Pk 0.394 / WD 0.534
+- **v4.1.1(구3.3.10) @TIAGE-cfg zero-shot: Score 0.590 / F1 0.549 / Pk 0.325 / WD 0.415**
+- v4.1.1 @oracle-δ*: Score 0.629 / F1 0.560 / Pk 0.285 / WD 0.319
+
+**판정**: v4.1.1 zero-shot 이 **튜닝 0 으로 유사도 천장(Score 0.590) 매칭**, v3.3.9 대비 **+0.076 Score**(F1 0.492→0.549). superseg 에 이어 두 번째 표준벤치에서 causal-window 우위 일관 — TIAGE-train "+0.006=노이즈" 는 잡담형 특유 가림이었음 확정. dialseg711(합성·경계 선명)은 유사도 방법 적합 벤치, oracle Pk 0.285/WD 0.319 = unsupervised 문헌 경쟁권(단 oracle=test-tuned 상한, 외부주장 불가; zero-shot 0.590 이 정직값=천장).
+
+**rename 결정 (사용자)**: v3.3.10 → **v4.1.1**. 이유: v3.3.x = "SEM2 RNN scene-dynamics 복원" 계열인데, η-ablation(RNN 무용~유해) + v3.3.9(prev-cos=identity PE 정합복원)로 사실상 learned-dynamics 를 버리고 identity+calibrated-MAP 로 전환됨. v4.1.1(identity+causal-window)은 v3.3.x 정체성과 질적으로 다른 라인 → **메이저 분리**. RNN 코드는 `use_rnn` 플래그로 보존(제거 아님, η=1 자동 skip).
+
+**구현**: `git mv sem_core_v3310.py→sem_core_v411.py`, `calibrate_v3310_delta_star.py→calibrate_v411_delta_star.py` (이력 보존). 코드 일괄 치환 HiEMSegmenterV3310→V411 / v3310→v411 / V3310_→V411_ / v3.3.10→v4.1.1 (run_tiage_full_compare·run_superdialseg_eval·factory·METHODS·SWEEP). 신규 `context/methodology/v4.1.1.md`. **pre-rename 산출물**(`outputs/experiments/2026-05-18_{superseg,dialseg711}_test_v3310/`, ledger 표의 exp명)은 *역사적 명칭(v3310) 유지* — 커밋된 참조·git history 보존. 이후 신규 산출물부터 v411.
+
+**영향**: orchestrator default 는 여전히 v3.3.9 (v4.1.1 승격은 superseg-val δ* 재calibration 후 재판정 — 보류). 다음: superseg val-calibrated 재평가(`--calib-dataset superseg --calib-split validation`, v411 코드). ledger/handoff 갱신. git: dts push (정책 2026-05-18: 명시요청 시 Claude 직접 실행).
