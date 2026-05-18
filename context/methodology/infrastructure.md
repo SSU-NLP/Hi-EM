@@ -183,7 +183,7 @@
 - **어디**: `scripts/analyze_evidence_topics.py` (CLI). `scripts/experiment.py` 의 `run_method` 가 hi-em 류 run 완료 직후 자동 호출.
 - **언제 emit**: `working_state/ltm/<conv>_<method>/<conv>.jsonl` (dia_id → topic_id 매핑) 이 존재하는 모든 hi-em run. 비-hi-em (rag/sliding/full) 은 silently no-op.
 - **산출물 (per run)**:
-  - `<run_dir>/per_question_evidence_topics.csv` — 1986 행 (LoCoMo 전체). 컬럼: `qid, cat, n_ev, n_ev_found, n_topics_used, evidence_dia_ids, evidence_topics, topic_breakdown`.
+  - `<run_dir>/per_question_evidence_topics.csv` — **n_ev≥2 question 만** (n_ev=1 은 segmentation 평가 trivial: 단일 evidence 는 항상 1 topic). LoCoMo 1986 question 중 약 423 행 (multi-hop / 일부 sh/temp/od/adv 의 multi-evidence 케이스만). 컬럼: `qid, cat, n_ev, n_ev_found, n_topics_used, evidence_dia_ids, evidence_topics, topic_breakdown`. **2026-05-14**: 이전엔 n_ev=1 포함 1986 행이었음. 변경 이유 — n_ev=1 은 trivially `n_topics_used=1` 이라 overall mean topics/q 를 1 쪽으로 끌어내려 segmentation 신호 희석. `evidence_topic_summary.json` 의 qtype 별 stats 는 원래부터 n_ev≥2 필터였음. 기존 24개 CSV 도 일괄 정리됨.
   - `<run_dir>/evidence_topic_summary.json` — qtype 별 (mh / sh / temp / od / adv) `_topics_per_q` (= 평균 `n_topics_used`, n_ev≥2 question 만), `_all1_pct`, `_mean_n_ev`, `_n_q`.
 - **REPORT 노출**: `mh_topics/q`, `sh_topics/q`, `temp_topics/q`, `od_topics/q` 컬럼. 작을수록 segmenter 가 evidence 를 적은 수 topic 에 co-locate.
 - **해석**:
@@ -229,6 +229,44 @@ archive/                  # 의도적으로 버린 것 (Phase 4 era — RAG 에 
 - `outputs/legacy/` → orphan smoke jsonl 삭제 (가치 없음)
 
 git 정책: `outputs/experiments/<name>/REPORT.md`, `outputs/reports/*.md`, `outputs/design/*` = committed. `outputs/runs/`, sweep 안의 jsonl 데이터 = gitignored.
+
+---
+
+## 9. SEM2 cold-start gating / dynamics / σ² / fresh-baseline 계열 (v3.3.5~8, 2026-05-17)
+
+- **무엇**: idx374 segmentation 진단에서 파생된 4개 cross-cutting 메커니즘.
+  - `f_is_trained` gating (v3.3.5): untrained topic(transition_count<min_transitions_for_pe) = fresh slot 과 동일 L0 → likelihood 동률, prior(λ) 결정. SEM2 복원.
+  - persistence+replay dynamics (v3.3.6, `TopicV336`): untrained=직전임베딩(identity), per-topic 독립 EventRNN, topic history 전체 replay(n_epochs), `rnn_ready` ≠ `f_is_trained`.
+  - map_variance σ² (v3.3.7): `σ²=(ν₀var₀+n·v)/(ν₀+n+2)`, n≥2 즉시. `pe_var_min_samples` gate 폐기.
+  - fresh-baseline `pe_prior` (v3.3.8): L0 가 cos_threshold 아닌 pe_prior(chance PE)에서 도출. non-prev topic = f0-likelihood(SEM2 `k0≠k_prev`).
+- **어디**: `src/hi_em/sem_core_v33{5,6,7,8}.py`, `src/hi_em/topic_v336.py`, orchestrator `version` dispatch + HP(`min_transitions_for_pe`,`rnn_n_epochs`,`rnn_ready_min_transitions`,`rnn_max_history`,`seed`,`pe_var_df0`,`pe_var_window`,`pe_prior`), `tests/test_sem_core_v33{5,6,8}.py`, `scripts/inspect_longmemeval_segmentation.py --version`.
+- **왜**: methodology v3.3.5~8.md + decision-log 2026-05-17. 핵심 = v3.3.4 의 young-topic centroid 처벌(chicken-and-egg) → SEM2 충실 복원 연쇄.
+- **행동 영향**: v3.3.5~8 전부. v3.3.8 default `pe_prior=1.0`(원칙값)은 idx374 mega-collapse — **작동값은 벤치마크 calibration 대상, N=1 production default 금지**.
+- **한계**: v3.3.7 은 #14|15 경험적 반증(보존). v3.3.8 fresh-baseline 은 embedding-공간 의존 HP(SEM2 단일상수 불가). non-prev f0 는 generic-opener 취약.
+
+## 10. 재현성 — segmenter seed (필수, 2026-05-17)
+
+- **무엇**: EventRNN/per-topic 모델 random init 이 v3.3.4/5 까지 unseeded → 동일 입력 다른 분절(앞선 v3.3.4 REPORT 수치 불일치의 정체). v3.3.6+ 는 `seed`(per-topic `manual_seed(seed·100003+topic_id)`, RNG snapshot/restore) 로 결정적.
+- **어디**: `TopicV336.__init__`, `HiEMSegmenterV33{6,7,8}(seed=...)`, orchestrator `seed` param(default 0).
+- **왜**: CLAUDE.md "모든 randomness seed 고정". 논문 재현성 필수.
+- **행동 영향**: v3.3.6~8. v3.3.4/5 는 unseeded(결과 해석 시 명시). 실험 시 seed 보고 의무.
+- **한계**: v3.3.4/5 소급 적용 안 함(별 버전).
+
+## 11. evidence_recall@K — retrieval 평가 metric (evidence_cohesion 폐기, 2026-05-17)
+
+- **무엇**: `evidence_cohesion=1`(전 evidence 단일 topic) **폐기**. 대체 = `evidence_recall@K` = ★turn 담은 모든 topic 이 importance 상위 K 에 드는가. **Primary = topic-level**, 보조 = session-level(LongMemEval label 호환). 보조 진단 = `topic_precision@K`, prefill token cost.
+- **어디**: 평가 스크립트(향후), `scripts/inspect_longmemeval_s.py`(증거/distractor 분리: `answer_session_ids`+`has_answer`).
+- **왜**: evidence 가 여러 scene 에 본질 분산(idx374) → 단일 topic 강요 = mega-merge = SEM atomicity 위배. decision-log 2026-05-17.
+- **행동 영향**: 모든 LongMemEval segmentation 평가. longmemeval_s 의 session_id 는 SEM 재발견 target 아니라 외생 hard boundary(단 v3.3.9 는 emergent 방향 — session_id 미사용).
+- **한계**: topic↔session 단위 불일치 시 두 지표 병행 보고.
+
+## 12. LongMemEval-S 데이터 + inspect 도구 (2026-05-17)
+
+- **무엇**: `benchmarks/LongMemEval/data/longmemeval_s_cleaned.json`(277MB, 500Q, HF `xiaowu0162/longmemeval-cleaned`). oracle(증거세션만)과 달리 질문당 ~48세션(증거+distractor), ~245 user턴. `has_answer`/`answer_session_ids` 동일 스키마. **idx 정렬이 로컬 oracle 과 다름 — qid 로 매칭**(s idx0=oracle idx286). distractor 는 ShareGPT/UltraChat 재활용 → 세션당 user턴 0~66 불규칙(증거세션은 균질).
+- **어디**: `scripts/inspect_longmemeval_s.py` (`--qid`/`--idx`, 증거세션만 ★ 출력, `--with-distractors`, `--out`). gitignored(`benchmarks/LongMemEval/` 전체).
+- **왜**: oracle 은 retrieval 난이도 제거판 → retrieval 병목(distractor 에서 증거 찾기) 평가 불가. s 필요.
+- **행동 영향**: 향후 evidence_recall@K 평가는 s 기반. oracle 은 segmentation/추론만.
+- **한계**: 질문당 ~245턴 × 500 = 무거움 → qtype stratified subset 권장. 로컬 oracle 은 cleaned 이전 구버전 가능(qid 매칭 필수).
 
 ---
 

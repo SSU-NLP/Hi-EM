@@ -33,8 +33,21 @@
 
 ## 현재 상태
 
-**마지막 업데이트**: 2026-05-09
-**현재 작업**: v3.3.3 (f0/restart) + v3.3.4 (per-topic σ²_k) 구현 완료, full LoCoMo 1986Q 1-shot 평가 완료. retrieval metric (H@k/R@k/R-mh@k/P@k) 도입 + REPORT 보강.
+**마지막 업데이트**: 2026-05-17
+**브랜치**: `dts` (2026-05-17 분리). `main` = QA-baseline 보존 시점.
+
+**🔀 TASK 전환 (2026-05-17, 사용자 결정 — decision-log 참조)**: 주 평가 task 를 **Long-Conversation QA → DTS(Dialogue Topic Segmentation)** 로 전환. 근거: LongMemEval oracle 천장(full)조차 RAG 대비 +0.6pt 라 QA 우위 입증 경로가 데이터상 막힘 → SEM 계승 정체성의 핵심인 분절 품질(과분절·과병합 동시 회피)을 1차 목표로. 평가 체계 = codex 권고(segmentation primary=ARI·Boundary-F1 vs TIAGE/TopiOCQA/pseudo, retrieval primary=topic-level evidence_recall@K, collapse guard=max_share/new_rate/raw_topics). **완료**: TIAGE 12-method 확정 + Pk/WD/ARI/collapse guard. **2026-05-18**: codex 위임 2건 → 근본진단(1줄 prev-cos F1 0.44 가 SEM 전 변형 0.25~0.36 압도, 인코더·eval 무관) → **v3.3.9**(prev-cos=SEM2 identity-PE 정합 복원, prior-corrected B0_t, σδ²=c·δ*², δ* train 재추정). **full TIAGE test 3-seed 확정** (`2026-05-18_tiage_v339_full/`): v3.3.9 ARI **0.408**/F1 **0.437**/Pk **0.415**/WD 0.605/nt 6.9/collapse 0% — 13-method 중 primary(ARI)·F1·Pk 동시 best, prev-cos test 0.433 동급/상회. **v3.3.9 = 새 baseline**. 잔여 약점 WD 0.605 ≫ SOTA 0.420(약과분절). **η-ablation 확정**: η{1.0,0.7,0.5,0.0} 단조 — RNN 비중↑ → WD/F1/Pk/ARI 전부 악화. η=1(RNN-off) best. **RNN 학습환경 진단**: per-topic 별도 EventRNN, TIAGE topic≈3턴 → 샘플 ~3개 + ≥3-전환 게이트 = 구조적 저표본 기근 (learned-f 가 본질적으로 못 배우는 환경). codex confound 판정 **A3**: v3.3.10 = identity 고정 + causal-window δ, RNN 코드 보존, 영구삭제는 model-calibrated fair ablation 후. frozen-pretrained-f 제안 → codex **P2**(현 A3 유지, C 천장측정 후 재검토). **판정 지표 변경**: ARI-primary → **WD/F1/Pk target** (ARI/n_topics/collapse 가드 존치, decision-log 2026-05-18). **default segmenter = v3.3.9** (orchestrator `version` 기본값). **v3.3.10 구현완료**(causal-window δ + identity, RNN 코드 보존). **SuperDialseg test 평가(공식 metric, `2026-05-18_superseg_test_v3310`)**: v3.3.10@TIAGE-cfg zero-shot = **Score 0.463 / WD 0.541 / F1 0.432 / predr 0.316** vs v3.3.9 Score 0.460/WD 0.589/F1 0.449/predr 0.418 → **v3.3.10 > v3.3.9 (Score·WD·과분절억제)**, F1 은 v3.3.9 우위. TIAGE-train "+0.006 노이즈"는 잡담 특유 가림 — causal-window 실벤치서 유효 입증(codex 예측 적중). **인접-cosine unsupervised 천장 ≈ F1 0.46/Score 0.45**(전 oracle 행 수렴) → 문헌 0.55~0.65 = supervised regime 시사. ledger `outputs/reports/tiage_hp_sweep_ledger.md`(전 seg벤치 포함으로 확장). **다음**: Dialseg711 eval(어댑터 준비됨) / superseg-val δ* 재calibration / 인코더 정합 ablation / η=1 RNN-skip fast-path(eval 4배 가속). **미해결**: SOTA 출처·split·supervised·인코더 미확정(외부 초과주장 금지).
+
+**현재 작업 (2026-05-17 세션)**: idx374 segmentation 심층 진단 → SEM2 충실 복원 연쇄 **v3.3.5~8 구현·테스트·문서화 완료**.
+- v3.3.5 `f_is_trained` gating(chicken-and-egg 해소) / v3.3.6 persistence+replay+**seed**(3턴천장·재현성 해소) / v3.3.7 map_variance σ²(#14|15 경험적 반증, 보존) / v3.3.8 fresh-baseline `pe_prior`+non-prev f0.
+- idx374 α=1 λ=10: topic 23(v3.3.4)→11→9→9→7(v3.3.8 pp0.4). 단위테스트 v3.3.5/6/8 = 20개 추가, 전체 117 passed 회귀 0.
+- `evidence_cohesion` metric **폐기**, `evidence_recall@K`(topic primary/session 보조) 채택. longmemeval_s_cleaned.json(277MB) 추가 + `inspect_longmemeval_s.py`.
+- decision-log 8건 append, methodology v3.3.5~8.md + README/infrastructure/03/04 + lme374 REPORT addendum 완료.
+- **v3.3.8 default `pe_prior=1.0`(원칙값)**: idx374 mega-collapse. 작동값(~0.4)은 embedding 의존 → **벤치마크 calibration 미완(검증 미해결)**.
+
+---
+
+**(이하 2026-05-09 이전 이력 보존)**
 
 **핵심 결과 (2026-05-09_v333_v334_full_6method_par REPORT)**:
 
@@ -150,6 +163,42 @@ uv run python scripts/experiment.py \
 ---
 
 ## 다음 할 일 (세션 시작 시 여기서부터)
+
+### 다음 (2026-05-17, DTS 전환 후 — 브랜치 `dts`)
+
+주 task = DTS. 우선순위:
+
+1. ✅ **TIAGE 12-method 비교 확정 완료** — `outputs/experiments/2026-05-17_tiage_all_hiem_full/REPORT.md` (setup/해석/판정/한계 작성됨). 결과: default HP 기준 **전 method DTS 실패** — v3.3.1~v3.3.4-2 every-turn(n_topics=15.6), v1/v3.1.1 과분절(F1 1등은 metric artifact), v3.3.5~7 과병합(v3.3.5 n_topics=5.8 로 GT 4.15 최근접), **v3.3.8 mega-collapse(1 topic, F1=0)** — codex 진단이 TIAGE 100conv 에서 재현(idx374 N=1 과적합 아님 확정).
+2. ✅ **DTS metric 확장 완료** (2026-05-17, codex 위임 2건 — decision-log 참조):
+   - `run_tiage_full_compare.py` 에 **Pk↓/WD↓** + **ARI↑(primary)** + **collapse guard** 추가. ARI = GT seg partition vs 예측 topic-id partition 대화별 `adjusted_rand_score` macro(과분절·과병합·collapse 동시 페널티, collapse-immune) → REPORT 정렬·best 기준. collapse_rate≥50% = `†` + F1/Pk/WD best 제외(v3.3.8 무경계 artifact 차단). Boundary-F1 보조 강등.
+   - **codex 결정**: RNN 제거(A)·아키텍처 교체 Transformer/SSM(B) **둘 다 보류**. v3.3.6 부진=보강조합 역효과+HP미보정이지 RNN무용 아님. v3.3.5 학습부실=저표본 online 학습+calibration 문제(아키텍처 무관). → **v3.3.5 현 baseline 고정**, v3.3.6/7/8 보강 채택 안 함(폐기 아님).
+   - **진행 중**: ARI 반영 full TIAGE 재실행(`/tmp/tiage_ari.log`, solo CPU ~20분) → `2026-05-17_tiage_v33x_compare` REPORT 갱신 예정. 기존 3 REPORT 는 Pk/WD 까지 반영됨.
+3. **다음 1순위 — TIAGE full HP sweep**: v3.3.5/6/7 대상 alpha·lmda·pe_prior, ARI/WD/n_topics 동시. **TIAGE 항상 full(100conv×3seed), subset 금지**(사용자). GPU 불가 확정→CPU-only. 가능화=임베딩 1회 캐시 재사용+HP 코어병렬(Crts 는 세그멘터 오프로드 불가). 분기: 보정해도 v3.3.5 GT 수렴 실패→dynamics 실패→`persistence`/`learned linear`/`small GRU`/`EMA-mixer` ablation. 수렴→calibration 문제, 아키텍처 불변.
+4. **pe_prior calibration** — idx374 N=1 의 ~0.4 는 embedding 의존, production default 금지. TIAGE/TopiOCQA segmentation GT 기준으로 calibration.
+4. (보조, QA 잔여) longmemeval_s evidence_recall@K — DTS 우선순위 뒤로. v3.3.9 emergent segmenter 정의는 decision-log 2026-05-17 유지.
+
+**커밋 미실행** — 사용자에게 명령어 제시 (아래). 브랜치 `dts`, uncommitted 30건+.
+
+---
+
+### (이하 QA-task 시절 잔여 계획 — DTS 전환으로 우선순위 강등, 이력 보존)
+
+#### longmemeval_s 평가 + pe_prior calibration + v3.3.9 (구 1순위)
+
+설계 탐색 수렴 완료(decision-log 2026-05-17). 코드 v3.3.5~8 + 문서 청산 완료. 남은 것:
+
+1. **longmemeval_s 평가** (C, 보류했던 것 — 이제 critical path):
+   - v3.3.4 vs v3.3.6 vs v3.3.8 을 longmemeval_s_cleaned 에서 (qtype stratified subset 권장, 질문당 ~245턴 × 500 무거움).
+   - metric = `evidence_recall@K` (topic-level primary, session-level 보조; `inspect_longmemeval_s.py` 의 has_answer/answer_session_ids 활용). `outputs/experiments/<date>_v33x_lme_s/REPORT.md`.
+   - 목적: (i) v3.3.6 의 idx374 개선이 벤치 scale 에서 유효한지 (ii) **pe_prior 작동값을 데이터로 calibration** (idx374 N=1 의 ~0.4 는 production default 금지).
+2. **v3.3.9 (emergent SEM segmenter)** — decision-log 2026-05-17 재정의: session_id **미사용**, PE/likelihood/fresh-baseline calibration 으로 세션전환 큰 의미변화에서 boundary 자연발생 검증. (time-aware prior 는 v3.3.10 후보 — SEM2 부재 3-step 필요.)
+3. TIAGE gold(Pk/WindowDiff/F1) 로 v3.3.4~8 segmentation 절대품질 객관 검증 (오래 걸려 이번 세션 보류).
+
+**커밋 미실행** — 사용자에게 명령어 제시 상태(아래). uncommitted 30건+.
+
+---
+
+### (이하 2026-05-09 후속 이력 보존)
 
 ### 다음 (2026-05-09 후속): retrieval bottleneck 분석 + v3.3.x HP sweep
 

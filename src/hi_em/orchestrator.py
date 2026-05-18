@@ -77,7 +77,7 @@ class HiEM:
         round_async: bool = True,
         round_clear_stm: bool = False,
         # ---- v3.x (Bounded Cosine variants) -------------------------
-        version: str = "v2",
+        version: str = "v3.3.9",  # 2026-05-18 current BEST (TIAGE DTS)
         tau: float = 50.0,
         cos_threshold: float = 0.7,
         beta: float = 0.5,  # v3.2/v3.3: sub-linear sCRP count exponent
@@ -100,6 +100,19 @@ class HiEM:
         pe_var_max_sq: float = 0.25,
         var_likelihood_weight: float = 1.0,
         hard_pe_fallback: bool = False,
+        # ---- v3.3.5 only (SEM2 f_is_trained cold-start gating) ------
+        min_transitions_for_pe: int = 1,
+        # ---- v3.3.6 only (SEM2-faithful event dynamics) -------------
+        rnn_n_epochs: int = 10,
+        rnn_ready_min_transitions: int = 3,
+        rnn_max_history: int = 64,
+        # ---- v3.3.7 only (SEM2 map_variance posterior σ²) -----------
+        pe_var_df0: float = 1.0,
+        pe_var_window: int = 256,
+        # ---- v3.3.8 only (SEM2-calibrated fresh baseline) -----------
+        pe_prior: float = 1.0,
+        # ---- v3.3.6+ reproducibility -------------------------------
+        seed: int = 0,
         # ---- v3.3.3-2 only (prototype f0 + posterior odds) ----------
         f0_proto_max: int = 4,
         restart_p_threshold: float = 0.35,
@@ -287,6 +300,135 @@ class HiEM:
                 pe_var_shrink_c=pe_var_shrink_c,
                 pe_var_robust=pe_var_robust,
             )
+        elif version == "v3.3.5":
+            from hi_em.sem_core_v335 import HiEMSegmenterV335
+            self._segmenter = HiEMSegmenterV335(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                rnn_train_steps=rnn_train_steps,
+                rnn_max_context=rnn_max_context,
+                rnn_min_history=rnn_min_history,
+                pe_var_decay=pe_var_decay,
+                pe_var_min_samples=pe_var_min_samples,
+                pe_var_sigma0_sq=pe_var_sigma0_sq,
+                pe_var_min_sq=pe_var_min_sq,
+                pe_var_max_sq=pe_var_max_sq,
+                var_likelihood_weight=var_likelihood_weight,
+                hard_pe_fallback=hard_pe_fallback,
+                min_transitions_for_pe=min_transitions_for_pe,
+                restart_pe_threshold=restart_pe_threshold,
+                restart_margin=restart_margin,
+                f0_min_starts=f0_min_starts,
+            )
+        elif version == "v3.3.6":
+            from hi_em.sem_core_v336 import HiEMSegmenterV336
+            self._segmenter = HiEMSegmenterV336(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                pe_var_decay=pe_var_decay,
+                pe_var_min_samples=pe_var_min_samples,
+                pe_var_sigma0_sq=pe_var_sigma0_sq,
+                pe_var_min_sq=pe_var_min_sq,
+                pe_var_max_sq=pe_var_max_sq,
+                var_likelihood_weight=var_likelihood_weight,
+                hard_pe_fallback=hard_pe_fallback,
+                min_transitions_for_pe=min_transitions_for_pe,
+                restart_pe_threshold=restart_pe_threshold,
+                restart_margin=restart_margin,
+                f0_min_starts=f0_min_starts,
+                rnn_n_epochs=rnn_n_epochs,
+                rnn_ready_min_transitions=rnn_ready_min_transitions,
+                rnn_max_history=rnn_max_history,
+                seed=seed,
+            )
+        elif version == "v3.3.7":
+            from hi_em.sem_core_v337 import HiEMSegmenterV337
+            self._segmenter = HiEMSegmenterV337(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                pe_var_sigma0_sq=pe_var_sigma0_sq,
+                pe_var_df0=pe_var_df0,
+                pe_var_min_sq=pe_var_min_sq,
+                pe_var_max_sq=pe_var_max_sq,
+                pe_var_window=pe_var_window,
+                var_likelihood_weight=var_likelihood_weight,
+                hard_pe_fallback=hard_pe_fallback,
+                min_transitions_for_pe=min_transitions_for_pe,
+                restart_pe_threshold=restart_pe_threshold,
+                restart_margin=restart_margin,
+                f0_min_starts=f0_min_starts,
+                rnn_n_epochs=rnn_n_epochs,
+                rnn_ready_min_transitions=rnn_ready_min_transitions,
+                rnn_max_history=rnn_max_history,
+                seed=seed,
+            )
+        elif version == "v3.3.8":
+            from hi_em.sem_core_v338 import HiEMSegmenterV338
+            self._segmenter = HiEMSegmenterV338(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                pe_var_sigma0_sq=pe_var_sigma0_sq,
+                pe_var_df0=pe_var_df0,
+                pe_var_min_sq=pe_var_min_sq,
+                pe_var_max_sq=pe_var_max_sq,
+                pe_var_window=pe_var_window,
+                pe_prior=pe_prior,
+                var_likelihood_weight=var_likelihood_weight,
+                hard_pe_fallback=hard_pe_fallback,
+                min_transitions_for_pe=min_transitions_for_pe,
+                restart_pe_threshold=restart_pe_threshold,
+                restart_margin=restart_margin,
+                f0_min_starts=f0_min_starts,
+                rnn_n_epochs=rnn_n_epochs,
+                rnn_ready_min_transitions=rnn_ready_min_transitions,
+                rnn_max_history=rnn_max_history,
+                seed=seed,
+            )
+        elif version == "v3.3.9":
+            # 2026-05-18 current BEST (TIAGE test, target WD/F1/Pk + ARI
+            # guard): F1 0.437 / WD 0.605 / Pk 0.415 / ARI 0.408 — best
+            # of 13 methods, non-degenerate. prev-cos restored as SEM2
+            # identity-dynamics PE w/ prior-corrected baseline. v3.3.9
+            # __init__ defaults (eta_prev=1.0, delta_star=0.5557,
+            # sigma_delta_c=0.0625) ARE the best config — pass through
+            # only the shared HP; do not override the v3.3.9-specific
+            # calibration defaults.
+            from hi_em.sem_core_v339 import HiEMSegmenterV339
+            self._segmenter = HiEMSegmenterV339(
+                dim=encoder.dim, alpha=alpha, lmda=lmda,
+                tau=tau, cos_threshold=cos_threshold, beta=beta,
+                pe_threshold=pe_threshold,
+                rnn_hidden_dim=rnn_hidden_dim,
+                rnn_lr=rnn_lr,
+                pe_var_sigma0_sq=pe_var_sigma0_sq,
+                pe_var_df0=pe_var_df0,
+                pe_var_min_sq=pe_var_min_sq,
+                pe_var_max_sq=pe_var_max_sq,
+                pe_var_window=pe_var_window,
+                pe_prior=pe_prior,
+                var_likelihood_weight=var_likelihood_weight,
+                hard_pe_fallback=hard_pe_fallback,
+                min_transitions_for_pe=min_transitions_for_pe,
+                restart_pe_threshold=restart_pe_threshold,
+                restart_margin=restart_margin,
+                f0_min_starts=f0_min_starts,
+                rnn_n_epochs=rnn_n_epochs,
+                rnn_ready_min_transitions=rnn_ready_min_transitions,
+                rnn_max_history=rnn_max_history,
+                seed=seed,
+            )
         elif version == "v2":
             self._segmenter = HiEMSegmenter(
                 dim=encoder.dim, alpha=alpha, lmda=lmda, sigma0_sq=sigma0_sq
@@ -295,7 +437,9 @@ class HiEM:
             raise ValueError(
                 f"unknown HiEM version: {version!r} "
                 "(expected 'v2', 'v3.1.1', 'v3.2.1', 'v3.3.1', 'v3.3.2', "
-                "'v3.3.3', 'v3.3.4', 'v3.3.3-2', 'v3.3.4-2', 'v3.3.3-3', or 'v3.3.3-4')"
+                "'v3.3.3', 'v3.3.4', 'v3.3.5', 'v3.3.6', 'v3.3.7', "
+                "'v3.3.8', 'v3.3.9', 'v3.3.3-2', 'v3.3.4-2', 'v3.3.3-3', "
+                "or 'v3.3.3-4')"
             )
         self._k_topics = k_topics
         self._k_turns_per_topic = k_turns_per_topic

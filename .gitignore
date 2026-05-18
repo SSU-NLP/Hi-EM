@@ -88,3 +88,5 @@ outputs/experiments/*/*/checkpoints/
 **/rounds/round_*/
 **/checkpoints/latest.json
 **/checkpoints/round_*/
+benchmarks/superdialseg/
+benchmarks/superdialseg_data/

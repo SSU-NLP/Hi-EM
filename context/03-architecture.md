@@ -13,7 +13,10 @@ src/hi_em/
 ├── topic.py               # Topic 클래스 (사건 모델 형태에 따라 필드 결정)
 ├── scrp.py                # sticky-CRP prior
 ├── boundary.py            # boundary score 계산 (사건 모델에 따라 구현 달라짐)
-├── sem_core.py            # online MAP inference 루프
+├── sem_core.py            # online MAP inference 루프 (v2 본진)
+├── sem_core_v33{1..8}*.py # 버전별 segmenter (methodology/README 계보 참조).
+│                          #   v3.3.5 f_is_trained gating / v3.3.6 persistence+replay+seed
+│                          #   (topic_v336.py) / v3.3.7 map_variance σ² / v3.3.8 pe_prior
 ├── importance.py          # topic importance
 ├── merge.py               # topic merge
 ├── ltm.py                 # 장기 메모리

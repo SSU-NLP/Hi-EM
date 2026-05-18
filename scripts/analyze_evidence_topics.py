@@ -121,6 +121,8 @@ def analyze(run_dir: Path, data_path: Path) -> int:
         topic_of = conv_map.get(conv, {})
         for qi, q in enumerate(s.get("qa", [])):
             flat = flatten_evidence(q.get("evidence"))
+            if len(flat) < 2:
+                continue
             ev_topics = [(e, topic_of.get(e)) for e in flat]
             found_topics = [t for _, t in ev_topics if t is not None]
             counts = Counter(found_topics)

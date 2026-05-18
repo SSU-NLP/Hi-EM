@@ -1153,3 +1153,288 @@ $$raw_I(t) = w_1 s_{count} + w_2 s_{freq} + w_3 s_{recency} + w_4 s_{nbr} + w_5 
 - LLM ceiling — retrieval 개선해도 acc 비례 X (cosine hybrid 도 H@k 두 배 올랐는데 acc 0)
 
 **Smoke (20Q)**: pipeline 정상 (error_rate=0). 본격 평가는 200Q sanity 결과.
+
+---
+
+## 2026-05-14 — per_question_evidence_topics.csv 에서 n_ev=1 제외
+
+**결정**: `scripts/analyze_evidence_topics.py` 가 생성하는 `per_question_evidence_topics.csv` 에서 `n_ev=1` (single-evidence) question 을 처음부터 제외. 기존 24개 CSV 도 일괄 정리 (47,664 → 10,152 행, 78.7% 가 n_ev=1).
+
+**이유**:
+- n_ev=1 은 trivially `n_topics_used=1` (single evidence 는 항상 1 topic). segmentation 평가 신호 없음.
+- 같은 스크립트의 `evidence_topic_summary.json` 의 qtype 별 stats 는 이미 처음부터 `n_ev≥2 + n_ev_found>0` 필터 적용. CSV 만 unfiltered 였던 비일관성.
+- CSV 직접 inspect 시 trivial 행이 79% 라 의미 있는 row 찾기 어려움.
+
+**영향**:
+- 코드: `scripts/analyze_evidence_topics.py:124` 에 `if len(flat) < 2: continue` 추가.
+- 문서: `context/methodology/infrastructure.md` § 7c 행 수 / 변경 노트 갱신.
+- 기존 데이터: `outputs/experiments/**/per_question_evidence_topics.csv`, `outputs_conv/experiments/**/per_question_evidence_topics.csv` 24개 in-place rewrite.
+- `evidence_topic_summary.json` 은 변경 없음 (이미 동일 필터).
+
+---
+
+## 2026-05-16 — segmentation 진단: predict_topic 붕괴는 retrieval 버그 아님, 우선 병목은 evidence-topic 과분산 (codex 위임)
+
+**결정**:
+- `HiEMSegmenter.predict_topic()` 은 read-only MAP diagnostic 으로 유지하되, QA retrieval 판단 지표로 해석하지 않는다.
+- LoCoMo conv0 진단에서 20개 질문 모두 topic 30 으로 붕괴한 현상은 `prev_k`·`lmda=10` sticky prior 가 query-time MAP 을 압도한 결과. 필요 시 sticky 제거 likelihood-only diagnostic 을 별도 API/명칭으로만 추가 (retrieval 연결 금지).
+- 실제 우선 병목은 단일 answer evidence 가 여러 topic 으로 흩어지는 과분절. retrieval 은 2026-05-11 결정대로 importance-only.
+
+**이유**:
+- LoCoMo conv0: 419턴→69 topic, evidence 가 topic [2,5,26,56] 등으로 분산. `predict_topic(질문)` evidence topic 일치 0/20.
+- SEM/SEM2 online assignment 는 sticky/sCRP prior + likelihood MAP 이나, frozen QA query 는 다음 turn 이 아니므로 직전 topic sticky 적용 시 진단 의미 왜곡.
+
+**영향**:
+- `context/methodology/infrastructure.md` §7c: evidence 분산 = importance-only retrieval atomicity 리스크로 해석. STM `n_topics` 와 raw segmenter topic count 분리 보고.
+- `src/hi_em/sem_core.py`: `predict_topic` 은 retrieval 용 API 아님 (문서화 후보).
+- 진단 도구: `scripts/inspect_locomo_segmentation.py` (turn/question 모드).
+
+---
+
+## 2026-05-16 — v3.3.4 EventRNN dead-code: GRU→LLM 교체 아님, α=100 과분절 우선 수정 (codex 위임)
+
+**결정**:
+- v3.3.4 의 EventRNN(GRU) scene-dynamics 를 LLM 기반 next-scene predictor 로 교체하지 않는다.
+- 1차 병목은 GRU 자체가 아니라 `α=100` fresh-topic prior 가 만든 과분절. 우선순위 = `α/fresh-topic prior·boundary regime 재조정 → evidence concentration 재측정 → GRU vs centroid 재평가`.
+- α 조정 후에도 GRU 가 반복적으로 centroid-only 보다 낮으면, 그때 static prototype 후퇴를 SEM 계승 한계로 명시하고 별도 결정.
+
+**이유**:
+- LoCoMo conv0, v3.3.4 실제 HP `α=100,λ=10,cos=0.9,β=0.25`: 60턴 topic 배정 `0,1,...,59` (매 턴 새 topic). `rnn_min_history=2` 미충족 → EventRNN 예측 단 한 번도 사용 안 됨 (死문).
+- fresh-topic score `log100−0.125≈4.48` vs 기존 best `log11≈2.4` → fresh 구조적 우세. REPORT `n_topics(STM)=4.81` 은 STM eviction artifact.
+- α=1 에서 GRU 발동 30턴: `cos(GRU,실제)=0.6688` < `cos(centroid,실제)=0.6873` (GRU 채택 근거 약함, 단 dead-code 의 직접 원인은 α=100).
+- GRU 는 SEM2 EventModel 계승 요소. LLM 교체 = EventModel 교체로 3-step 정당화 필요 + main-LLM 결합/cost 문제.
+
+**영향**:
+- `context/methodology/v3.3.4.md`: α 큰 regime 에서 EventRNN 비활성 명시 + GRU<centroid 주석 + α sweep 시 `GRU_used_turns` 동반 보고.
+- 진단 도구: `scripts/inspect_v334_gru_prediction.py`.
+
+---
+
+## 2026-05-16 — segmentation 평가 프로토콜: LLM 라벨은 gold 아닌 pseudo-label, 1차 metric = evidence cohesion (codex 위임)
+
+**결정**:
+- Qwen3.5-9B 가 생성한 boundary/cluster label 을 human gold 로 간주하지 않는다. LoCoMo/LongMemEval 에 topic annotation 이 없을 때의 pseudo_gold/diagnostic reference 로만 사용 (TIAGE/TopiOCQA human label 대체 아님).
+- LongMemEval **cross-idx user-turn concat 금지** (서로 다른 idx = 독립 haystack → idx seam 이 인위적 topic boundary). 단일 idx haystack 통째로 사용.
+- α×λ sweep 의 1차 목적·metric = evidence-topic co-location (`evidence_cohesion`), 보조 = pseudo-label 대비 boundary F1/ARI/NMI.
+
+**이유**:
+- LLM event segmentation 이 인간 분절과 상관된다는 연구는 narrative 환경 중심. Qwen 의 대화 topic label 이 human gold 라는 직접 근거 없음.
+- 이전 진단 1순위 = evidence 과분산. HP 를 LLM-label 에 맞추는 것은 downstream 병목을 가릴 수 있어 evidence-cohesion 을 1차로 둠.
+
+**영향**:
+- 신규 스크립트 `scripts/llm_pseudolabel_sweep.py` (출력 `outputs/experiments/2026-05-16_llm_pseudolabel_sweep_lme<idx>/`).
+- `context/methodology/infrastructure.md`: LLM pseudo-label metric 과 evidence-cohesion metric 역할 분리.
+
+---
+
+## 2026-05-16 — LongMemEval 500Q: hi-em-full-v3.3.4 vs rag — overall 소폭 우위, 채택 보류
+
+**결정**: v3.3.4 (config default α=1,λ=10) 가 RAG 대비 overall +0.014 (0.722 vs 0.708) 이나 **채택 보류 (재검증 필요)**.
+
+**이유**:
+- qtype 별 분산: v3.3.4 가 multi-session +6.8pt / single-session-assistant +5.4 / knowledge-update +2.6 우위, 그러나 single-session-preference −6.7 / single-session-user −4.3 / temporal-reasoning −1.5 회귀.
+- temporal 회귀가 위 과분절 진단과 방향 일치 — atomicity 손보기 전 채택 근거 약함.
+- 단일 run·seed 미고정·std 없음 (CLAUDE.md 3-run 미충족). LongMemEval 은 evidence co-location/H@k 미산출 (analyzer LoCoMo dia_id 전제).
+
+**영향**:
+- REPORT: `outputs/experiments/2026-05-16_v334_rag_longmemeval/REPORT.md` (정식판).
+- 후속: ≥3-run std + temporal/single-session 회귀 원인(importance policy) 점검.
+
+**관련 — full-context 천장 (cross-ref, 잊지 말 것)**: full-context baseline 을 LongMemEval oracle **500Q** 에 돌린 결과가 `archive/2026-04-28/20260428_freq_shift_full_*` 에 존재 (Qwen3-8B, `--no-thinking`, seg α=10/λ=1). **full 0.734 / rag 0.728 / hi-em-full-v1 0.726 / sliding 0.636 / hi-em 0.562**. 천장(full)이 RAG 대비 **+0.6pt** 뿐 — oracle 은 distractor 거의 없어 RAG cosine top-k 도 증거 대부분 회수, "관련 세션 통째 prefill" 전략의 구조적 헤드룸이 작다. full prefill p50 5850 tok vs rag 2175 (~2.7×) 로 토큰 효율은 RAG 압도. 분절 전략 가치 검증엔 oracle 천장이 너무 낮음 → distractor 多 인 `longmemeval_s`(질문당 ~48세션)에서 full 천장 재측정 필요. (archive 폐기더미라 현행 grep 에 안 잡힘 — 본 cross-ref 가 유일 포인터.)
+
+---
+
+## 2026-05-17 — evidence_cohesion=1 metric 폐기, evidence_recall@K 채택 (codex 위임)
+
+**결정**: LongMemEval temporal-reasoning(idx=374 등)처럼 정답 evidence 가 여러 날짜·scene 에 본질적으로 분산된 경우, `evidence_cohesion=1`(전 evidence 단일 topic)을 segmentation 설계 목표로 삼는 것은 **metric 자체의 오류**로 확정. 폐기. 대체 = `evidence_recall@K` (★turn 을 담은 모든 topic 이 importance 상위 K 에 드는가). Primary = topic-level, 보조 = session-level (LongMemEval label 호환).
+
+**이유**:
+- idx=374 의 ★ 6 turn 은 6 개 이질 세션(역사소설추천/AI헬스케어/페미니즘 …)에 1 개씩. 한 topic 으로 묶으려면 그 6 세션을 mega-topic 으로 over-merge 해야 함 → SEM sCRP local MAP / scene atomicity 정면 위배.
+- ev_topics 4~6 은 실패가 아니라 scene atomicity 정상 작동 신호. 40 HP run 전부 evidence_cohesion=0 은 Hi-EM 결함이 아니라 metric 기준 오류.
+- retrieval 은 atomic topic prefill 이므로 "흩어진 evidence topic 들이 importance 상위 K 에 다 살아남는가" 가 SEM 정합 질문.
+
+**영향**:
+- `outputs/experiments/2026-05-16_llm_pseudolabel_sweep_lme374/REPORT.md` 의 evidence_cohesion 해석 정정 대상.
+- `context/methodology/infrastructure.md`: retrieval 평가 metric 정의(topic_evidence_recall@K, 보조 session_evidence_recall@K, topic_precision@K, prefill token cost).
+
+---
+
+## 2026-05-17 — v3.3.5: SEM2 f_is_trained cold-start gating 복원 (codex 위임)
+
+**결정**: v3.3.4 의 young-topic centroid-PE 처벌을 제거하고 SEM2 의 `f_is_trained` gating 을 복원한 v3.3.5 (`HiEMSegmenterV335`) 도입. transition 미관측 topic 과 fresh slot 은 동일 untrained likelihood 상수 `L0` 를 받아 likelihood 동률 → young prev 생존은 sCRP λ stickiness 가 결정. gate = `transition_count_k ≥ min_transitions_for_pe`(기본 1, `rnn_min_history` 와 분리).
+
+**이유**:
+- SEM2 `log_likelihood_next/f0` 는 `f_is_trained=False` 면 고정 prior 상수 반환(centroid PE 아님). Hi-EM v3.3.4 가 centroid fallback 으로 대체한 것이 SEM2 이탈이자 chicken-and-egg(생존엔 예측, 예측엔 누적, 누적엔 생존) 의 원인.
+- 복원이라 SEM 계승 3-step 부담 낮음. v3.3.4 variance calibration 과 무충돌(σ_k² 는 trained 후에만 적용).
+
+**영향**:
+- 신규 `src/hi_em/sem_core_v335.py`, orchestrator `version=="v3.3.5"`, `tests/test_sem_core_v335.py` (6), inspect 스크립트 `--version v3.3.5`.
+- idx374 α=1λ=10: topic 23→11, #7~#9(+★#7) 동일 topic. methodology `v3.3.5.md`.
+
+---
+
+## 2026-05-17 — v3.3.6: SEM2 persistence+replay event dynamics + 재현성(seed) (codex 위임)
+
+**결정**: v3.3.5 의 3턴 천장(trained 즉시 미학습 공유 RNN 으로 전환 → repeat PE 파국) 해소 위해 v3.3.6 (`HiEMSegmenterV336` + `TopicV336`) 도입: (1) untrained 예측 = identity/persistence(직전 임베딩), centroid fallback 제거 (2) per-topic 독립 모델(공유 가중치 간섭 제거) (3) topic history 전체 replay 학습(n_epochs, SEM2 estimate) (4) `rnn_ready` 를 `f_is_trained` 와 분리(`rnn_ready_min_transitions`). 추가로 EventRNN unseeded 결함(v3.3.4/5/6 공통, 앞선 v3.3.4 REPORT 수치 불일치의 정체)을 **per-topic 결정적 seed**로 수정.
+
+**이유**:
+- 트레이스: 'cent' 예측 cos 0.4~0.84(양호) vs 'rnn' cos 0.03~0.5(랜덤) — trained 전환 즉시 예측 붕괴. SEM2 는 untrained=identity, trained=event history batch replay; "min_history 후 centroid→RNN" 은 SEM2 부재 Hi-EM hack.
+- 재현성: CLAUDE.md "모든 randomness seed 고정" 위반이었음. 논문 재현성 필수.
+
+**영향**:
+- 신규 `src/hi_em/sem_core_v336.py`, `src/hi_em/topic_v336.py`, orchestrator `v3.3.6`(+seed param), `tests/test_sem_core_v336.py` (7), inspect `--version v3.3.6`.
+- idx374: topic 11→9, 3턴 천장 해소, 2회 독립 실행 동일. methodology `v3.3.6.md`. infrastructure: seed 정책.
+
+---
+
+## 2026-05-17 — v3.3.7: SEM2 map_variance σ² (n≥2 즉시추정) + 경험적 반증 (codex 위임)
+
+**결정**: `pe_var_min_samples=5` gate 제거, SEM2 scaled-inv-χ² posterior mode `σ²=(ν₀·var₀+n·v)/(ν₀+n+2)` 를 n≥2 부터 적용한 v3.3.7 (`HiEMSegmenterV337`) 도입. restart 도 σ sample buffer 진척(transition_count 와 분리). **그러나 idx374 검증 결과 목표 증상(#14|#15 분절) 미해결 — codex 의 "min-samples gate 가 지배 원인" 진단은 경험적으로 반증됨**(저분산 2샘플에서 σ²가 prior mode 0.04→0.028 로 *하락*해 처벌 강화).
+
+**이유**:
+- SEM2 는 prediction_errors 2개부터 `map_variance` 적용(`event_models.py:384,18`); Hi-EM 의 min-samples gate 는 SEM2 이탈.
+- 반증: v3.3.7 idx374 grouping 이 v3.3.6 과 사실상 동일(9 topic, T3=#12~14, #15 분절 유지). 변경의 검증 루프가 설계를 반증한 사례 — 기록 보존.
+
+**영향**:
+- 신규 `src/hi_em/sem_core_v337.py`, orchestrator `v3.3.7`(+pe_var_df0/pe_var_window), inspect `--version v3.3.7`. methodology `v3.3.7.md` 에 "반증" 명시.
+- 다음 진단 = fresh-baseline calibration (아래 v3.3.8 entry).
+
+---
+
+## 2026-05-17 — v3.3.8: fresh/untrained baseline 이 지배 병목, SEM2 prior 로 재calibration (codex 위임)
+
+**결정**: idx374 경계오류의 불변 지배 원인은 σ² 추정이 아니라 **fresh slot 을 `cos_threshold=0.9 → L0=-0.125`(새 topic 이 cos 0.9 로 예측한다는 비현실 가정)로 둔 구조적 SEM2 이탈**. v3.3.8 (`HiEMSegmenterV338`): (a) fresh/untrained L0 를 `pe_prior`(chance 수준 PE, unit 임베딩 E[cos]≈0 ⇒ PE≈1) 기반으로 — `cos_threshold` 가 L0 에 더 안 들어감. d-차원 SEM2 Gaussian 포팅은 스케일 불일치라 scalar-PE 세계에서 SEM2 *원칙*(untrained=chance)만 번역. (b) non-prev 기존 topic 을 repeat 아닌 **f0-likelihood**(SEM2 `k0≠k_prev`) 로 평가.
+
+**이유 / 경험적 한계 (검증 미해결 기록)**:
+- pe_prior=1.0(순수 chance, 원칙값) → idx374 mega-collapse(36턴 1 topic). cos_threshold=0.9 → 과분절(23). 작동점 pe_prior≈0.4(cos≈0.6) 는 **embedding-공간 의존이며 SEM2 로부터 도출 불가** — codex 가 2회 "blunt HP" 로 미룬 (c) 가 사실상 불가피.
+- non-prev f0 는 LongMemEval 반복 도입문구("I'm looking for book recommendations")에 취약 → 무관 turn 허위병합(#1+#8). 한 결함 고치고 다른 결함 trade.
+- 따라서 코드 default pe_prior=1.0(원칙값) 유지, 작동값은 **벤치마크 calibration 대상**(CLAUDE.md: 벤치마크 분석 없이 설계 확정 금지). N=1(idx374) production default 금지.
+
+**영향**:
+- 신규 `src/hi_em/sem_core_v338.py`(v337 base), orchestrator `v3.3.8`(+pe_prior), `tests/test_sem_core_v338.py` (7), inspect `--version v3.3.8`. methodology `v3.3.8.md` 에 경험적 한계 명시.
+- pe_prior 확정은 longmemeval_s/TIAGE 평가 후속(보류).
+
+---
+
+## 2026-05-17 — LongMemEval session_id 는 외생 hard boundary, retrieval primary 단위 = 세션 내부 SEM topic (codex 위임)
+
+**결정**: longmemeval_s 의 `session_id`/timestamp 는 SEM 이 재발견할 target 이 아니다. 세션은 외생 hard boundary 로만(세션 재현을 segmentation 목표로 삼지 않음). Hi-EM retrieval/evidence_recall 의 SEM 정합 **primary 단위 = 세션 내부 SEM topic**, session-level recall 은 LongMemEval label 호환 보조 지표. 권고 = (iii) within-session SEM 분절.
+
+**이유**:
+- SEM/SEM2 sCRP+local MAP+scene dynamics 는 관측 흐름에서 event 를 추론; 주어진 session_id 복제 모델 아님. 한 세션 내부가 topic-비일관(idx374 S1: 역사소설→sci-fi→시).
+- distractor 가 외부 코퍼스 시간순 삽입 → 세션 간 인접성은 실제 연속 경험 아님. 세션 무시 전체 재분절 시 sCRP 인위적 연결 위험.
+
+**영향**: longmemeval_s 평가 설계. infrastructure: evidence_recall 단위 정의. v3.3.5~8 무효 아님(해석 전환).
+
+---
+
+## 2026-05-17 — topic-return 으로 evidence_cohesion 부활 안 함 / v3.3.9 = emergent SEM segmenter 재정의 (codex 위임)
+
+**결정**:
+1. "세션 분절 잘 되면 증거 세션 유사성으로 topic-return 해 흩어진 evidence 가 한 재귀 topic 으로 모인다"는 가설은 **채택 안 함**. idx374 의 cross-session 유사도는 evidence-thread 가 아니라 generic recommendation opener 에서 발생 → topic-return 강화는 추천요청 템플릿을 묶도록 오최적화 + distractor opener 오회귀. evidence_cohesion 부활 ✗, multi-topic evidence_recall@K + importance policy 유지. non-prev f0/restart 는 보수적 보조 경로로만(강하게 밀지 않음).
+2. **v3.3.9 재정의**: session_id hard-boundary 주입이 아니라 **session_id 미사용 emergent SEM segmenter**. 우선 SEM2 원형에 가까운 임베딩 PE/likelihood/fresh-baseline calibration 으로 세션 전환 근처 boundary 자연 발생 검증. `haystack_dates` 기반 time-aware prior 는 SEM2 부재 신규 관측변수 → 3-step 정당화 필요한 v3.3.10 후보로 보류. "세션 1:1 재현" 은 여전히 목표 아님(세션 내부 drift boundary 정상).
+
+**이유**:
+- sticky-CRP λ 는 prev_k 에만; 먼 과거 topic 재진입은 count prior+likelihood 만 → distractor 다수면 구조적으로 약함. CLAUDE.md query-cosine 금지라 opener 오회귀 자체 필터 불가.
+- session_id 직접 사용은 benchmark metadata leakage 성격, SEM2 "boundary 를 추론" 철학보다 약함. emergent 가 더 SEM 정합.
+
+**영향**: v3.3.9 정의 변경(emergent calibration, time-aware 는 v3.3.10 후보). methodology/infrastructure 반영. 신규 진단도구 `scripts/inspect_longmemeval_s.py`(증거/​distractor 분리), 데이터 `benchmarks/LongMemEval/data/longmemeval_s_cleaned.json`(추가, gitignore 대상).
+
+---
+
+## 2026-05-17 — 주 task 를 Long-Conversation QA → DTS(Dialogue Topic Segmentation) 로 전환, 별도 브랜치 `dts` 분리 (사용자 결정)
+
+**결정**: 프로젝트의 1차 평가 task 를 downstream QA(LoCoMo/LongMemEval accuracy)에서 **DTS(Dialogue Topic Segmentation) 자체 품질**로 전환한다. 작업은 신규 브랜치 **`dts`** 에서 진행하고 `main` 은 QA-baseline 시점으로 보존. 현재 uncommitted 변경(v3.3.5~8, tiage/longmemeval inspection 스크립트 등 ~20파일)은 `dts` 브랜치로 이월(checkout -b, working tree 그대로).
+
+**이유 (근거 데이터)**:
+- LongMemEval oracle 500Q 에서 천장(full-context)조차 RAG 대비 **+0.6pt** (full 0.734 vs rag 0.728, ~2.7× 토큰). oracle 은 distractor 거의 없어 RAG cosine top-k 도 증거 대부분 회수 → "관련 세션 통째 prefill" 전략의 구조적 헤드룸이 작다 (2026-05-16 entry cross-ref). QA 우위 입증 경로가 데이터상 막힘.
+- 따라서 QA accuracy 우위는 목표에서 제외하고, SEM/SEM2 계승 정체성의 핵심인 **분절 품질**(과분절·과병합 동시 회피)을 1차 목표로 재설정. 평가 체계는 직전 codex 위임 권고(segmentation primary = TIAGE/TopiOCQA/pseudo 대비 ARI·Boundary-F1, retrieval primary = topic-level evidence_recall@K, collapse guard = max_share/new_rate/raw_topics) 를 그대로 채택.
+- 브랜치 분리: QA-지향 코드/문서 상태를 `main` 에 보존해 회귀 비교 가능하게 유지하고, DTS 재설계의 파괴적 변경을 격리.
+
+**영향**:
+- 브랜치 `dts` 생성(현 작업 브랜치). docs 반영 범위 = decision-log(본 entry) + handoff 만 (사용자 지정). methodology DTS metric 정의는 2026-05-17 codex 위임 entry 들로 이미 확정 — 중복 작성 안 함.
+- 완료: TIAGE test 12-method×3-seed 비교(`outputs/experiments/2026-05-17_tiage_all_hiem_full/REPORT.md`) — DTS 첫 확정 측정. 결과: default HP 에서 전 method 실패(v3.3.1~3.3.4-2 every-turn, v1/v3.1.1 과분절, v3.3.5~7 과병합, v3.3.8 1-topic mega-collapse). codex 진단(boundary-F1 게임됨, pe_prior=1.0 붕괴)이 TIAGE 100conv 에서 재현 — idx374 N=1 과적합 아님 확정. 다음: ARI+collapse guard metric 도입 → TIAGE HP sweep.
+- 후속 DTS 작업의 primary metric/데이터 셋업은 위 codex 권고 따름.
+
+---
+
+## 2026-05-17 — RNN(learned scene dynamics) 제거/교체 보류 + ARI·collapse guard 도입 (codex 위임 2건 결정)
+
+**질문 (사용자)**: ① v3.3.6(per-topic+persistence+history replay)이 v3.3.5보다 TIAGE에서 나쁘니 learned dynamics RNN을 아예 빼버려야 하나? ② 빼는 게 아니라 f 아키텍처를 RNN보다 현대적 모델(Transformer/SSM 등)로 교체하면?
+
+**결정 (codex `codex:rescue` 2회 위임, 한국어 답변)**:
+- ① **(C) 결론 보류 — ARI+HP sweep 선행.** v3.3.6 부진은 "RNN 무용 증거" 아님 — RNN을 제거한 게 아니라 per-topic 분리+persistence prior+history replay 보강 조합이 TIAGE 짧은 대화에서 역효과. + default HP(LoCoMo값, TIAGE 미보정)에서 v3.3.8 mega-collapse까지 나오는 "붕괴 vs 붕괴" 상태라 method 변별 신호 자체가 불안정 → 이 상태로 구조 결정은 위험. RNN 제거(A)는 SEM 핵심 component 제거라 3-step 정당화 부담, 데이터 지지 약함.
+- ② **(3) 아키텍처 교체는 부차적 — 학습 신호/데이터 문제 먼저.** SEM2 기본 f = `GRUEvent`(코드에 `LinearEvent`/`StationaryEvent`/`SimpleRNN`/LSTM 계열 존재) → f 교체는 learned dynamics 유지하는 한 SEM 정합 범주(제거보다 정당화 부담 훨씬 낮음). 그러나 TIAGE 15턴/topic·저표본·online·CPU-only 제약상 Transformer/Mamba가 RNN보다 낫다는 근거 없음(과적합·과함). v3.3.5 학습부실 원인 = "RNN이라서"가 아니라 공유 EventRNN+단발 3-step 학습+cross-topic 간섭+unseeded+trained 전환 즉시 랜덤예측 사용 → **저표본 online 학습 + likelihood/fresh-baseline calibration 문제**. 아키텍처 교체로 안 풀림. 교체한다면 더 큰 모델이 아니라 더 단순한 것(`persistence`/`learned linear`/`small GRU`/`EMA-mixer`)이 후보 — 그것도 ARI+sweep 으로 "dynamics 실패 vs calibration 실패" 가린 뒤.
+
+**확정 액션 (분기 없음)**:
+1. **v3.3.5 를 현 best baseline 으로 고정.** v3.3.6/7/8 보강은 채택 안 함(폐기 아님, 비교군 유지).
+2. **ARI + collapse guard 를 `scripts/run_tiage_full_compare.py` 에 도입** (본 entry 와 함께 구현 완료). ARI = GT segment partition vs 예측 topic-id partition, 대화별 `adjusted_rand_score` macro 평균 — 과분절·과병합·collapse 동시 페널티, collapse-immune → **primary metric**(REPORT 정렬·best 기준 = ARI). collapse_rate = 1-topic 병합 대화 비율; ≥50% 면 `†` 표시 + F1/Pk/WD best 선정에서 제외(v3.3.8 "best WD=0.510" 같은 무경계 artifact 차단). Pk 무변별(0.467~0.521)·WD degenerate 취약성 보강 = ARI 도입 직접 동기.
+3. **v3.3.5/6/7 HP sweep** (alpha·lmda·pe_prior) — ARI/WD/n_topics 동시. TIAGE 는 항상 **full(100 conv × 3 seed), subset/sanity 금지**(사용자 결정). GPU 복구 불가(드라이버 11040, CUDA 비활성) 확정 → CPU-only. sweep 가능화 = **임베딩 1회 인코딩 후 캐시 재사용**(HP 무관 불변) + HP 조합 코어 병렬. Crts 프록시는 LLM/임베딩 API 라 세그멘터(EventRNN/sCRP) 연산 오프로드 불가 — 임베딩 단계만 대체 가능하나 캐시가 더 우월.
+4. sweep 후 분기: HP 보정해도 v3.3.5 가 GT(4.15 topic) 수렴 실패 → dynamics 실패 → `persistence`/`learned linear`/`small GRU`/`EMA-mixer` ablation(Transformer/SSM 아님). 보정으로 수렴 → calibration 문제, 아키텍처 불변. RNN 제거(A)는 단순 dynamics baseline 에도 패배 확인 시에만 SEM 3-step 정당화와 함께 재상정.
+
+**영향**: `run_tiage_full_compare.py` metric 확장(ARI/collapse_rate 컬럼, ARI 정렬, degenerate † guard). 기존 TIAGE REPORT 3종(`2026-05-17_tiage_v33x_compare`/`_a1`/`_all_hiem_full`)은 Pk/WD 까지만 반영됨 — ARI 는 다음 full run 에서 추가. methodology/infrastructure DTS metric § 갱신 대상. handoff 갱신 대상.
+
+---
+
+## 2026-05-18 — SEM-vs-prev-cos 근본진단 → v3.3.9 (prev-cos 를 SEM PE 로 정합 복원) (codex 위임 2건)
+
+**진단 (codex `codex:rescue` 위임 #1)**: 같은 인코더·같은 gt_shifts+F1 에서 1줄 baseline "직전 발화 cosine < θ → shift" 가 F1 **0.433~0.440** (3 인코더 multi-qa/all-mpnet/MiniLM 모두, ≈ SOTA 0.427). 반면 우리 SEM 전 변형 F1 0.25~0.36, v1 0.363. **인코더 무관·eval 무관 → SEM 파이프라인 자체가 인접 의미거리 신호를 1줄 threshold 보다 못 살리고 죽임.** 근본원인 = fresh/untrained baseline `L0` 오보정 + scalar cosine-PE σ² 포화 (v3.3.5 `L0=−0.125` 과분절 / v3.3.8 `L0=−12.5` collapse; sCRP·RNN 단독 주범 아님). prev-cos 는 SEM2 untrained `predict_next` = identity dynamics `f(x)=x_prev` 의 cosine PE 그 자체 → SEM 밖 heuristic 아님.
+
+**결정**: codex 권고 **(A) prev-cos 신호를 SEM likelihood/PE 에 SEM-정합 복원** 채택. **CLAUDE.md cosine 금지는 retrieval 한정** — segmentation 의 prediction-error 는 본질적으로 인접 의미거리이고 SEM PE 가 prev-cos 의 일반화이므로, segmentation 단계 `cos(s_{t-1},s_t)` 사용은 retrieval-cosine 금지 위반이 **아니라 SEM2 cold-start 복원**임을 명시(예외 아님, 규칙 범위 밖). SEM 계승 3-step: (1) SEM2 에 있음(identity dynamics PE), (2) sCRP/Bayes/local MAP 와 충돌 없음(prior 상쇄만, 제거 아님; η<1 시 learned f 혼합 유지), (3) 본 entry.
+
+**구현 → v3.3.9 (`sem_core_v339.py`, v3.3.8 기반)**:
+- repeat(k=prev_k, trained·untrained 공통) `Lδ(δ_eff)`, `δ_eff²=η·δ_prev²+(1−η)·δ_model²`, η 기본 1.0.
+- **회귀 (codex 위임 #2)**: v3.3.9-pre 가 ARI 0.36→0.126, n_topics 2.4 과병합. 원인 = 고정 `r0=λ/α` prior mismatch(`P_prev/α` 가 turn 진행에 커져 threshold 밀림) + σδ² 를 전체 δ_prev population variance(경계 점프 혼합)로 online calibration → discrimination 씻김.
+- **codex calibration-fix (#2)**: ① σδ² = **고정** softness temperature `c·δ*²` (c 기본 1/16; online calibration 폐기) ② fresh baseline 을 **time-dependent prior-corrected** `B0_t = Lδ(δ*) + log(P_prev/P_new)` → `_scores` 의 prior 항과 상쇄되어 prev-vs-fresh MAP 결정이 **매 turn `δ_eff < δ*` hard cut 과 정확 동치** ③ untrained prev 도 δ_prev gate(η=1 ⇒ δ_eff=δ_prev; 기존 `_l0()` 무조건 병합 bias 제거) ④ `δ*` 를 **TIAGE train split** prev-cos 에서 재추정(0.5557 @ cos_th 0.4443, F1 0.437, n_conv=300) — test leakage 제거(이전 0.536 은 test 유래라 폐기).
+
+**결과 (TIAGE dev full, α=1 λ=10, δ* train, seed0)**: ARI 0.352 / WD 0.628 / **F1 0.440** / Pk 0.412 / n_topics 7.1 / collapse 0%. **F1 0.257→0.440 = prev-cos baseline·SOTA F1 동급 회복** (SEM 이 신호 더 이상 죽이지 않음 = 진단 근본목표 달성, bimodal 붕괴 해소). 단 WD 0.628 여전히 나쁨(약한 과분절 nt 7.1 ≫ GT 4.15) → 구조 붕괴는 해소, calibration 거리 문제로 전환.
+
+**영향**:
+- 신규 `src/hi_em/sem_core_v339.py` + `context/methodology/v3.3.9.md` + `run_tiage_full_compare.py` 배선(import/factory/METHODS/SWEEP_CLASSES) + handoff 갱신.
+- **full TIAGE test 3-seed 확정 (2026-05-18, `outputs/experiments/2026-05-18_tiage_v339_full/`)**: v3.3.9 = ARI 0.408 / F1 0.437 / Pk 0.415 / WD 0.605 / nt 6.9 / collapse 0% — 13-method 중 **primary(ARI)·F1·Pk 동시 best** (이전 best ARI v3.3.6 0.359 → +0.049; F1 = prev-cos test 0.433 동급/근소상회 = SEM 이 1줄 baseline 따라잡음, 진단 근본목표 완수). dev 0.440↔test 0.437 일관. **v3.3.9 = 새 baseline** (v3.3.5 잠정 baseline 대체 확정). 잔여 약점 = WD 0.605 ≫ SOTA 0.420 (약과분절 nt 6.9 ≫ GT 4.15; best WD 여전히 v3.3.5 0.598).
+- **codex 위임 #3 (2026-05-18, RNN→BERT 질문)**: 권고 **(C) BERT-f 보류**. 병목은 f 아키텍처 아니라 calibration — v3.3.9 가 η=1(RNN 미사용)로 F1 회복. BERT-f 는 RNN 보다 파라미터 커서 TIAGE 저표본·CPU·online 에서 v3.3.5 학습부실 악화 위험; supervised BERT classifier 는 SEM unsupervised 철학 정면충돌(+그 "0.55~0.65"가 supervised 면 비교 unfair). 순서 = (i) v3.3.9 test 확정[완료] → (ii) strong similarity 천장(TextTiling-SBERT depth/windowed/adaptive) 우리 eval 측정 → (iii) BERT-f 는 η<1 에서 δ_model 이 δ_prev 를 dev 에서 유의 개선할 때만 승격. + v3.3.9 HP sweep(δ*·σδ_c·η·α·λ, n_topics→4.15 로 WD/ARI 동반개선).
+- **SOTA caveat (codex #1·#2)**: SOTA(F1 0.427/Pk 0.40/WD 0.42) 출처·split·boundary 정의·threshold 선택 방식 사용자 미확정 → 외부 SOTA 초과 주장 금지. "같은 인코더·eval 에서 SEM<prev-cos→v3.3.9 가 prev-cos 동급 회복" 결론은 caveat 무관 유효. HP(δ*/σδ_c/r0-strategy)는 train/dev-tune 에서만 선택, test 1회 평가 절차 준수.
+- Stage A sweep 은 103/162 BrokenPipe 중단(partial 보존); codex 진단상 구조문제라 재개 critical-path 아님 — v3.3.9 sweep 으로 대체.
+
+---
+
+## 2026-05-18 — 판정 지표를 ARI-primary → **WD/F1/Pk target** 으로 변경 (사용자 결정, 2026-05-17 ARI-primary entry 대체)
+
+**결정 (사용자)**: TIAGE 평가의 판정·정렬·best 기준을 **WD↓ / F1↑ / Pk↓** 로 한다. 이유: 외부 비교 — TIAGE/segmentation 문헌·SOTA 는 Pk/WD/F1 로 보고하고 ARI 를 안 쓴다. 내부 robustness 용으로 ARI 를 primary 로 뒀던 2026-05-17 entry(codex 백킹)를 본 entry 가 **대체**한다.
+
+**유지하는 가드 (제거 시 과거 오판 재발 — 반드시 동반)**:
+- **ARI 를 가드 컬럼으로 존치**: F1 은 과분절로 게임됨 (v3.3.1~3.3.4-2 가 매-turn 경계로 F1 0.354 받는데 ARI≈0 = GT 분할 무상관). F1 단독 정렬 시 이 degenerate 가 상위. ARI 컬럼이 over-seg 탐지기.
+- **collapse-guard † 존치**: collapse≥50% method 는 *모든* best 에서 제외. 없으면 v3.3.8 (1-topic, F1=0) 이 "best WD 0.510" 으로 다시 뽑힘 (무경계 artifact).
+- **n_topics 컬럼 존치** (GT≈4.15) — 과분절·과병합 직접 가시화.
+- best F1/WD/Pk 는 전부 non-degenerate(collapse<50%) 한정.
+
+**구현**: `run_tiage_full_compare.py` 메인 REPORT + sweep REPORT 둘 다 — 정렬 key `ari→f1` desc, 선두 컬럼 `F1/WD/Pk`, `ARI(guard)/n_topics/collapse` 후미 가드, best F1/WD/Pk(target) + best ARI(guard, non-target) 라벨. docstring/헤더 문구 갱신. f1_s(std) 집계 추가.
+
+**영향**: 향후 모든 TIAGE REPORT 가 WD/F1/Pk 정렬·판정. 기존 산출(`2026-05-18_tiage_v339_full` 등)의 "best ARI" 해석은 가드로 강등 — v3.3.9 가 F1 0.437/Pk 0.415 로 target 기준에서도 best(non-degenerate)임은 불변(WD 0.605 는 약점 그대로). methodology v3.3.9.md / handoff 갱신 대상. SOTA 비교 caveat(출처·split·supervised 미확정, 외부 초과주장 금지) 그대로 유효.
+
+---
+
+## 2026-05-18 — 프로젝트 default segmenter 를 v3.3.9 (현 BEST) 로 (사용자 지시)
+
+**결정 (사용자: "지금까지의 BEST를 디폴트로")**: `orchestrator.HiEM` 기본 `version` 을 `"v2"` → **`"v3.3.9"`** 로 변경. v3.3.9 분기 추가(없었음). 근거: full TIAGE test (target WD/F1/Pk + ARI guard) 13-method 중 v3.3.9 가 F1 0.437 / WD 0.605 / Pk 0.415 / ARI 0.408 로 4개 전부 best(non-degenerate). v3.3.9 `__init__` 기본값(eta_prev=1.0·delta_star=0.5557·sigma_delta_c=0.0625·α=1·λ=10)이 곧 그 BEST config 이므로 orchestrator 분기는 공유 HP 만 passthrough, v3.3.9-specific calibration default 는 미override (BEST 위임). run_tiage `_factory_v339` 도 이미 클래스 default(=BEST) 사용.
+
+**caveat**: orchestrator default 변경은 `version` 명시 안 한 호출자(구 QA 파이프라인)에 영향. 실험 harness(`experiment.py`/`run_experiment.py`/`run_tiage_full_compare.py`)는 version 을 명시 전달하므로 무영향 — 본 변경은 *canonical default* 설정 성격. RNN 처리(A3 identity 고정)·v3.3.10(causal-window) 설계 결정은 미반영(별도, decision-log 2026-05-18 RNN/A3 entry 참조). δ*=0.5557 은 TIAGE train 의존(타 벤치 재calibration 필요).
+
+---
+
+## 2026-05-18 — 표준 segmentation 벤치 도입(SuperDialseg/Dialseg711) + v3.3.10 실벤치 검증 (사용자 지시)
+
+**결정/근거**: TIAGE 단일(잡담형, 노이즈 큼) 한계 → 표준 dialogue-segmentation 벤치 **SuperDialseg + Dialseg711** 도입. 소스 = GitHub `coldog2333/SuperDialseg`(clone, `benchmarks/superdialseg/`+`benchmarks/superdialseg_data/`, gitignored). 신규 `scripts/run_superdialseg_eval.py` — 그들 **공식 Pk/WD/F1 + Score**(=0.5·F1+0.25·(1−Pk)+0.25·(1−WD), `metrics/segmentation.py` verbatim, window='auto') 사용해 문헌-비교 가능. GT = dataset `segmentation_label`(last→0 공식 규약). 임베딩 캐시·우리 segmenter→seg-id→boundary 변환.
+
+**SuperDialseg test 결과 (1322 dial/17328 turn/bnd 0.232, `outputs/experiments/2026-05-18_superseg_test_v3310/`)**:
+- prev-cos@oracleθ(천장): Score 0.447 / F1 0.458 / Pk 0.467 / WD 0.660
+- v3.3.9 @TIAGE-δ* zero-shot: Score 0.460 / F1 **0.449** / Pk 0.468 / WD 0.589 / predr 0.418
+- **v3.3.10 @TIAGE-cfg(m2,ρ0.7,a0.5,δ*0.5594) zero-shot: Score 0.463 / F1 0.432 / Pk 0.471 / WD 0.541 / predr 0.316**
+- 전 oracle-δ* 행 수렴 → F1 0.458 / Score ~0.447
+
+**판정**:
+1. **v3.3.10 > v3.3.9 (Score·WD·과분절억제)** — Score 0.460→0.463, WD 0.589→0.541, predr 0.418→0.316(GT 0.232 근접). codex causal-window FP-감소 예측이 *구조화된 실벤치*에서 실증. **TIAGE-train "+0.006=노이즈" 판정은 TIAGE 잡담 특유의 가림**이었음 — v3.3.10 무가치 아님 (이전 ledger/판정 정정).
+2. 단 F1 은 v3.3.9 우위(0.449>0.432): v3.3.10 경계 덜 찍어 recall↓ ↔ WD/Score 이득. "이긴다"는 지표 의존(Score=공식 종합 기준 v3.3.10).
+3. **인접-cosine unsupervised 천장 ≈ F1 0.46 / Score 0.45** (prev-cos·v3.3.9·v3.3.10 oracle 전부 수렴). 문헌 0.55~0.65 는 unsupervised 도달 불가 → **supervised regime** 강하게 시사 (codex SOTA-caveat 실증). 인코더·split·supervised 미확정이라 외부 우열 주장 금지.
+
+**영향**: 신규 벤치/스크립트/데이터 + ledger 를 전 seg벤치로 확장(`outputs/reports/tiage_hp_sweep_ledger.md`) + handoff 갱신. 다음: Dialseg711 eval(어댑터 준비됨), superseg-val δ* 재calibration(현재 TIAGE-δ* zero-shot 전이라 향상 여지), 인코더 정합 ablation, η=1 RNN-skip fast-path(eval ~4배 가속 — RNN dead-weight forward 제거). v3.3.10 은 SuperDialseg Score-우위라 default 승격 후보(단 F1 trade·δ* 미보정이라 보류, superseg-val calibration 후 재판정).

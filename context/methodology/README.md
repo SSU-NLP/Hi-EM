@@ -31,7 +31,13 @@ v1   (Gaussian likelihood, flat history)
                             │   │
                             │   ├→ v3.3.4   (hard PE → per-topic σ²_k 로 calibrated likelihood)
                             │   │     │
-                            │   │     └→ v3.3.4-2   per-topic σ²_k Bayesian shrinkage (η_k = n_k/(n_k+c))
+                            │   │     ├→ v3.3.4-2   per-topic σ²_k Bayesian shrinkage (η_k = n_k/(n_k+c))
+                            │   │     │
+                            │   │     └→ v3.3.5   (SEM2 f_is_trained cold-start gating 복원)
+                            │   │           └→ v3.3.6   (SEM2 persistence+history-replay dynamics + per-topic model + seed)
+                            │   │                 └→ v3.3.7   (SEM2 map_variance σ², n≥2)  [#14|15 미해결 — 경험적 반증]
+                            │   │                       └→ v3.3.8   (SEM2 fresh-baseline pe_prior + non-prev f0)  [pe_prior 벤치 calibration 미완]
+                            │   │                             ┄→ v3.3.9 (계획: session_id 미사용 emergent SEM segmenter; time-aware prior 는 v3.3.10 후보)
 ```
 
 ## 한 줄 요약
@@ -50,6 +56,10 @@ v1   (Gaussian likelihood, flat history)
 | [v3.3.3-4](v3.3.3-4.md) | `HiEMSegmenterV333_4` | minimal segmenter + (topic, episode) atomic retrieval + dormant LTM safety net |
 | [v3.3.4](v3.3.4.md) | `HiEMSegmenterV334` | hard PE rule 제거, likelihood 를 `−PE²/(2σ_k²)` 로 calibrate |
 | [v3.3.4-2](v3.3.4-2.md) | `HiEMSegmenterV334_2` | + per-topic σ²_k Bayesian shrinkage (η_k = n_k/(n_k+c)) |
+| [v3.3.5](v3.3.5.md) | `HiEMSegmenterV335` | SEM2 `f_is_trained` gating 복원: untrained topic = fresh 와 동일 L0 (chicken-and-egg 해소) |
+| [v3.3.6](v3.3.6.md) | `HiEMSegmenterV336` | SEM2 dynamics: untrained=persistence, per-topic model, history replay, **결정적 seed** (3턴천장·재현성 해소) |
+| [v3.3.7](v3.3.7.md) | `HiEMSegmenterV337` | SEM2 `map_variance` posterior σ² (n≥2). ⚠ idx374 #14\|15 미해결 — 경험적 반증 기록 |
+| [v3.3.8](v3.3.8.md) | `HiEMSegmenterV338` | SEM2 fresh-baseline `pe_prior`(cos_threshold 대체) + non-prev f0. ⚠ pe_prior 벤치 calibration 미완 (default 1.0=원칙값) |
 
 ## 버전별 hyperparameter 요약 (current LoCoMo sweep value)
 

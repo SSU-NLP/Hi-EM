@@ -31,6 +31,26 @@
 - 평가: QA accuracy (GPT-4o judge). **Topic 경계 감지 용도 아님.**
 - 논문: ICLR 2025
 - 레포: https://github.com/xiaowu0162/LongMemEval
+- **(2026-05-16) evidence/retrieval 지표 미산출 한계**: `scripts/analyze_evidence_topics.py`
+  의 evidence→topic concentration 및 H@k/R@k/P@k 는 LoCoMo `dia_id`
+  evidence 구조 전제. LongMemEval 은 turn-level `has_answer` 구조라
+  `evidence_topic_summary.json` 이 전부 null/0 으로 나온다 — LongMemEval
+  run 에서는 "왜 졌나"를 retrieval 수준으로 정량 추적 불가. 단일 idx
+  haystack 진단은 `scripts/inspect_longmemeval_segmentation.py` (turn /
+  question / `--user-only` / `--version v2|v3.3.4|v3.3.5|v3.3.6|v3.3.7|v3.3.8`)
+  로 별도 수행. cross-idx user-turn concat 은 idx seam artifact 때문에 금지
+  (decision-log 2026-05-16 segmentation 평가 프로토콜).
+- **(2026-05-17) 변형(oracle vs s)**: 로컬엔 `longmemeval_oracle.json`
+  (증거 세션만, 질문당 ~6세션/36턴)만 있었음. retrieval 난이도 제거판이라
+  segmentation/추론만 측정 가능. `longmemeval_s_cleaned.json`(277MB, HF
+  `xiaowu0162/longmemeval-cleaned`) 추가 — 질문당 ~48세션(증거+distractor)
+  /~245 user턴, distractor 는 ShareGPT/UltraChat 재활용(세션당 user턴
+  0~66 불규칙). `has_answer`/`answer_session_ids` 동일. **s 의 idx 정렬이
+  로컬 oracle 과 다름 → qid 매칭 필수** (로컬 oracle 은 cleaned 이전
+  구버전 가능). 증거/distractor 분리 진단 = `scripts/inspect_longmemeval_s.py`
+  (`--qid`/`--idx`/`--with-distractors`/`--out`). 평가 metric =
+  `evidence_recall@K`(topic-level primary, session-level 보조);
+  `evidence_cohesion` 폐기 (decision-log 2026-05-17).
 
 ## Tier 1 (Topic 경계 감지 — Phase 1): Hi-EM segmentation 검증
 
