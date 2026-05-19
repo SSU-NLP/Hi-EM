@@ -177,6 +177,44 @@ cd ..
 - TopiOCQA dev: `cd benchmarks/topiocqa && python download_data.py --resource data.topiocqa_dataset.dev --output_dir .`
 - LongMemEval oracle: `wget https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json -P benchmarks/LongMemEval/data/`
 
+### DTS baseline 외부 레포/데이터 (gitignored — 직접 준비, QA 제외)
+
+`methods/`·`scripts/run_*` (Def-DTS / Plain LLM / TextTiling / BayesSeg /
+CSM) 실행에 필요. 용량/외부성 때문에 git 에 미포함 (`.gitignore`).
+
+```bash
+# 1) Def-DTS (online/offline 러너의 데이터·metric 원천: tiage/dialseg711/
+#    superseg jsonl + autoseg segeval). scripts/run_defdts_*·*_online·
+#    *_prefix, methods/* 가 benchmarks/Def-DTS 를 참조.
+git clone --depth=1 https://github.com/ElPlaguister/Def-DTS.git benchmarks/Def-DTS
+
+# 2) SuperDialseg 툴킷 (TextTiling/BayesSeg 원본 offline). 이미 gitignored.
+git clone --depth=1 https://github.com/Coldog2333/SuperDialseg.git benchmarks/superdialseg
+```
+
+**3) BayesSeg 빌드** (offline·online 둘 다 필요. 상세=decision-log 2026-05-20):
+```bash
+sudo apt install -y default-jdk ant                       # java11+ / ant
+git clone --depth=1 https://github.com/jacobeisenstein/bayes-seg /tmp/bs
+B=benchmarks/superdialseg/src/super_dialseg/models/bayesseg
+cp -r /tmp/bs/lib "$B/lib"; cp /tmp/bs/build.xml "$B/build.xml"; mkdir -p "$B/classes"
+# online 용: OnlineSegServer.java + dp_online.config(num-segs-known=false)
+#  → methods/README.md / decision-log 의 코드 그대로 추가 후
+cd "$B" && ant build && cd -                              # classes/ 생성
+```
+
+**4) DailyDialog 원본 (CSM 학습용, topic 포함)** — yanran.li 사망. 원본
+`ijcnlp_dailydialog`(dialogues_text/topic/act.txt) 를 확보해
+`benchmarks/CSM train/` 또는 `benchmarks/EMNLP_dataset/` 에 배치.
+Colab 학습은 `colab_csm_train.ipynb` `[2b]` 셀로 zip 업로드 → 자동 배치.
+
+**5) CSM 코드 (lxing532)** — 로컬 작업 불필요. `colab_csm_train.ipynb`
+가 Colab 에서 `https://github.com/lxing532/Dialogue-Topic-Segmenter`
+자동 clone + 의존성 핀(transformers 4.39.3) + STEP-RESUME 패치.
+
+> QA 벤치(LoCoMo/LongMemEval 등)는 위 "벤치마크 4종" 참조 — 본 DTS
+> 안내 범위 밖.
+
 ---
 
 ## 빠른 시작
