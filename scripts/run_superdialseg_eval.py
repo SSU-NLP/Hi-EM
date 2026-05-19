@@ -49,6 +49,7 @@ sys.path.insert(0, str(REPO / "src"))
 from hi_em.embedding import QueryEncoder  # noqa: E402
 from hi_em.sem_core_v339 import HiEMSegmenterV339  # noqa: E402
 from hi_em.sem_core_v411 import HiEMSegmenterV411  # noqa: E402
+from hi_em.sem_core_v412_exp import HiEMSegmenterV412Exp  # noqa: E402
 
 SDS = REPO / "benchmarks" / "superdialseg_data"
 CACHE = REPO / "outputs" / "runs" / "_misc"
@@ -202,6 +203,19 @@ def seg_pred_v411(emb, delta_star):
     return [1 if ids[i] != ids[i + 1] else 0 for i in range(len(ids) - 1)] + [0]
 
 
+def seg_pred_v412exp(emb, delta_star):
+    """v4.1.1 + per-topic δ*_k (EXPERIMENTAL). Same TIAGE-cfg as v4.1.1
+    → 유일 차이 = per-topic δ* (clean ablation). pt_* = codex safe
+    default (N_min=6, γ_max=0.35, clip[0.85,1.15], σδ² global fixed)."""
+    seg = HiEMSegmenterV412Exp(
+        dim=emb.shape[1], alpha=1.0, lmda=10.0, delta_star=delta_star,
+        ctx_window=V411_M, ctx_decay=V411_RHO, ctx_blend_a=V411_A)
+    import torch
+    torch.manual_seed(0)
+    ids = [seg.assign(s.astype(np.float64))[0] for s in emb]
+    return [1 if ids[i] != ids[i + 1] else 0 for i in range(len(ids) - 1)] + [0]
+
+
 def eval_method(name, dialogs, embs, predfn):
     pks, wds = [], []
     gt_all, pr_all = [], []
@@ -285,6 +299,10 @@ def main() -> None:
         eval_method(
             f"v4.1.1 @oracle-δ*={theta10:.3f} (upper bound)",
             dialogs, embs, lambda e: seg_pred_v411(e, theta10)),
+        eval_method(
+            f"v4.1.2-exp(per-topic δ*) @TIAGE-cfg δ*{V411_DSTAR} "
+            f"(zero-shot)",
+            dialogs, embs, lambda e: seg_pred_v412exp(e, V411_DSTAR)),
     ]
     for r in rows:
         r["score"] = total_score(r["f1"], r["pk"], r["wd"])

@@ -90,3 +90,9 @@ outputs/experiments/*/*/checkpoints/
 **/checkpoints/round_*/
 benchmarks/superdialseg/
 benchmarks/superdialseg_data/
+
+# external clones / datasets / one-off (push 제외, 재현가능)
+benchmarks/Def-DTS/
+benchmarks/EMNLP_dataset/
+/dailydialog_original.zip
+benchmarks/CSM train/

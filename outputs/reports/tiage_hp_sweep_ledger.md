@@ -86,11 +86,20 @@ superseg Score 0.460→0.463·WD 0.589→0.541; **dialseg711 Score
   cross-check 가치만(낮음).
 - ~~Dialseg711 test~~ **완료** (`2026-05-18_dialseg711_test_v3310`,
   위 표) — v3.3.10 zero-shot 이 유사도 천장 매칭.
-- **superseg δ* val-calibration** — 진행 예정 (`--calib-dataset
-  superseg --calib-split validation`). 현재 TIAGE-δ* zero-shot 전이라
-  향상 여지(특히 superseg). rename(v4.1.1) 후 실행.
-- **v3.3.10 → v4.1.1 rename** — 사용자 지시(2026-05-18), Dialseg711
-  후. 새 메이저 라인(prev-cos identity+causal-window).
+- ~~superseg δ* val-calibration~~ **완료**
+  (`2026-05-18_superseg_test_v411_calib`): val-cal δ*_prev=0.520 /
+  δ*_eff=0.502 (TIAGE 0.556 보다 낮음). **결과: Score 오히려 하락**
+  (v3.3.9 0.460→0.451, v4.1.1 0.463→0.453) — val-cal 이 *F1* 최적화라
+  과분절(pred_rate 0.32→0.46~0.50, GT 0.232) → WD/Pk 악화. "miscal
+  artifact" 가설 반증: superseg 저조는 진짜 난이도. **교훈: target=
+  Score 면 F1 로 δ* calibrate 금지.** v4.1.1 운용점 = TIAGE-cfg
+  zero-shot(Score 0.463) 유지. (다음 후보: Score/WD-aware δ* 탐색.)
+- ~~v3.3.10 → v4.1.1 rename~~ **완료**(2026-05-18). 새 메이저 라인.
+- ~~per-topic δ* (v4.1.2-exp)~~ **완료·종결**(2026-05-19,
+  `2026-05-19_{dialseg711,superseg}_v412exp`): SuperDialseg ==v4.1.1
+  (가드✅무해) / Dialseg711 Score 0.590→0.589(이득❌). 가설 기각 —
+  안전 N_min 게이트 vs 발동시점 충돌. v4.1.2 default 승격 안 함,
+  코드 보존(긴 대화서만 재오픈). decision-log 2026-05-19.
 - **인코더 정합 ablation** (all-mpnet-base-v2 등 문헌 정합) — 미실행.
 - **strong-similarity 천장(codex C)**: TextTiling-SBERT depth — 부분
   대체됨(oracle 행이 천장 ≈0.46 확정). 정밀 depth-method 는 미실행.

@@ -1456,3 +1456,78 @@ $$raw_I(t) = w_1 s_{count} + w_2 s_{freq} + w_3 s_{recency} + w_4 s_{nbr} + w_5 
 **구현**: `git mv sem_core_v3310.py→sem_core_v411.py`, `calibrate_v3310_delta_star.py→calibrate_v411_delta_star.py` (이력 보존). 코드 일괄 치환 HiEMSegmenterV3310→V411 / v3310→v411 / V3310_→V411_ / v3.3.10→v4.1.1 (run_tiage_full_compare·run_superdialseg_eval·factory·METHODS·SWEEP). 신규 `context/methodology/v4.1.1.md`. **pre-rename 산출물**(`outputs/experiments/2026-05-18_{superseg,dialseg711}_test_v3310/`, ledger 표의 exp명)은 *역사적 명칭(v3310) 유지* — 커밋된 참조·git history 보존. 이후 신규 산출물부터 v411.
 
 **영향**: orchestrator default 는 여전히 v3.3.9 (v4.1.1 승격은 superseg-val δ* 재calibration 후 재판정 — 보류). 다음: superseg val-calibrated 재평가(`--calib-dataset superseg --calib-split validation`, v411 코드). ledger/handoff 갱신. git: dts push (정책 2026-05-18: 명시요청 시 Claude 직접 실행).
+
+---
+
+## 2026-05-19 — superseg val-calibrated δ* 재평가: "miscalibration artifact" 가설 반증
+
+**실행**: `2026-05-18_superseg_test_v411_calib` — superseg validation 에서 best-F1 δ* 산출(δ*_prev=0.520, δ*_eff=0.502; TIAGE 0.556/0.559 보다 낮음) → superseg test 재평가(v3.3.9·v4.1.1, v411 코드).
+
+**결과 (공식 metric, GT bnd 0.232)**:
+- v3.3.9: TIAGE-δ* zero-shot Score 0.460 → superseg-val-δ* **0.451** (하락). F1 0.449→0.455(↑) but WD 0.589→0.637·pred 0.418→0.500(과분절↑).
+- v4.1.1: TIAGE-cfg zero-shot Score 0.463 → val-cal **0.453** (하락). F1 0.432→0.451(↑) but WD 0.541→0.615·pred 0.316→0.461.
+
+**판정**:
+1. **"superseg 저조는 TIAGE-δ* miscalibration artifact" 가설 = 반증.** val-calibration 이 Score 를 오히려 낮춤. 앞선 superseg 수치는 calibration 탓이 아니라 **진짜 task 난이도** — 전 method F1~0.45/Score~0.45 가 인접-cosine 유사도 천장(F1 0.46)에 붙어있음.
+2. **원인 = calibration objective 불일치**: val-cal 이 *F1* 을 최대화 → F1-최적 δ* 는 과분절(pred_rate 0.46~0.50 ≫ GT 0.232) → WD/Pk 악화 → Score 순손실. (F1-게임-by-과분절; ARI 가드 존재 이유와 동일 패턴.) **교훈: target=Score/WD 면 δ* 를 F1 로 calibrate 하면 안 됨 — Score/WD-aware calibration 필요.**
+3. **v4.1.1 ≥ v3.3.9 일관** (Score 두 regime, zero-shot WD 크게 우위). causal-window 가치 유지.
+4. **v4.1.1 운용점 = TIAGE-cfg zero-shot (Score 0.463) 확정.** val-calibrated 승격 불가(Score 더 낮음). orchestrator default 는 v3.3.9 유지(v4.1.1 default 승격은 TIAGE/Dialseg711 재확인 + Score-aware calib 후 재판정 — 보류).
+5. SOTA/문헌 0.55~0.65 가 unsupervised 로 superseg 에서 도달 불가(천장 F1 0.46) 재확인 → supervised regime. 외부 초과주장 금지(인코더·split·supervised 미확정).
+
+**영향**: ledger/handoff 갱신. 다음 후보: (a) Score/WD-aware δ* 탐색, (b) 인코더 정합 ablation, (c) 목표 포지셔닝(unsupervised-competitive 인정 vs supervised 도입) codex 위임.
+
+---
+
+## 2026-05-19 — per-topic δ* (v4.1.2-exp): 구현·검증 → "안전하나 무이득", default 승격 안 함
+
+**결정**: 전역 δ* 의 v4.1.1 을 default 로 **유지**. per-topic δ*_k 는 `src/hi_em/sem_core_v412_exp.py`(`HiEMSegmenterV412Exp`) 로 **experimental 구현 + 실측 검증 완료** — codex 2026-05-19 P2 그대로, default 승격 **안 함**.
+
+**구현 (codex 안전 수식)**: D_k = accepted within-continuation δ_eff only(boundary/fresh/same-label-restart 제외 — v3.3.9-pre mixture 붕괴 차단). n_k<N_min(6) → γ=0 → δ*_k=δ*_0 (전역과 정확 동일, graceful fallback). n_k≥N_min → r_k=Q0.80(D_k)+κ·MAD, γ=γ_max·(m+1)/(m+1+ν), δ*_k=clip((1−γ)δ*_0+γ·r_k, [0.85,1.15]δ*_0). σδ² 전역 고정 유지. prev-topic δ*_{k_prev} 로 prior-corrected fresh baseline → repeat>fresh ⟺ δ_eff<δ*_{k_prev} 동치 유지. sanity: 짧은토픽 v412exp==v411 비트동일, 긴토픽 발동 확인.
+
+**검증 (공식 metric, 임베딩 캐시, RNN-skip)**:
+- SuperDialseg test: v4.1.2-exp Score 0.463/F1 0.432/Pk 0.471/WD 0.541/predr 0.316 = **v4.1.1 과 모든 자리 동일** → 가드 통과(짧은 segment 3~4턴<N_min → 무발동). 무해 실증.
+- Dialseg711 test: v4.1.2-exp Score **0.589** vs v4.1.1 0.590 (F1/Pk 동일, WD 0.415→0.416) → **이득 없음, 노이즈 내 미세 손실**. "긴 대화서 per-topic 이득" 가설 **데이터 기각**.
+
+**원인 (구조적, 재오픈 조건 명시)**: segment ~7턴(dialseg711)이라도 within-continuation N_min=6 모이면 segment 가 거의 종료 → δ*_k 가 segment 끝 1~2턴에만 늦게 발동 → 순효과≈0. **안전 게이트(N_min, 붕괴방지 필수) vs 발동시점 근본 충돌**: N_min 낮추면 v3.3.9-pre식 noise/붕괴 위험, 안전하면 표준 DTS 대화길이엔 너무 늦어 무의미. → per-topic δ* 는 *훨씬 긴 대화(segment ≫ N_min)* 데이터에서만 재검토 가치. 현 벤치(TIAGE/superseg/dialseg711)에선 종결.
+
+**영향**: v4.1.1 = 현 라인 유지(orchestrator default 는 여전히 v3.3.9; v4.1.1 승격은 별건). v4.1.2-exp 코드·어댑터 배선 보존(재오픈용). methodology 는 v4.1.1.md 에 본 negative result 한 줄. ledger/handoff 갱신. 깨끗한 negative result — 가설 검증·기각·메커니즘 규명 완료.
+
+## 2026-05-19 — baseline: Def-DTS / Def-DTS-based-online 분리
+
+**맥락**: DTS baseline 으로 Def-DTS(ElPlaguister, ACL2025) 를 Crts/gpt-4o 로 도입. Def-DTS 는 offline·whole-dialogue (대화 1개 = LLM 1콜, 전체 발화 joint intent 추론). 사용자가 Hi-EM(online·턴단위)과 공정 latency 비교 위해 "턴당 1콜" 개조 요구.
+
+**결정 (codex:rescue 위임 + 후속 논의)**:
+1. Def-DTS 원형은 **개조하지 않음**. 대화당 latency + amortized 턴당(=대화latency/발화수, "offline 사후 분배 추정치"로 명시) 으로만 보고. 논문 비교 가능성 보존.
+2. 진짜 online 턴당 latency 가 필요하면 **별도 baseline `Def-DTS-based-online`** 신설. 정의: 턴 t 에서 `dialogue[0:t]`(미래 미관측)만 같은 Def-DTS 프롬프트에 넣고 **마지막 발화 topic_shift 만** 채택 → 턴당 1콜. **Def-DTS 결과와 절대 혼합 금지**, 이름·REPORT 분리.
+
+**근거**: (a) "전체 대화 매턴 반복"(변형 a)은 미래 발화를 알아야 하므로 정의상 online 불가(offline 반복). (b) online 은 필연적으로 prefix-only(변형 b) → 문맥이 joint→causal 로 바뀌어 예측·점수가 원 Def-DTS 와 달라짐 → 다른 방법. 같은 프롬프트 텍스트라도 *적용 입력*이 달라 계산되는 양이 다름. 정직한 벤치마킹 = 다른 방법은 다른 이름.
+
+**영향**: `scripts/run_defdts_online.py` 신설(전용 experiment/REPORT). 목적은 정밀 점수 아닌 데이터셋별 턴 100개 표본 평균 latency → full 불필요, 누적 발화≈100 까지 대화 표본. resume+사이드카(crash-safe), workers=1(비경합 isolated 턴 latency). Crts USD quota 복구 전 실행 불가(429) — 코드/하네스는 선구축.
+
+## 2026-05-19 — baseline: Plain LLM prompting (online) 신설
+
+**맥락**: 비교표(Offline CSM/Def-DTS [bi-direction] vs Online CSM/Plain LLM prompting/Ours [past-only]) 의 "Plain LLM prompting | past-only" 행 충당. 원 SuperDialseg Plain Text Prompting(`benchmarks/superdialseg/.../models/llm` ChatGPTSegmenter) 은 offline·whole-dialogue·대화당 1콜.
+
+**결정 (codex:rescue 위임 결과, Def-DTS-online 과 동일 논리)**: 원형 개조 금지. 진짜 online 이 필요하면 **별도 baseline `Plain LLM prompting (online)`** 신설 — turn t 에 `U1..Ut`(미래 미관측)만 동일 plain 프롬프트로 1콜, Ut 에서 새 part 시작 여부 = 경계. offline 결과와 **표·집계·해석 분리**, prefix-causal 임을 REPORT 명시. parsing 규칙·실패처리 명시 필수(codex caution #4).
+
+**산출**: `scripts/run_plainprompt_online.py` (run_defdts_online.py 동형: Crts gpt-4o, workers=1 비경합 latency, resume+사이드카, 데이터셋별 누적 발화≈100 표본). 수집 컬럼 = Pk/WD/F1/**Score(0.5·F1+0.25·(1-Pk)+0.25·(1-WD), 공식 SuperDialseg)**/턴당 latency(ms)/턴당 LLM 호출수/턴당 토큰. 전용 experiment/REPORT.
+
+**영향**: 비교표 행 매핑 — Offline Def-DTS=run_defdts_crts.py(완료), Plain LLM prompting(online)=본 스크립트, Online CSM=별도(추후), Ours=Hi-EM. 모든 행 동일 metric/표본 정의로 채워야 공정.
+
+## 2026-05-20 — `methods/` 디렉토리 신설 (offline 원본 / online 수정본 정리)
+
+**결정(사용자)**: baseline 의 원본(offline)·Hi-EM 수정본(online)을 레포 홈
+`methods/` 에 정리. 범위 = TextTiling, BayesSeg 둘만(추후 확장 가능).
+방식 = **A(wrapper, 코드 복사 없음)**: `benchmarks/superdialseg`(read-only)
+원본 무복사·무수정, `methods/<m>/offline.py` 는 원본 알고리즘 호출만,
+`online.py` 는 `scripts/run_*_prefix.py`(검증본) 실행 진입점.
+
+**근거**: CLAUDE.md `benchmarks/* 읽기전용·코드복사 금지` 준수 + offline/
+online 을 동일 harness(Def-DTS 번들 데이터, autoseg Pk/WD+F1, Score=
+0.5F1+0.25(1-Pk)+0.25(1-WD))로 비교. online(prefix-causal)은 codex
+2026-05-20 결정대로 AUXILIARY(핵심 5행표 제외, Pk/F1 indicative,
+latency 가 비교값). offline Pk/F1 은 원 SuperDialseg 논문값과 데이터·
+공식 metric 차이로 정확 일치 아님(방향·정상동작 검증용).
+
+**영향**: 신규 `methods/{texttiling,bayesseg}/{offline,online}.py`+README.
+산출 `outputs/experiments/<name>/REPORT.md`. architecture 문서 반영.

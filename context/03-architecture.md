@@ -125,3 +125,11 @@ tests/
 **Round = 50 questions** (oracle 500 → 10 rounds). Resume granularity.
 **Phase**: (1) run hypothesis (2) judge accuracy. atomic save per phase, checkpoint after both.
 **Metric**: per-method × per-qtype accuracy + prefill_tokens/latency p50/p95 + error_rate + topic_revisit_hit_rate.
+## methods/ (2026-05-20 신설)
+
+baseline 의 원본(offline)·Hi-EM 수정본(online, prefix-causal) 진입점 정리.
+범위: TextTiling, BayesSeg. 방식 A(wrapper, benchmarks 무복사·read-only 유지).
+- `methods/texttiling/{offline,online}.py`, `methods/bayesseg/{offline,online}.py`, `methods/README.md`
+- offline=전체대화(원본 알고리즘 호출), online=`scripts/run_*_prefix.py`(검증본) 실행 진입점
+- 동일 harness: Def-DTS 번들 데이터 + autoseg Pk/WD/F1 + Score. online=AUXILIARY(codex). 산출 outputs/experiments/<name>/REPORT.md
+decision-log 2026-05-20 참조.
