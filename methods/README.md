@@ -27,6 +27,7 @@
 | `texttiling/online_streaming.py` | prefix-causal **streaming** (block-cosine incremental, Welford running threshold, **O(w)/turn**), 3 dataset (tiage/dialseg711/superseg), Def-DTS 는 데이터 로드만, metric 은 segeval 직접, AUXILIARY (별도 method 명: `TextTiling-online-streaming`). 2026-05-20 신규. |
 | `bayesseg/offline.py`   | 원본 SuperDialseg BayesSegmenter, 전체 대화, `segment dp.config`(`-num-segs 7`) |
 | `bayesseg/online.py`    | persistent JVM·native-K·prefix, AUXILIARY → `scripts/run_bayesseg_prefix.py` |
+| `greedyseg/online_delay2.py` | **GreedySeg-online-delay2** (BERT bounded-lookahead, delay=2). 원본 SuperDialseg `GreedySegmenter` 의 score 공식·HP·argmin greedy 선택 그대로 보존. cuda/mps/cpu device-agnostic. 2026-05-21 신규. *codex 검증 = 5행 핵심표 가능*. |
 
 **TextTiling 3종 구분 (혼동 주의)**:
 - `offline.py` (NLTK 원본, 전체 대화, global threshold) — *원본 baseline*.
@@ -42,6 +43,8 @@ python methods/texttiling/online_streaming.py --target-turns 0     # 3 dataset �
 python methods/texttiling/online_streaming.py --datasets tiage --target-turns 100  # 빠른 smoke
 python methods/bayesseg/offline.py  --limit 100
 python methods/bayesseg/online.py   --target-turns 100
+python methods/greedyseg/online_delay2.py --target-turns 0          # 3 dataset 전체, device=auto
+python methods/greedyseg/online_delay2.py --datasets tiage --target-turns 100  # smoke
 ```
 모두 `outputs/experiments/<name>/REPORT.md` 산출 (CLAUDE.md 규칙).
 non-LLM (quota·비용 0).
@@ -107,6 +110,72 @@ final_boundaries = seg.flush()              # 잔여 gap 처리
 
 # 단위 테스트 (11 ea, < 1s)
 uv run pytest tests/test_texttiling_streaming.py -v
+```
+
+## `GreedySeg-online-delay2` 실행 가이드 (2026-05-21 신규)
+
+### 1) 의존성
+
+```bash
+# Def-DTS 번들 데이터 (이미 clone 됐다면 skip)
+git clone --depth=1 https://github.com/ElPlaguister/Def-DTS.git benchmarks/Def-DTS
+# transformers/torch 는 이미 의존성. BERT (bert-base-uncased ~440MB) 자동 다운.
+```
+
+### 2) 기본 실행 — 3 dataset 전체
+
+```bash
+uv run python methods/greedyseg/online_delay2.py --target-turns 0
+```
+
+device 자동 선택 (cuda → mps → cpu). 산출:
+`outputs/experiments/2026-05-21_greedyseg_online_delay2/REPORT.md` +
+`turns_{ds}.jsonl` (sidecar, gitignored).
+
+### 3) 자주 쓰는 옵션
+
+```bash
+# 빠른 smoke
+uv run python methods/greedyseg/online_delay2.py --datasets tiage --target-turns 100
+
+# device 강제
+uv run python methods/greedyseg/online_delay2.py --device cpu  # 결정성 가장 안정
+uv run python methods/greedyseg/online_delay2.py --device cuda  # GPU 권장
+
+# HP 조정 (원본 default 유지가 정직)
+uv run python methods/greedyseg/online_delay2.py \
+    --window-size 2 --jump-step 2 --max-seg-round 8 --sim-threshold 0.6
+```
+
+### 4) 정직성 핵심
+
+- **이름**: `GreedySeg-online-delay2` (강한 online 명명 OK — codex 2026-05-21 검증
+  통과). 원본 score 공식·HP·argmin greedy 그대로 보존, *입력 인터페이스 streaming
+  + boundary emit 만 right-context (window=2) 만큼 지연*.
+- **5행 핵심표 가능** (본 plan 의 baseline 중 유일). offline 결과와 별도 열/블록 분리.
+- TextTiling-streaming (encoder-free, ~0.01ms) 과 같은 latency 표에 *직접 비교 금지*
+  — encoder cost (BERT forward) 차원이 다름.
+- 결정성: CPU > CUDA > MPS. 논문 reproducibility 시 device·seed·버전·fallback
+  REPORT 명기 + 동일 device 반복 측정.
+
+### 5) 코드 사용
+
+```python
+from hi_em.baselines import GreedySegOnlineDelay2
+
+seg = GreedySegOnlineDelay2(
+    backbone="bert-base-uncased",
+    window_size=2, jump_step=2, max_seg_round=8, sim_threshold=0.6,
+    max_seq_length=50, device="auto",
+)
+for utt in dialogue_utts:
+    new_boundary_indices = seg.push(utt)   # list[int] (1-based)
+final = seg.flush()
+print(seg.state())  # {t, cut_index, n_candidates, device, bert_forwards, last_boundary}
+```
+
+```bash
+uv run pytest tests/test_greedyseg_delay2.py -v   # 6 ea (tiny model, < 10s)
 ```
 
 ## 정직성 / 한계

@@ -8,7 +8,7 @@
 - **Method**: `hi_em.baselines.StreamingTextTiling` (block-cosine incremental, Welford running threshold).
   w=5, k=3, c=0.5 (cutoff=mean+c·std of depth), min_gap=3, warmup_gaps=3. ※ short-dialogue (tiage ~16 발화) 대응 runner default; class default 는 NLTK 호환 w=10/k=6.
 - **데이터**: Def-DTS 번들 (`benchmarks/Def-DTS/data/DTS_session_datasets/*_test.jsonl`) 의 3 dataset. 데이터 로드 외 Def-DTS 의존 없음.
-- **표본 정의**: dataset 별 전체 test set (전체 대화 사용).
+- **표본 정의**: dataset 별 누적 발화 ≥ 100 까지 앞에서 자름 (small-n indicative).
 - **metric**: `segeval` Pk/WD (per-dialogue → macro mean), self-implemented boundary-set F1 (per-dialogue → macro mean). Score = 0.5·F1 + 0.25·(1−Pk) + 0.25·(1−WD).
 - **latency**: 매 `push()` 호출 perf_counter (CPU only, calls/turn=0, tokens/turn=0). 첫 발화는 표본 제외.
 
@@ -16,17 +16,13 @@
 
 | dataset | n(dial/turn) | Pk ↓ | WD ↓ | F1 ↑ | Score ↑ | lat/turn(ms) ↓ | pred bs | gold bs |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| tiage | 100/1564 | 0.5266 | 0.5476 | 0.2252 | 0.3441 | 0.008 | 305 | 315 |
-| dialseg711 | 711/18639 | 0.4713 | 0.4896 | 0.2708 | 0.3952 | 0.010 | 4210 | 2743 |
-| superseg | 1322/16006 | 0.4623 | 0.4667 | 0.2618 | 0.3987 | 0.011 | 3229 | 4017 |
+| tiage | 7/112 | 0.6071 | 0.6173 | 0.1310 | 0.2594 | 0.008 | 22 | 24 |
 
 ## 3. latency 분포 (ms/turn)
 
 | dataset | n | mean | std | p50 | p90 | p95 | p99 | max |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| tiage | 1464 | 0.008 | 0.004 | 0.008 | 0.014 | 0.015 | 0.017 | 0.024 |
-| dialseg711 | 17928 | 0.010 | 0.011 | 0.008 | 0.018 | 0.020 | 0.026 | 1.294 |
-| superseg | 14684 | 0.011 | 0.008 | 0.008 | 0.021 | 0.026 | 0.036 | 0.172 |
+| tiage | 105 | 0.008 | 0.004 | 0.008 | 0.013 | 0.016 | 0.020 | 0.023 |
 
 ## 4. 해석
 - streaming 의 per-turn O(w) 비용은 nltk prefix-recompute 의 O(t) 비용보다 *원리적으로* 작음 (긴 대화일수록 격차 확대). 세 dataset 모두 ms 단위 이하의 latency 가 나오면 baseline 의 핵심 주장 (낮은 per-turn latency) 이 검증됨.
@@ -35,7 +31,7 @@
 - causal lag: gap score 는 right block (k pseudo-sentence) 이 닫혀야 계산되므로, boundary 채택 시점은 *대상 발화 인덱스보다 늦은 push() 호출 안* 에서 발생. metric 계산에는 영향 없음 (대화 종료시 boundary set 동일).
 
 ## 5. 한계 / 검증 미해결
-- 표본: 전체 test set (전체 대화 사용). seed/반복 없음 (알고리즘은 결정적이라 seed 무관).
+- 표본: 누적 발화 ≥ 100 까지 앞에서 자름 (small-n indicative). seed/반복 없음 (알고리즘은 결정적이라 seed 무관).
 - one-sided depth (right_peak 미사용) → 원본 양방향 depth 와 boundary criterion 자체 다름.
 - c=0.5, min_gap=3 모두 dev-set sweep 없이 codex 권고값 (class default c=0.5, min_gap=4; runner default 는 짧은 tiage 대화에 맞춰 조정). tuning 여지 있음.
 - utterance ↔ pseudo-sentence 매핑: pseudo-sentence 가 발화 경계를 넘을 수 있어 detected boundary 의 utterance 귀속이 ±몇 발화 단위로 미세하게 shift 됨. Pk/WD 의 window-tolerant 성격으로 흡수되지만 F1 (정확 일치) 은 그만큼 낮을 수 있음.

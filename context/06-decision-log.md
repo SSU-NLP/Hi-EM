@@ -1578,3 +1578,64 @@ latency 모두 ms 단위 이하** — baseline 핵심 주장 검증. nltk prefix
 online streaming). `pyproject.toml` 에 `segeval` 의존 추가. `benchmarks/Def-DTS`
 clone (데이터 로드 전용). SEM 계승 원칙 적용 대상 아님 (TextTiling 은 SEM
 외부 baseline).
+
+## 2026-05-21 — GreedySeg-online-delay2 신설 (BERT bounded-lookahead)
+
+**맥락**: SuperDialseg 의 GreedySeg (Jiang et al. 2023, `models/greedyseg/
+modeling_greedyseg.py`) 를 online 비교표에 추가. 원본 = offline whole-document
+BERT cosine segmentation (left/center/right context, larger=max, argmin greedy
+선택, 비가역).
+
+**codex:rescue 위임 결과 (한국어)**:
+- 옵션 B (**bounded-lookahead, delay=2**) 채택. 원본 score 공식·HP·argmin
+  선택을 *그대로 보존*. 입력 인터페이스 streaming + boundary emit 만 right
+  context (WINDOW_SIZE=2 미래 발화) 확보 후로 지연.
+- **codex 2026-05-21 algorithm-integrity 검증 통과**: 강한 명명
+  `GreedySeg-online-delay2` 정직 — score 공식·greedy 선택·HP·encoder 모두
+  보존. **본 plan 의 3 baseline (TextTiling-streaming, GreedySeg-delay2,
+  GraphSeg-window-d) 중 유일하게 "5행 핵심표 가능"** (codex 검증). 단 offline
+  결과와 별도 열/블록 분리 보고 의무.
+- *strict prefix-causal 은 아님* — right_sent 의존성. 이름이 강함을 정당화하는
+  근거 = "same scoring/selection, delayed emission".
+
+**device-agnostic 정책 (codex 2026-05-21 권고)**:
+- `--device {auto,cuda,mps,cpu}` (default `auto`), 우선순위 cuda → mps → cpu.
+- `PYTORCH_ENABLE_MPS_FALLBACK=1` env var — torch/transformers import *이전*
+  설정 필수 (runner 모듈 최상단 `os.environ.setdefault`).
+- `model.to(device)` + tokenizer output 도 동일 device 이동.
+- `model.eval()` + `torch.inference_mode()` 고정.
+- 결정성·reproducibility: CPU > CUDA > MPS. seed·버전·device·fallback 여부
+  REPORT 명기. 동일 device 반복 측정.
+
+**결정**: `src/hi_em/baselines/greedyseg_delay2.py` 의 `GreedySegOnlineDelay2`
+class (push()/flush()/state() API, lazy BERT load) + `src/hi_em/baselines/
+_device.py` (`resolve_device`, `enable_mps_fallback`) + `src/hi_em/baselines/
+_seg_utils.py` (TextTiling-streaming 과 공유: parse_defdts / bnds_to_masses /
+boundary_set_f1 / latency_stats / pk_wd) + `methods/greedyseg/online_delay2.py`
+runner + `tests/test_greedyseg_delay2.py` (6 ea, tiny-distilbert fixture).
+
+**미해결 / 가정**:
+- 원본 GreedySeg 의 BERT pooling 방식 (CLS vs mean) 확인 못함 — superdialseg
+  install 없음. 본 구현 = **segment-concat → [CLS] embedding** default. REPORT
+  한계 §에 명시.
+- 원본 paper 점수와 직접 비교 불가 (데이터·metric·인터페이스 모두 차이) —
+  방향성·정상동작 검증용.
+
+**산출 (3-benchmark full test set, 2026-05-21 device=mps M4 Pro)**:
+`outputs/experiments/2026-05-21_greedyseg_online_delay2/REPORT.md`
+
+| dataset | n(dial/turn) | Pk | WD | F1 | Score | lat/turn mean | p95 | bert_fwd/utt |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| tiage | 100/1564 | 0.537 | 0.554 | 0.142 | 0.298 | 13.8ms | 67.3ms | 2.13 |
+| dialseg711 | 711/18639 | 0.416 | 0.443 | 0.412 | 0.491 | 16.3ms | 81.8ms | 2.72 |
+| superseg | 1322/16006 | 0.507 | 0.511 | 0.278 | 0.384 | 9.1ms | 41.4ms | 1.91 |
+
+Pk/WD/F1 = INDICATIVE (원본 paper 점수와 데이터·metric·인터페이스 모두 차이).
+**5행 핵심표 대상** (codex 검증 통과) 이지만 *offline GreedySeg 결과와 별도
+열·블록 분리 보고 의무*. lat/turn 9-16ms (BERT forward 2-3회/utt) — encoder
+cost 때문에 TextTiling-streaming (0.01ms) 과 같은 latency 표 배치 금지.
+
+**영향**: `methods/README.md` GreedySeg 행 추가 + 실행 가이드 §, `methods/
+greedyseg/` 신규 디렉토리, `src/hi_em/baselines/{_device,_seg_utils,
+greedyseg_delay2}.py` 신규. 기존 TextTiling-streaming runner 도 `_seg_utils`
+공통 모듈 사용으로 refactor. SEM 계승 원칙 적용 대상 아님 (외부 baseline).

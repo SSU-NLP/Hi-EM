@@ -25,97 +25,23 @@ import time
 from pathlib import Path
 
 import numpy as np
-from segeval.window.pk import pk as _pk
-from segeval.window.windowdiff import window_diff as _wd
 
 from hi_em.baselines import StreamingTextTiling
+from hi_em.baselines._seg_utils import (
+    DATASETS,
+    boundary_set_f1 as _f1,
+    bnds_to_masses as _bnds_to_masses,
+    latency_stats as _stats,
+    load_defdts,
+    pk_wd,
+)
 
 REPO = Path(__file__).resolve().parent.parent.parent
 DEFDTS_DIR = REPO / "benchmarks" / "Def-DTS" / "data" / "DTS_session_datasets"
-DATASETS = ("tiage", "dialseg711", "superseg")
-
-
-# ----------------------------------------------------------- data loader ---
-def _parse_defdts_dialogue(dialogue: str) -> tuple[list[str], list[int]]:
-    """Def-DTS dialogue 한 문자열 → (utterances, boundary_idxs_1based).
-
-    형식: ``U1[NEWLINE]U2[NEWLINE][BOUNDARY][NEWLINE]U3...`` —
-    `[BOUNDARY]` 가 두 발화 사이에 나오면 *다음 발화부터* 새 topic
-    (= boundary BEFORE 그 발화). 첫 발화는 정의상 경계 아님.
-    """
-    parts = dialogue.split("[NEWLINE]")
-    utts: list[str] = []
-    bnds: list[int] = []
-    pending = False
-    for seg in parts:
-        s = seg.strip()
-        if s == "":
-            continue
-        if s == "[BOUNDARY]":
-            pending = True
-            continue
-        utts.append(seg)
-        if pending and len(utts) >= 2:
-            bnds.append(len(utts))  # 1-based: 이 발화부터 새 topic
-        pending = False
-    return utts, bnds
 
 
 def _load_defdts(dataset: str) -> list[tuple[str, list[str], list[int]]]:
-    """반환: [(dialogue_id, utterances, gold_boundary_idxs_1based)]."""
-    path = DEFDTS_DIR / f"{dataset}_test.jsonl"
-    if not path.exists():
-        raise FileNotFoundError(f"{dataset} test set 없음: {path}")
-    out: list[tuple[str, list[str], list[int]]] = []
-    for ln in path.read_text().splitlines():
-        if not ln.strip():
-            continue
-        row = json.loads(ln)
-        utts, bnds = _parse_defdts_dialogue(row["dialogue"])
-        if len(utts) >= 2:
-            out.append((row["id"], utts, bnds))
-    return out
-
-
-# ----------------------------------------------------- segeval helpers ---
-def _bnds_to_masses(boundaries: list[int], n: int) -> tuple[int, ...]:
-    """boundary utterance indices (1-based, before-utt) → segment-length tuple.
-
-    boundary i 는 "utts[i] 부터 새 segment" 의미. n = 발화 수. 결과 길이 합 = n.
-    """
-    bs = sorted(set(b for b in boundaries if 2 <= b <= n))
-    masses: list[int] = []
-    prev = 1  # 첫 segment 는 1 부터 시작
-    for b in bs:
-        masses.append(b - prev)
-        prev = b
-    masses.append(n - prev + 1)
-    return tuple(masses)
-
-
-def _f1(pred_bs: list[int], gold_bs: list[int]) -> float:
-    p = set(pred_bs)
-    g = set(gold_bs)
-    tp = len(p & g)
-    if tp == 0:
-        return 0.0
-    prec = tp / len(p) if p else 0.0
-    rec = tp / len(g) if g else 0.0
-    if prec + rec == 0:
-        return 0.0
-    return 2 * prec * rec / (prec + rec)
-
-
-def _stats(xs: list[float]) -> dict:
-    if not xs:
-        return {k: float("nan") for k in
-                ("n", "mean", "std", "min", "p50", "p90", "p95", "p99", "max")}
-    a = np.asarray(xs, float)
-    return dict(
-        n=len(a), mean=float(a.mean()), std=float(a.std()),
-        min=float(a.min()), p50=float(np.percentile(a, 50)),
-        p90=float(np.percentile(a, 90)), p95=float(np.percentile(a, 95)),
-        p99=float(np.percentile(a, 99)), max=float(a.max()))
+    return load_defdts(dataset, DEFDTS_DIR)
 
 
 # -------------------------------------------------------------- main ---
@@ -181,13 +107,7 @@ def main() -> None:
             flush_bs = seg.flush()
             pred.extend(flush_bs)
             n = len(utts)
-            pm = _bnds_to_masses(pred, n)
-            gm = _bnds_to_masses(gold, n)
-            try:
-                pk_v = float(_pk(pm, gm))
-                wd_v = float(_wd(pm, gm))
-            except Exception:
-                pk_v, wd_v = 1.0, 1.0
+            pk_v, wd_v = pk_wd(pred, gold, n)
             f1_v = _f1(pred, gold)
             pk_vals.append(pk_v)
             wd_vals.append(wd_v)

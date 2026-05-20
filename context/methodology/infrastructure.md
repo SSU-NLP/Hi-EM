@@ -260,6 +260,32 @@ git 정책: `outputs/experiments/<name>/REPORT.md`, `outputs/reports/*.md`, `out
 - **행동 영향**: 모든 LongMemEval segmentation 평가. longmemeval_s 의 session_id 는 SEM 재발견 target 아니라 외생 hard boundary(단 v3.3.9 는 emergent 방향 — session_id 미사용).
 - **한계**: topic↔session 단위 불일치 시 두 지표 병행 보고.
 
+## 14. Online BERT baseline — `GreedySegOnlineDelay2` (2026-05-21)
+
+- **무엇**: `src/hi_em/baselines/greedyseg_delay2.py` 의 `GreedySegOnlineDelay2`
+  class. SuperDialseg GreedySegmenter (Jiang et al. 2023) 의 BERT cosine score
+  공식·HP·argmin greedy 선택을 *그대로 보존* 한 채 streaming 입력 + boundary
+  emit lag (right context window_size=2). `push() → list[int]` (1-based,
+  lag-emission), `flush() → list[int]`, `state() → dict`.
+- **어디**: `src/hi_em/baselines/`, runner `methods/greedyseg/online_delay2.py`
+  (3-dataset, Def-DTS 번들, segeval 직접). device helper `src/hi_em/baselines/
+  _device.py` (resolve_device, enable_mps_fallback) + shared utils
+  `src/hi_em/baselines/_seg_utils.py`.
+- **왜**: Hi-EM 의 online 비교표에 *zero-shot BERT cosine* 카테고리 보강.
+  codex 2026-05-20/21 검증 = "score 공식·greedy 선택 보존 → 강한 명명 OK,
+  5행 핵심표 가능 (본 plan 유일)".
+- **device-agnostic**: cuda/mps/cpu 한 코드. `--device {auto,cuda,mps,cpu}`,
+  default `auto` (cuda → mps → cpu). MPS 사용 시 `PYTORCH_ENABLE_MPS_FALLBACK=1`
+  반드시 transformers import 이전 설정 (runner 최상단). model.to(device) +
+  tokenizer output device 이동 + model.eval() + torch.inference_mode().
+- **행동 영향**: 본 baseline 은 TextTiling-streaming (encoder-free, ~0.01ms)
+  과 같은 latency 표에 *직접 비교 금지* — encoder cost 차원이 다름. 별도 § 또는
+  열 분리. 결정성 CPU > CUDA > MPS — 논문 reproducibility 시 동일 device
+  반복 측정.
+- **한계**: 원본 BERT pooling 방식 (CLS vs mean) 확인 못함 (superdialseg
+  install 없음), 본 구현 default = CLS. *strict prefix-causal 아님* (delay=2).
+  segment finalize 의 실제 lag = max_seg_round + window_size 발화까지 가능.
+
 ## 13. Streaming baseline segmenter — `StreamingTextTiling` (2026-05-20)
 
 - **무엇**: `src/hi_em/baselines/texttiling_streaming.py` 의 `StreamingTextTiling`
