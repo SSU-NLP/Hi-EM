@@ -182,6 +182,11 @@ cd ..
 `methods/`·`scripts/run_*` (Def-DTS / Plain LLM / TextTiling / BayesSeg /
 CSM) 실행에 필요. 용량/외부성 때문에 git 에 미포함 (`.gitignore`).
 
+**부분 예외**: `methods/texttiling/online_streaming.py` (2026-05-20 신설) 는
+Def-DTS 번들 데이터 (tiage/dialseg711/superseg jsonl) 만 읽고 metric 은
+`segeval` 직접 호출 → Def-DTS clone 만 있으면 충분 (superdialseg / bayes-seg /
+ant build 불필요). 자세한 algorithm 차이는 `methods/README.md` 참조.
+
 ```bash
 # 1) Def-DTS (online/offline 러너의 데이터·metric 원천: tiage/dialseg711/
 #    superseg jsonl + autoseg segeval). scripts/run_defdts_*·*_online·

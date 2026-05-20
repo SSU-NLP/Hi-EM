@@ -260,6 +260,25 @@ git 정책: `outputs/experiments/<name>/REPORT.md`, `outputs/reports/*.md`, `out
 - **행동 영향**: 모든 LongMemEval segmentation 평가. longmemeval_s 의 session_id 는 SEM 재발견 target 아니라 외생 hard boundary(단 v3.3.9 는 emergent 방향 — session_id 미사용).
 - **한계**: topic↔session 단위 불일치 시 두 지표 병행 보고.
 
+## 13. Streaming baseline segmenter — `StreamingTextTiling` (2026-05-20)
+
+- **무엇**: `src/hi_em/baselines/texttiling_streaming.py` 의 `StreamingTextTiling`
+  class. `push(utterance) → list[int]` (이번 호출에서 새로 확정된 boundary
+  utterance index 1-based), `flush() → list[int]` (대화 종료시 잔여 gap 처리).
+  block-cosine + Welford running mean/std threshold + one-sided causal depth +
+  min_gap suppression. per-turn 실질 O(w).
+- **어디**: `src/hi_em/baselines/`, 진입점 runner `methods/texttiling/online_streaming.py`
+  (Def-DTS 번들 jsonl 3 dataset 로드 — tiage/dialseg711/superseg, segeval 직접 호출).
+- **왜**: 기존 `run_texttiling_prefix.py` 는 매턴 nltk fresh 호출 = O(t)/turn
+  → online baseline 의 "latency 비교값" 정책 위배. 진짜 streaming 버전을 별도
+  method 명 (`TextTiling-online-streaming`) 으로 신설 (codex:rescue 2026-05-20,
+  decision-log 참조).
+- **행동 영향**: TextTiling 비교 시 *3종 구분 강제* — offline (NLTK 전체), prefix-
+  recompute (NLTK 매턴 fresh), streaming (자체 구현). 같은 표에 섞지 말 것.
+- **한계**: 원본 NLTK TextTiling 점수 재현 안 함 (causal running threshold ≠
+  offline global threshold). Pk/WD/F1 = INDICATIVE; latency 가 비교값. class
+  default w=10/k=6 (NLTK 호환), runner default w=5/k=3 (tiage 짧은 대화 대응).
+
 ## 12. LongMemEval-S 데이터 + inspect 도구 (2026-05-17)
 
 - **무엇**: `benchmarks/LongMemEval/data/longmemeval_s_cleaned.json`(277MB, 500Q, HF `xiaowu0162/longmemeval-cleaned`). oracle(증거세션만)과 달리 질문당 ~48세션(증거+distractor), ~245 user턴. `has_answer`/`answer_session_ids` 동일 스키마. **idx 정렬이 로컬 oracle 과 다름 — qid 로 매칭**(s idx0=oracle idx286). distractor 는 ShareGPT/UltraChat 재활용 → 세션당 user턴 0~66 불규칙(증거세션은 균질).

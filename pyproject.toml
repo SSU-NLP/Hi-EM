@@ -26,6 +26,8 @@ dependencies = [
     # benchmarks/locomo/task_eval/evaluation.py uses nltk.PorterStemmer;
     # we require it for numeric parity with the official metric.
     "nltk>=3.8",
+    "matplotlib>=3.10.9",
+    "segeval>=2.0.11",
 ]
 
 [dependency-groups]

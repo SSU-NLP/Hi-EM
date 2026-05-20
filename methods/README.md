@@ -23,20 +23,91 @@
 | 경로 | 무엇 |
 |---|---|
 | `texttiling/offline.py` | 원본 TextTiling, **전체 대화**(미래 포함). nltk w=10,k=6. |
-| `texttiling/online.py`  | prefix-causal(U1..Ut), AUXILIARY → `scripts/run_texttiling_prefix.py` |
+| `texttiling/online.py`  | prefix-causal(U1..Ut) **prefix-recompute** (매턴 nltk fresh 호출, O(t)/turn), AUXILIARY → `scripts/run_texttiling_prefix.py` |
+| `texttiling/online_streaming.py` | prefix-causal **streaming** (block-cosine incremental, Welford running threshold, **O(w)/turn**), 3 dataset (tiage/dialseg711/superseg), Def-DTS 는 데이터 로드만, metric 은 segeval 직접, AUXILIARY (별도 method 명: `TextTiling-online-streaming`). 2026-05-20 신규. |
 | `bayesseg/offline.py`   | 원본 SuperDialseg BayesSegmenter, 전체 대화, `segment dp.config`(`-num-segs 7`) |
 | `bayesseg/online.py`    | persistent JVM·native-K·prefix, AUXILIARY → `scripts/run_bayesseg_prefix.py` |
+
+**TextTiling 3종 구분 (혼동 주의)**:
+- `offline.py` (NLTK 원본, 전체 대화, global threshold) — *원본 baseline*.
+- `online.py` (NLTK 호출만 prefix 로 감쌈, 매턴 fresh recompute) — causal 인터페이스 + 원본 점수 *근사*.
+- `online_streaming.py` (자체 구현, incremental block-cosine, running threshold, one-sided depth) — **NLTK 원본 점수 재현하지 않음**. 핵심 비교값 = per-turn latency. codex:rescue 위임 결과 (decision-log 2026-05-20).
 
 ## 실행
 
 ```
 python methods/texttiling/offline.py            # full test (논문 방향 검증)
 python methods/texttiling/online.py --target-turns 100
+python methods/texttiling/online_streaming.py --target-turns 0     # 3 dataset 전체 (Def-DTS bundle 데이터)
+python methods/texttiling/online_streaming.py --datasets tiage --target-turns 100  # 빠른 smoke
 python methods/bayesseg/offline.py  --limit 100
 python methods/bayesseg/online.py   --target-turns 100
 ```
 모두 `outputs/experiments/<name>/REPORT.md` 산출 (CLAUDE.md 규칙).
 non-LLM (quota·비용 0).
+
+## `TextTiling-online-streaming` 실행 가이드 (2026-05-20 신규)
+
+### 1) 의존성 (1회)
+
+```bash
+# segeval (Pk/WD metric)
+uv add segeval     # 이미 pyproject.toml/uv.lock 에 반영됨
+
+# Def-DTS 번들 데이터 (3 dataset 의 test jsonl). 알고리즘 의존 X, 데이터만.
+git clone --depth=1 https://github.com/ElPlaguister/Def-DTS.git benchmarks/Def-DTS
+```
+
+`benchmarks/superdialseg`, `bayes-seg`, `OnlineSegServer.java`, `ant build`
+**모두 불필요**. Java/JVM 도 불필요.
+
+### 2) 기본 실행 — 3 dataset 전체
+
+```bash
+uv run python methods/texttiling/online_streaming.py --target-turns 0
+```
+
+산출: `outputs/experiments/2026-05-20_texttiling_streaming/REPORT.md` +
+`turns_{tiage,dialseg711,superseg}.jsonl` (sidecar, gitignored). 약 **30 초**.
+GPU·LLM 무관, pure-CPU Python.
+
+### 3) 자주 쓰는 옵션
+
+```bash
+# 빠른 smoke (1 dataset, 누적 발화 ≥ 100)
+uv run python methods/texttiling/online_streaming.py \
+    --datasets tiage --target-turns 100
+
+# HP 조정 (default: w=5/k=3/c=0.5/min_gap=3/warmup_gaps=3)
+uv run python methods/texttiling/online_streaming.py \
+    -w 10 -k 6 --c 1.0 --min-gap 4
+
+# 실험 이름 분리 (HP sweep 시 결과 덮어쓰기 방지)
+uv run python methods/texttiling/online_streaming.py \
+    --name 2026-05-20_tt_streaming_w10k6 -w 10 -k 6
+```
+
+### 4) 결과 해석 요점
+
+- **핵심 비교값 = per-turn latency** (mean/p50/p95/max ms). Pk/WD/F1 = INDICATIVE
+  (NLTK 원본 점수 재현 *안 함*). 자세한 사유는 § "정직성 / 한계" 와 REPORT 본문.
+- 결과 표 schema: `[dataset, n(dial/turn), Pk, WD, F1, Score, lat/turn(ms),
+  pred_bs, gold_bs]`. `Score = 0.5·F1 + 0.25·(1−Pk) + 0.25·(1−WD)`.
+- 알고리즘 결정적 → seed 무관, 같은 HP·같은 데이터면 byte-identical 결과.
+
+### 5) 코드/테스트
+
+```bash
+# 모듈 import (Hi-EM 본체 연동 / 다른 runner 와 공유)
+from hi_em.baselines import StreamingTextTiling
+seg = StreamingTextTiling(w=10, k=6, c=0.5, min_gap=4, warmup_gaps=3)
+for utt in dialogue_utts:
+    new_boundary_indices = seg.push(utt)   # list[int] (1-based)
+final_boundaries = seg.flush()              # 잔여 gap 처리
+
+# 단위 테스트 (11 ea, < 1s)
+uv run pytest tests/test_texttiling_streaming.py -v
+```
 
 ## 정직성 / 한계
 

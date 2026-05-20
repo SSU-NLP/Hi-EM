@@ -1531,3 +1531,50 @@ latency 가 비교값). offline Pk/F1 은 원 SuperDialseg 논문값과 데이�
 
 **영향**: 신규 `methods/{texttiling,bayesseg}/{offline,online}.py`+README.
 산출 `outputs/experiments/<name>/REPORT.md`. architecture 문서 반영.
+
+## 2026-05-20 — TextTiling-online-streaming 신설 (true O(w)/turn 변형)
+
+**맥락**: 기존 `methods/texttiling/online.py` (= `scripts/run_texttiling_prefix.py`)
+는 인터페이스만 causal (past-only) 일 뿐 매 turn `nltk.TextTilingTokenizer.tokenize(utts[:t])`
+를 fresh 호출 → 전체 O(n²) recompute. *online baseline 핵심 비교값 = per-turn
+latency* (decision-log 2026-05-20 위 entry) 라는 정책에 맞춰, 진짜 streaming
+TextTiling 을 별도 method 로 추가.
+
+**codex:rescue 위임 결과 (한국어 답변)**:
+- 옵션 1 (진짜 streaming) 채택. 단 **이름 분리** — `TextTiling-online-streaming`
+  (또는 `CausalTextTiling-RS`) 로 호명. 원본 NLTK/SuperDialseg TextTiling 점수
+  *재현 안 함*. running mean/std threshold + one-sided depth 라 boundary set
+  자체가 NLTK 와 다름. 정직성 핵심 = 같은 표·같은 이름으로 섞지 않기.
+- **유지**: lowercase/punct/stopword, block-cosine, depth-score valley 개념.
+- **변형**: depth threshold = Welford running mean+c·std; close-boundary
+  suppression = 최근 boundary 와 거리 < min_gap 인 causal rule.
+- **폐기**: NLTK 전체 문서 재토큰화, 전체 depth 재정렬, 미래 정보 기반 global
+  revision.
+
+**결정**: `src/hi_em/baselines/texttiling_streaming.py` 의 `StreamingTextTiling`
+class (push()/flush() API) + `methods/texttiling/online_streaming.py` runner
+(tiage anno_test.json 직접 로드, segeval 직접, **Def-DTS 의존 없음**) +
+`tests/test_texttiling_streaming.py` (11 테스트).
+
+**HP default 결정**: codex 권고 w=10/k=6 은 SuperDialseg 기준. tiage (평균
+대화 16발화 × ~5단어) 에선 2k pseudo-sentence 못 채워 boundary 0. runner 의
+default 를 w=5/k=3/min_gap=3 으로 축소 (REPORT setup §에 근거 명시). class
+default 는 w=10/k=6 유지 (Hi-EM 본체 통합 등 일반 사용에 fair).
+
+**산출 (3-benchmark full test set, 2026-05-20)**:
+`outputs/experiments/2026-05-20_texttiling_streaming/REPORT.md`
+
+| dataset | n(dial/turn) | Pk | WD | F1 | Score | lat/turn mean | p95 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| tiage | 100/1564 | 0.527 | 0.548 | 0.225 | 0.344 | 0.008ms | 0.015ms |
+| dialseg711 | 711/18639 | 0.471 | 0.490 | 0.271 | 0.395 | 0.010ms | 0.020ms |
+| superseg | 1322/16006 | 0.462 | 0.467 | 0.262 | 0.399 | 0.011ms | 0.026ms |
+
+Pk/WD/F1 = INDICATIVE (codex 의 intended algorithmic difference). **per-turn
+latency 모두 ms 단위 이하** — baseline 핵심 주장 검증. nltk prefix-recompute
+(`run_texttiling_prefix.py`) 와의 turn-by-turn diff 는 별도 작업.
+
+**영향**: `methods/README.md` 3종 구분 (offline / online prefix-recompute /
+online streaming). `pyproject.toml` 에 `segeval` 의존 추가. `benchmarks/Def-DTS`
+clone (데이터 로드 전용). SEM 계승 원칙 적용 대상 아님 (TextTiling 은 SEM
+외부 baseline).
