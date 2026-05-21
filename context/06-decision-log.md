@@ -1639,3 +1639,56 @@ cost 때문에 TextTiling-streaming (0.01ms) 과 같은 latency 표 배치 금�
 greedyseg/` 신규 디렉토리, `src/hi_em/baselines/{_device,_seg_utils,
 greedyseg_delay2}.py` 신규. 기존 TextTiling-streaming runner 도 `_seg_utils`
 공통 모듈 사용으로 refactor. SEM 계승 원칙 적용 대상 아님 (외부 baseline).
+
+## 2026-05-21 — GraphSeg-inspired bounded-window 신설 (graph-based AUXILIARY)
+
+**맥락**: GraphSeg (Glavaš et al. 2016, SemEval; 구현 = Dobatymo/graphseg-python)
+의 sentence similarity (IC × GloVe + Hungarian) + Bron-Kerbosch maximal clique
++ sequential merge 3-phase 를 online 변형으로 추가. 원본은 전체 대화 graph
+위에서 1회 수행하는 *전역 구조화*.
+
+**codex:rescue 위임 결과 (한국어, 2026-05-20)**:
+- 옵션 A (**bounded-lookahead window=d**) 채택. window 안에서만 graph 구축 +
+  clique + merge 재계산.
+- **codex 2026-05-21 algorithm-integrity 검증**: 전역 graph 본질이 깨짐 →
+  강한 `GraphSeg-online` 명명 **금지**. 정직 명명 = `GraphSeg-inspired
+  bounded-window` (paper 본문), short `GraphSeg-window-d` (file/CLI/표 헤더만).
+  **AUXILIARY only** — 원본 GraphSeg paper 결과와 같은 표 등재 금지.
+
+**유지/양보** (codex 권고):
+- 보존: sentence similarity 공식 (IC × GloVe + Hungarian), Bron-Kerbosch
+  maximal clique, sequential merge 3-phase, content-word POS filter.
+- 양보: full-dialogue graph (→ window=d), global clique structure
+  (→ window-local), single-pass global merge (→ window 마다 재계산),
+  backtracking (= 불가, boundary 비가역 lag-emission).
+
+**결정**: `src/hi_em/baselines/graphseg_window.py` (`GraphSegWindowD`,
+push/flush/state, lazy GloVe + NLTK brown IC table) + `methods/graphseg/
+online_window.py` runner + `tests/test_graphseg_window.py` (9 ea, tiny
+embedding fixture). 신규 의존: `networkx`, `scipy` (uv add). 외부 download:
+GloVe 6B.300d (~1GB 압축해제, `benchmarks/glove/`, gitignored).
+
+**산출 (3-benchmark full test set, 2026-05-21 device=cpu, M4 Pro)**:
+`outputs/experiments/2026-05-21_graphseg_window_d/REPORT.md`
+
+| dataset | n(dial/turn) | Pk | WD | F1 | Score | lat/turn mean | p95 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| tiage | 100/1564 | 0.493 | 0.516 | 0.252 | 0.374 | 0.85ms | 1.68ms |
+| dialseg711 | 711/18639 | 0.449 | 0.482 | 0.366 | 0.450 | 1.15ms | 1.84ms |
+| superseg | 1322/16006 | 0.539 | 0.542 | 0.164 | 0.312 | 0.62ms | 1.88ms |
+
+cold-start = 13.66s (GloVe 400k vocab + brown IC table). Pk/WD/F1 = INDICATIVE
+(원본 paper 점수와 데이터·metric·인터페이스·전역 graph 모두 차이). encoder-
+light (no BERT) 라 latency 가 BERT-based GreedySeg-online-delay2 보다 1~2자릿수
+빠름.
+
+**미해결 / 가정**:
+- 원본 paper 의 word frequency 출처 (Wikipedia) 대신 NLTK brown corpus 사용
+  (실용적 선택, REPORT 한계 §에 명시).
+- POS filter = NLTK averaged_perceptron_tagger.
+- boundary lag-emission: 한 boundary 가 여러 window 평가에서 재출현 가능,
+  본 구현은 *최초 발견 즉시 비가역 채택*.
+
+**영향**: `methods/README.md` GraphSeg 행 추가 + 실행 가이드 §, `methods/
+graphseg/` 신규 디렉토리, `benchmarks/glove/` gitignored. SEM 계승 원칙 적용
+대상 아님 (외부 baseline).

@@ -187,6 +187,18 @@ Def-DTS 번들 데이터 (tiage/dialseg711/superseg jsonl) 만 읽고 metric 은
 `segeval` 직접 호출 → Def-DTS clone 만 있으면 충분 (superdialseg / bayes-seg /
 ant build 불필요). 자세한 algorithm 차이는 `methods/README.md` 참조.
 
+**2026-05-21 신규 baseline** — `methods/greedyseg/online_delay2.py` (BERT
+bounded-lookahead, codex 검증 통과 = 5행 핵심표 가능), `methods/graphseg/
+online_window.py` (GloVe + graph clique, AUXILIARY). 둘 다 Def-DTS 번들 데이터
+사용. GraphSeg 는 **GloVe 6B.300d (~862MB) 추가 download** 필요:
+
+```bash
+mkdir -p benchmarks/glove && cd benchmarks/glove && \
+    curl -LO https://nlp.stanford.edu/data/glove.6B.zip && \
+    unzip glove.6B.zip && rm glove.6B.zip && cd ../..
+uv run python -c "import nltk; [nltk.download(p) for p in ('averaged_perceptron_tagger', 'averaged_perceptron_tagger_eng', 'brown', 'punkt_tab')]"
+```
+
 ```bash
 # 1) Def-DTS (online/offline 러너의 데이터·metric 원천: tiage/dialseg711/
 #    superseg jsonl + autoseg segeval). scripts/run_defdts_*·*_online·

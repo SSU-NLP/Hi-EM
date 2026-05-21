@@ -28,6 +28,7 @@
 | `bayesseg/offline.py`   | 원본 SuperDialseg BayesSegmenter, 전체 대화, `segment dp.config`(`-num-segs 7`) |
 | `bayesseg/online.py`    | persistent JVM·native-K·prefix, AUXILIARY → `scripts/run_bayesseg_prefix.py` |
 | `greedyseg/online_delay2.py` | **GreedySeg-online-delay2** (BERT bounded-lookahead, delay=2). 원본 SuperDialseg `GreedySegmenter` 의 score 공식·HP·argmin greedy 선택 그대로 보존. cuda/mps/cpu device-agnostic. 2026-05-21 신규. *codex 검증 = 5행 핵심표 가능*. |
+| `graphseg/online_window.py` | **GraphSeg-inspired bounded-window** (short: `GraphSeg-window-d`). GloVe + IC × Hungarian + Bron-Kerbosch maximal clique + sequential merge 를 *window=d 안에서만* 적용. 강한 `-online` 명명 금지 (codex 2026-05-21). 2026-05-21 신규. *AUXILIARY only*. |
 
 **TextTiling 3종 구분 (혼동 주의)**:
 - `offline.py` (NLTK 원본, 전체 대화, global threshold) — *원본 baseline*.
@@ -45,6 +46,8 @@ python methods/bayesseg/offline.py  --limit 100
 python methods/bayesseg/online.py   --target-turns 100
 python methods/greedyseg/online_delay2.py --target-turns 0          # 3 dataset 전체, device=auto
 python methods/greedyseg/online_delay2.py --datasets tiage --target-turns 100  # smoke
+python methods/graphseg/online_window.py --target-turns 0           # 3 dataset 전체 (GloVe 필요)
+python methods/graphseg/online_window.py --datasets tiage --target-turns 100  # smoke
 ```
 모두 `outputs/experiments/<name>/REPORT.md` 산출 (CLAUDE.md 규칙).
 non-LLM (quota·비용 0).
@@ -176,6 +179,75 @@ print(seg.state())  # {t, cut_index, n_candidates, device, bert_forwards, last_b
 
 ```bash
 uv run pytest tests/test_greedyseg_delay2.py -v   # 6 ea (tiny model, < 10s)
+```
+
+## `GraphSeg-window-d` 실행 가이드 (2026-05-21 신규, AUXILIARY only)
+
+### 1) 의존성
+
+```bash
+# Def-DTS 번들 데이터 (이미 clone 됐다면 skip)
+git clone --depth=1 https://github.com/ElPlaguister/Def-DTS.git benchmarks/Def-DTS
+
+# networkx + scipy 는 이미 의존성 (uv add 끝)
+
+# GloVe 6B.300d (~862MB zip, ~1GB 압축 해제)
+mkdir -p benchmarks/glove
+cd benchmarks/glove && curl -LO https://nlp.stanford.edu/data/glove.6B.zip && \
+    unzip glove.6B.zip && rm glove.6B.zip && cd ../..
+# .gitignore 에 benchmarks/glove/ 이미 추가됨
+
+# NLTK 추가 데이터
+uv run python -c "import nltk; nltk.download('averaged_perceptron_tagger'); nltk.download('averaged_perceptron_tagger_eng'); nltk.download('brown'); nltk.download('punkt_tab')"
+```
+
+### 2) 기본 실행 — 3 dataset 전체
+
+```bash
+uv run python methods/graphseg/online_window.py --target-turns 0
+```
+
+산출: `outputs/experiments/2026-05-21_graphseg_window_d/REPORT.md` +
+`turns_{ds}.jsonl` sidecar. GPU 무관 (numpy/scipy/networkx).
+
+### 3) 자주 쓰는 옵션
+
+```bash
+# 빠른 smoke
+uv run python methods/graphseg/online_window.py --datasets tiage --target-turns 100
+
+# HP 조정
+uv run python methods/graphseg/online_window.py --window-d 8 --tau 0.3 --min-seg-size 2
+
+# POS filter off (속도↑, noise↑)
+uv run python methods/graphseg/online_window.py --no-pos-filter
+
+# IC weighting off (모든 단어 IC=1)
+uv run python methods/graphseg/online_window.py --freq-source none
+```
+
+### 4) 정직성 핵심 (codex 2026-05-21 검증)
+
+- **이름**: 공식 = `GraphSeg-inspired bounded-window`. short (file/CLI/표 헤더) = `GraphSeg-window-d`. 강한 `GraphSeg-online` 명명 **금지** — graph 범위·optimization context 가 원본과 다름.
+- **AUXILIARY only**: 원본 GraphSeg paper 결과와 같은 표 등재 금지. Hi-EM 의 online auxiliary 표에서도 *어느 본질이 보존되고 어느 본질이 양보됐는지* 열 분리.
+- **TextTiling-streaming / GreedySeg-online-delay2 와 같은 latency 표에 직접 비교 금지** — encoder/연산 카테고리가 다름.
+- 결정성: numpy/scipy/networkx 모두 결정적 → seed 무관, byte-identical 결과.
+
+### 5) 코드 사용
+
+```python
+from hi_em.baselines import GraphSegWindowD
+
+seg = GraphSegWindowD(window_d=10, sim_threshold=0.25, min_seg_size=3,
+                      glove_path="benchmarks/glove/glove.6B.300d.txt")
+for utt in dialogue_utts:
+    new_boundary_indices = seg.push(utt)
+final = seg.flush()
+print(seg.state())
+```
+
+```bash
+uv run pytest tests/test_graphseg_window.py -v   # 9 ea (tiny embedding fixture, <1s)
 ```
 
 ## 정직성 / 한계

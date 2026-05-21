@@ -260,6 +260,29 @@ git 정책: `outputs/experiments/<name>/REPORT.md`, `outputs/reports/*.md`, `out
 - **행동 영향**: 모든 LongMemEval segmentation 평가. longmemeval_s 의 session_id 는 SEM 재발견 target 아니라 외생 hard boundary(단 v3.3.9 는 emergent 방향 — session_id 미사용).
 - **한계**: topic↔session 단위 불일치 시 두 지표 병행 보고.
 
+## 15. Online graph baseline — `GraphSegWindowD` (2026-05-21)
+
+- **무엇**: `src/hi_em/baselines/graphseg_window.py` 의 `GraphSegWindowD`
+  class. GraphSeg (Glavaš et al. 2016) 의 sentence similarity (IC × GloVe +
+  Hungarian) + Bron-Kerbosch maximal clique + sequential merge 3-phase 를
+  *window=d 안에서만* 적용. `push() → list[int]` (lag-emission, 1-based),
+  `flush()`, `state()`.
+- **어디**: `src/hi_em/baselines/`, runner `methods/graphseg/online_window.py`
+  (3-dataset, Def-DTS 번들, segeval 직접). 의존 = numpy/scipy/networkx +
+  NLTK brown (IC table) + GloVe 6B.300d (`benchmarks/glove/`, gitignored,
+  외부 download).
+- **왜**: Hi-EM 의 online 비교표에 *graph-based unsupervised* 카테고리 보강.
+  codex 2026-05-21 검증: 전역 graph 본질이 깨졌으므로 **AUXILIARY only**.
+- **행동 영향**: 강한 `GraphSeg-online` 명명 금지 (paper 본문 = `GraphSeg-
+  inspired bounded-window`, short `GraphSeg-window-d` 는 file/CLI 만). 원본
+  GraphSeg paper 결과와 같은 표 등재 금지. TextTiling-streaming / GreedySeg-
+  online-delay2 와 같은 latency 표에 *직접 비교 금지* — encoder/연산 카테고리
+  다름. 결정성: numpy/scipy/networkx 모두 결정적 → seed 무관.
+- **한계**: word frequency 원본 = Wikipedia, 본 구현은 NLTK brown corpus
+  (실용 선택). Bron-Kerbosch worst-case 지수 — window_d=10 default, edge
+  density 높으면 d=5 권장. boundary lag-emission 의 비가역성 = window 평가
+  결과가 후속 window 에서 바뀌어도 *최초 발견 boundary 유지*.
+
 ## 14. Online BERT baseline — `GreedySegOnlineDelay2` (2026-05-21)
 
 - **무엇**: `src/hi_em/baselines/greedyseg_delay2.py` 의 `GreedySegOnlineDelay2`
