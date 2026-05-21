@@ -1692,3 +1692,722 @@ light (no BERT) 라 latency 가 BERT-based GreedySeg-online-delay2 보다 1~2자
 **영향**: `methods/README.md` GraphSeg 행 추가 + 실행 가이드 §, `methods/
 graphseg/` 신규 디렉토리, `benchmarks/glove/` gitignored. SEM 계승 원칙 적용
 대상 아님 (외부 baseline).
+
+## 2026-05-21 — `sem_core_v412_exp.py` (per-topic δ*_k) 코드 삭제
+
+2026-05-19 검증으로 default 미승격(negative result, 무이득) 확정 후 보존만 하던 실험 코드. 사용자 정리 요청으로 `src/hi_em/sem_core_v412_exp.py` 및 `scripts/run_superdialseg_eval.py` 의 v4.1.2-exp 참조(import/seg_pred_v412exp/eval row) 일괄 제거. 결과·결정(2026-05-19 entry) 은 git history + 위 문서 기록으로 보존. 재오픈 필요 시 git revert 또는 history 에서 복원.
+
+## 2026-05-20 — v4.2.2 신설: scene encoder swap (bge-base → aws-ai/dse-bert-base)
+
+사용자 요청 "v4.1.1 의 RNN 을 `aws-ai/dse-bert-base` 로 대체한 v4.2.2"
+재해석: v4.1.1 default 가 이미 RNN 미사용 (`eta_prev=1` → `_uses_rnn=False`
+auto-skip) → 실질 변경점은 **scene vector encoder 교체** (`baai/bge-base-en-v1.5`
+→ `aws-ai/dse-bert-base`). codex 분석 (option 1/2/3 비교) 결과 option 1 채택.
+
+**SEM 계승 3-step 통과**: encoder 선택은 SEM2 algorithmic core 에 포함 안 됨
+(SEM2 는 정규화 임베딩이면 무엇이든 수용). sCRP / Bayes / local-MAP /
+prior-corrected B0 와 충돌 0 — δ_eff 수식 동일, scale 만 corpus·encoder 별
+이동. retrieval § 위반 아님 (segmentation upstream).
+
+**산출**:
+- `src/hi_em/sem_core_v422.py` — thin subclass `HiEMSegmenterV422(HiEMSegmenterV411)`,
+  `encoder_name` kwarg 로 expected (`aws-ai/dse-bert-base`) 미일치 시 warn.
+- `context/methodology/v4.2.2.md` — 운영 절차 + δ\* 재calibration 필수 명시.
+
+**필수 후속 (보고 전)**:
+1. `.env`: `HIEM_EMBEDDING_MODEL=aws-ai/dse-bert-base` (Crts api 서빙 가능 여부
+   첫 호출 확인; 실패시 `HIEM_EMBEDDING_BACKEND=local` fallback).
+2. δ\* 재calibration: SuperDialseg/TIAGE/Dialseg711 train split, encoder=DSE-BERT.
+   v4.1.1 default 0.5557 (bge+TIAGE-train) 은 DSE-BERT 환경 무효.
+3. smoke 실험: train/dev 에서 v4.1.1(bge) vs v4.2.2(DSE-BERT) Score 비교.
+   노이즈 밖 우위 없으면 본 doc "결과" 섹션 negative result + 본 log append.
+
+**근거**: codex 권고 ("encoder 교체 라면 SEM 계승 3-step 통과 OK, 단 δ\* 재보정
+필수"). 사용자 진행 의사 명시 (옵션 B: 곧장 v4.2.2 만들기).
+
+**영향**: methodology 신규 doc, 코드 한 파일 추가, 실험 라인 1개 추가. 알고리즘
+본체 무변경. v4.2.1 (`f0_min_starts=1`) 과 직교 — 동시 적용 가능.
+
+## 2026-05-20 — v4.1.1.md 결과 표에 TIAGE-test row 추가
+
+사용자 지시 — v4.2.x encoder ablation smoke 의 baseline 으로 측정된
+v4.1.1 의 TIAGE-test 결과 (Score 0.468 / F1 0.410 / Pk 0.442 / WD 0.508)
+를 `context/methodology/v4.1.1.md` 결과 표에 row 로 추가. ⚠ disclosure
+한 줄 (calibration source = TIAGE-train 과 같은 corpus → in-domain 측정)
+같이 명시. 다른 두 벤치 (superseg / dialseg711) 의 transfer 측정은 변경
+없음.
+
+**근거**: encoder ablation 비교에 TIAGE-test 가 필요했고 측정해보니 sanity
+match (w_topic=1.0 결과와 일치). 측정값 자체는 valid 한 v4.1.1 성능 —
+공식 doc 에 누락된 row 였을 뿐. 사용자 요청으로 정식 기록.
+
+**영향**: v4.1.1.md 결과 표 1줄 추가 + 변경 이력 1줄. 알고리즘 / 코드 무관.
+
+## 2026-05-20 — v4.2.3-exp 신설 → exp 보존 (default 승격 안 됨)
+
+사용자 + codex 흐름: v4.2.2 smoke 의 mixed result (mpnet vs DSE-BERT
+도메인별 우위) → "두 encoder 가 다른 dialogue 정보" 가설 → v4.2.3-exp
+설계 (codex option E = calibrated energy combination).
+
+**알고리즘**: v4.1.1 algorithm 무변경, scene vector 만 dual-channel
+threshold-normalized energy `r = √(w_t·z_t² + w_f·z_f²)` 로 확장.
+boundary ⇔ `r ≥ 1` (internal `δ*=1.0` trick 으로 V411 머신러리 그대로
+재사용). topic 채널 = mpnet, flow 채널 = DSE-BERT. 각 채널 TIAGE-train
+calibration HP 그대로.
+
+**SEM 계승 3-step**: CONDITIONAL PASS (codex 2026-05-20) — framing 을
+"SEM2 residual likelihood 의 calibrated two-feature reduction" 으로 유지.
+Zacks 2007 EST 는 개념 인용만, 성능 근거로 사용 금지.
+
+**산출**:
+- `src/hi_em/sem_core_v423_exp.py` (HiEMSegmenterV423Exp(V411))
+- `context/methodology/v4.2.3.md`
+- `scripts/run_v423_smoke.py` (single trial, w=0.75)
+- `scripts/run_v423_weight_sweep.py` (w_topic ∈ {1.0~0.5} 7-point)
+- `outputs/experiments/2026-05-20_v423_smoke/REPORT.md`
+- `outputs/experiments/2026-05-20_v423_weight_sweep/REPORT.md`
+
+**결과 요약**:
+- Single trial (w=0.75): TIAGE +2.29pp, Dialseg711 -2.31pp, SuperDialseg -3.01pp
+- Sweep mean: w=1.0 (=v4.1.1) 가 best (0.5068). dual 어떤 weight 도 평균 못 이김.
+- Per-dataset best: TIAGE w=0.5 (+2.98pp), Dialseg711 w=0.95 (+0.26pp), SuperDialseg w=1.0 (DSE 항상 해로움)
+- 진단: corr(z_t, z_f) 가 dialseg711 에서 0.765 (가장 높음, only_topic 거의 0)
+  → 두 encoder noise correlation 높을 때 dual 이 mpnet decision 을 희석
+
+**결정**: v4.2.3-**exp** suffix 보존, default 미승격. v4.1.1 유지.
+도메인 특화 사용 옵션 보존 (`HiEMSegmenterV423Exp(w_topic=0.5)` 자연 대화용).
+adaptive weighting / joint calibration / 다른 flow encoder 등 v4.2.4 후보.
+
+**근거**: dual channel 가설은 *부분 입증* (TIAGE +3pp), *부분 반증*
+(정형 topic-shift 손해). single global weight 로는 v4.1.1 못 이김. codex
+권고 "exp 로 시작, 성능 주장 smoke 전 금지" 그대로 지킴.
+
+**영향**: 코드 4개 (segmenter / 2 script / methodology doc), 결과
+REPORT 3개, decision-log 1줄. v4.1.1 default 무변경.
+
+## 2026-05-21 — v4.2.4-exp 신설: DSE 가 δ_model (RNN slot) 자리 대체
+
+사용자 + Claude 흐름: v4.2.2 (DSE 단독, mpnet 대체) / v4.2.3-exp (calibrated
+dual-channel energy) 모두 single global setting 으로 v4.1.1 못 이김.
+v4.2.4 는 **v4.1.1 식 구조 보존 + RNN slot 만 DSE 로 교체** 형태로 다른
+각도 시도. codex 2026-05-18 P2 ("frozen-pretrained-f, C 천장측정 후 재검토")
+의 직접 실현.
+
+**알고리즘**:
+- mpnet channel (δ_adj = a·δ_prev + (1-a)·δ_ctx): v4.1.1 default 그대로
+  (m=2, ρ=0.7, a=0.5, δ*=0.5594)
+- DSE channel: δ_model = a_dse·δ_prev_dse + (1-a_dse)·δ_ctx_dse,
+  HP = v4.2.2 best (m_dse=2, ρ_dse=0.5, a_dse=0.0)
+- Blend: δ_eff² = η·δ_adj² + (1-η)·δ_model² (v4.1.1 식 그대로)
+- δ* = 0.5594 (mpnet, 그대로). σδ² 도 그대로.
+- use_rnn=False 강제 (RNN compute 회피).
+
+**SEM 계승 3-step**: PASS (conditional). SEM2 의 dynamics slot 자체는 존재.
+v4.2.4 는 같은 slot 의 구현을 learned-RNN → frozen-pretrained-DSE 로
+교체. **새 mechanism 도입 아님**. sCRP / Bayes / local-MAP / B0 무변경.
+likelihood 식 무변경. framing 은 "RNN 학습 환경 부족 → frozen 대체"
+유지. Zacks EST 는 개념 인용만, 성능 근거 금지.
+
+**산출**:
+- `src/hi_em/sem_core_v424_exp.py` (HiEMSegmenterV424Exp(V411),
+  assign_pair(s_topic, s_dse))
+- `context/methodology/v4.2.4.md`
+- `scripts/run_v424_eta_sweep.py`
+- `outputs/experiments/2026-05-21_v424_eta_sweep/REPORT.md`
+
+**결과 요약 (η sweep)**:
+| η    | TIAGE  | dialseg711 | superseg | mean   |
+|------|--------|------------|----------|--------|
+| 1.00 | 0.4675 | 0.5897     | 0.4631   | 0.5068 (=v4.1.1 sanity ✓)|
+| 0.75 | 0.4724 | 0.6254     | 0.4275   | **0.5084** ⭐|
+| 0.50 | 0.4892 | **0.6480** | 0.3806   | 0.5059 |
+| 0.25 | 0.4860 | 0.6455     | 0.3368   | 0.4894 |
+| 0.00 | 0.4488 | 0.6352     | 0.3036   | 0.4625 |
+
+**핵심 발견**:
+1. **Dialseg711 의 천장 돌파** — v4.1.1.md 명시 oracle-δ* (0.629, test 누설)
+   상한을 v4.2.4 @η=0.5 (TIAGE-cfg, test 누설 없음) 가 **0.6480** 으로 돌파.
+   "유사도 천장 0.590" 가설 약화.
+2. **mean Score 첫 우위** — η=0.75 mean 0.5084 가 v4.1.1 의 0.5068 보다
+   +0.0016 (미세하지만 v4.2.x 라인 첫 우위 사례).
+3. **SuperDialseg 일관 회귀** — DSE 가 어떤 η 든 superseg 에 해로움.
+   under-segmentation 의심 (DSE δ raw scale 작아 mixed δ_eff 작아짐).
+
+**메커니즘 caveat**: η<1 의 효과는 (a) DSE dialogue-flow 정보 추가 +
+(b) δ_eff scale 축소로 boundary 완화 두 효과 섞임. δ\* re-calibration
+없이는 분리 불가.
+
+**결정**: v4.2.4-**exp** suffix 유지, v4.1.1 default 유지. 다음 step:
+1. `calibrate_v424_delta_star.py` — η 별 TIAGE-train δ\* re-calibration
+2. SuperDialseg-train δ\* 별도 산출 (회귀 원인 분리)
+3. multi-seed variance 측정
+4. v4.2.3 / v4.2.4 cross-effect 실험
+
+**근거**: 첫 mean Score 우위 + Dialseg711 의 oracle 천장 돌파는 codex P2
+가설 ("frozen-pretrained-f 가 RNN 학습 환경 부족 보완") 강한 정량 증거.
+다만 mechanism 분리 (DSE 정보 vs scale 부수효과) 미해결 + SuperDialseg
+회귀 + single seed → exp 보존 합리.
+
+**영향**: code 1 + script 1 + methodology doc 1 + REPORT 1 + decision-log 1줄.
+v4.1.1 default 무변경.
+
+## 2026-05-21 — v4.3.1-exp 신설: DialoGPT-small surprisal 이 δ_model 자리
+
+사용자 + Claude 흐름: 외부 공격 "Hi-EM 의 prediction-by-production 은
+진짜 다음 발화 예측이 아니지 않은가?" 에 대한 *방어 강화 카드*. v4.2.4
+가 cosine-based DSE 로 δ_model 자리를 채운 패턴 동형으로, v4.3.1 은
+**token-level autoregressive surprisal `−log P(u_t | u_{<t})`** 을
+DialoGPT-small (Zhang+ 2020) 로 직접 산출하여 같은 slot 에 주입.
+
+**알고리즘**:
+- mpnet channel (δ_adj = a·δ_prev + (1-a)·δ_ctx): v4.1.1 default 그대로
+  (m=2, ρ=0.7, a=0.5, δ*=0.5594)
+- LM channel: δ_model(t) = mean-token NLL of u_t given u_{t-m_LM..t-1},
+  m_LM=5, raw EOS-concat 포맷 (DialoGPT 학습 분포 보존), no normalization
+- Blend: δ_eff² = η·δ_adj² + (1-η)·δ_model² (v4.1.1 식 그대로)
+- δ* = 0.5594 (mpnet, raw NLL scale mismatch caveat). σδ² 그대로.
+- use_rnn=False 강제.
+- precompute 분리: `precompute_v431_nll.py` 가 LM forward, segmenter 는
+  scalar nll_t 만 소비 (v4.2.4 의 DSE 임베딩 캐시 패턴).
+
+**CSM (Xing & Carenini 2021; Zhou+ 2022) 와 구분**:
+1. CSM 은 NSP head 를 *학습* → 그 score 가 boundary rule 자체.
+2. v4.3.1 은 **frozen zero-shot** LM surprisal → SEM PE channel 로 흡수.
+3. boundary 는 sCRP + local-MAP + B0 가 결정, cosine retrieval 미사용.
+
+**SEM 계승 3-step**: PASS (conditional). v4.2.4 와 동일 논리 (SEM2
+LinearEvent dynamics slot 의 frozen 대체). 새 mechanism 도입 아님.
+"prediction-by-production 의 생성적 구현" 같은 강한 주장 금지, 단지
+*surprisal 이 boundary 정보를 담는다는 경험 가설* 만 검증한다.
+
+**산출**:
+- `src/hi_em/sem_core_v431_exp.py` (HiEMSegmenterV431Exp(V411),
+  assign_pair(s_topic, nll_t))
+- `context/methodology/v4.3.1.md`
+- `scripts/precompute_v431_nll.py` (DialoGPT-small NLL 캐시)
+- `scripts/run_v431_smoke.py` (η sweep + REPORT)
+
+**핵심 caveat (sweep 전 사전 명시)**:
+- Raw NLL scale (~2~8 nats/token) >> δ_adj scale (~0.4~0.6) → η<1 에서
+  δ_eff 가 surprisal 항에 급팽창 → 과분절 위험. v4.2.4 (DSE: 과합병)
+  와 정반대 방향.
+- 1차 sweep η ∈ {1.0, 0.99, 0.95, 0.9, 0.75, 0.5} (η→1 쪽 조밀).
+- δ\* 재calibration 은 후속 (`calibrate_v431_*`) 보류.
+
+**결정**: v4.3.1-**exp** suffix 유지. sweep 결과 본 후 promotion 검토.
+v4.1.1 default 무변경.
+
+**근거**: 외부 공격 (prediction-by-production 의 진정성) 에 대한
+방어카드 + SEM2 frozen-f 슬롯의 또 다른 옵션 (LM-surprisal vs DSE-cosine)
+. 두 방향 (cosine 응집성 vs token surprisal) 의 정량 비교로 SEM 의
+dynamics slot 에 무엇이 더 informative 한지 측정.
+
+**영향**: code 1 + scripts 2 + methodology doc 1 + decision-log 1.
+v4.1.1 default 무변경.
+
+## 2026-05-21 — v4.3.2-exp 신설: frozen ST5 + learned NextEmbedHead 가 δ_model 자리
+
+사용자 + Claude 흐름: v4.3.1 (DialoGPT NLL) 의 자매판. 같은 외부 공격
+("Hi-EM 의 prediction-by-production 의 진정성?") 에 대해 *embedding-space
+에서 실제로 next-utterance vector 를 regression 으로 예측* 하는 답안.
+PE 옵션 로드맵 (6)번 항목 — pretrained Sentence-T5 + 작은 학습 head.
+
+**알고리즘**:
+- mpnet channel (δ_adj = a·δ_prev + (1-a)·δ_ctx): v4.1.1 default 그대로
+  (m=2, ρ=0.7, a=0.5, δ*=0.5594)
+- ST5+head channel: \\hat{s}_t = head(s_st5[t-m_LM..t-1]),
+  δ_model = 1 − cos(\\hat{s}_t, s_st5[t]),
+  m_LM=5, left-zero-pad context, NextEmbedHeadMLP(3840 → 1024 GELU → 768 → L2-norm)
+- Blend: δ_eff² = η·δ_adj² + (1-η)·δ_model² (v4.1.1 식 그대로)
+- δ* = 0.5594 (mpnet 그대로; ST5 cosine-distance scale ≈ 0.3~0.7 로 mpnet 과 자연 양립)
+- use_rnn=False 강제
+
+**학습 (Colab)**:
+- DailyDialog (HF `daily_dialog`, 11k train + 1k valid + 1k test)
+- Frozen ST5 embedding 1회 캐시 → head training (no encoder grad)
+- Loss = mean(1 − cos(\\hat{s}, s_t))
+- AdamW lr=1e-3, wd=1e-4, linear warmup 5%, batch 256, epoch 10
+- ckpt → `outputs/runs/_misc/next_embed_head_<tag>.pt` (사용자가 Colab→로컬 복사)
+
+**CSM (Xing+ 2021; Zhou+ 2022) 와 구분**:
+1. CSM = discriminative NSP ranking (positive/negative, hinge loss).
+2. v4.3.2 = **continuous next-embedding regression** (cosine loss).
+   negative sampling 안 함, target = 실제 다음 발화의 ST5 vector.
+3. boundary 는 sCRP + local-MAP 가 결정 (CSM 처럼 score 직접 사용 안 함).
+
+**SEM 계승 3-step**: PASS (conditional). SEM2 ``LinearEvent`` 의
+learned dynamics 와 *가장 직접 대응*. 차이: per-event learning →
+corpus-wide pretrained. v4.2.4 (frozen DSE) / v4.3.1 (frozen DialoGPT)
+와 같은 방향성 (frozen pretrained-f). sCRP / Bayes / local-MAP / B0
+무변경. δ scale 도 cosine-distance 라 mpnet 과 자연 양립.
+
+**산출**:
+- `src/hi_em/sem_core_v432_exp.py` (HiEMSegmenterV432Exp(V411),
+  assign_pair(s_topic, delta_model_t))
+- `src/hi_em/next_embed_head.py` (NextEmbedHeadMLP + pack_causal_window)
+- `scripts/train_next_embed_head.py` (Colab 권장; HF `datasets` lazy import)
+- `scripts/precompute_v432_delta.py` (로컬: ST5 encode + head inference → δ 캐시)
+- `scripts/run_v432_smoke.py` (η sweep + REPORT)
+- `context/methodology/v4.3.2.md`
+
+**v4.3.1 와의 차이 (PE 옵션 로드맵상 (5) vs (6))**:
+| | (5) v4.3.1 (DialoGPT) | (6) v4.3.2 (ST5+head) |
+|---|---|---|
+| δ_model 정의 | per-token NLL | 1 − cos(pred, target) |
+| Range (raw) | 2~8 nats | 0.3~0.7 |
+| mpnet scale 일치 | ✗ (큰 mismatch) | ✓ (자연 양립) |
+| 학습 0회? | ✓ | ✗ (head 학습) |
+| 외부 corpus | 없음 | DailyDialog |
+
+→ scale 일관성은 v4.3.2 가 우수. 학습 의존성 / OOD generalization 위험은
+v4.3.2 가 추가. 두 방향의 정량 비교는 두 sweep REPORT 비교로.
+
+**결정**: v4.3.2-**exp** suffix 유지. ckpt 받아 sweep 후 promotion 검토.
+v4.1.1 default 무변경.
+
+**Colab/Local 분리 준수 (2026-05-21 보강)**: 사용자 결정으로 학습
+데이터 source 를 HF `datasets.load_dataset('daily_dialog')` → **원본
+`ijcnlp_dailydialog.zip` 자동 탐색 + 재귀 추출** (colab_csm_train.ipynb
+[2] 셀과 동일 패턴) 으로 변경. HF datasets 의존 자체를 제거 →
+pyproject.toml 무변경, train script 도 외부 dep 추가 0.
+
+**codex 학습 setup 검토 반영 (2026-05-21)**: 1) scheduler 첫-step lr=0
+버그 수정 ((step+1)/warmup), 2) target L2-normalize guard, 3)
+eval_diagnostics 추가 (mean_baseline_loss / gain_vs_mean / delta_std /
+pred_norm_mean) — codex 1위 위험 "regression-to-mean / output collapse"
+의 epoch 별 자동 진단 + 경고, 4) optional batch-InfoNCE (`--nce-weight`,
+default 0) — codex 권고대로 monitoring 우선, collapse 확인 시 조건부.
+HP (lr/batch/epochs/wd/architecture) 자체는 적정 판정으로 변경 없음.
+
+**Colab 흐름 별도 notebook 분리 (2026-05-21)**: 사용자 결정 — Colab
+에서는 Hi-EM repo clone 등 어떤 사전 셋업도 없이 **완전 독립** 실행.
+새 self-contained notebook `colab_train_next_embed_head.ipynb` (repo
+root) 추가: 11 셀 (env + dep / zip 업로드 / zip 자동 추출 / parse /
+NextEmbedHeadMLP inline / HP / ST5 encode / loaders+diag / train loop /
+ckpt download). colab_csm_train.ipynb 의 IS_COLAB 분기 + zip 재귀 추출
+패턴 그대로. Local CLI 흐름 (`scripts/train_next_embed_head.py`) 은
+그대로 유지 — 두 진입점 동등.
+
+**근거**: v4.3.1 / v4.3.2 두 사매판으로 'next-utterance prediction' 의
+*확률* vs *벡터* 두 정의를 동시 측정. SEM2 learned dynamics 슬롯에
+가장 직접적인 구현 ([[v4.2.4]] 의 frozen-DSE 보다 SEM2 LinearEvent 에
+더 가까움).
+
+**영향**: code 2 + scripts 3 + methodology doc 1 + decision-log 1.
+v4.1.1 default 무변경. pyproject.toml 무변경.
+
+## 2026-05-21 — v4.1.3 신설: graded boundary score + re-entry tracking (output-only)
+
+사용자 요청 — paper 의 "graded boundary score" (Ben-Yakov & Henson 2018
+hippocampal graded profile 동형) + "non-linear topic reentry" (schema
+reinstatement) contribution bullet 정량 근거 확보.
+
+**알고리즘**: v4.1.1 무변경. **output instrumentation 만 추가**.
+
+**노출 API**:
+- `seg.last_graded_score` = `δ_eff / δ*` per turn (boundary strength scalar)
+- `seg.last_is_reentry` = boundary INTO previously-visited topic
+- `seg.history()` / `reentry_turns()` / `graded_scores()` / `boundary_strength()`
+
+**SEM 계승 3-step**: PASS trivial (algorithm 무변경, side-effect attribute 만).
+
+**산출**:
+- `src/hi_em/sem_core_v413.py` (HiEMSegmenterV413(V411))
+- `context/methodology/v4.1.3.md`
+- `scripts/run_v413_demo.py`
+- `outputs/experiments/2026-05-21_v413_demo/REPORT.md`
+
+**핵심 발견 (v4.1.1 의 봉인된 re-entry)**:
+
+| dataset | f0_min_starts | bnd | reentries | rate |
+|---|---:|---:|---:|---:|
+| tiage | 2 (v4.1.1 default) | 431 | 0 | 0.0% |
+| dialseg711 | 2 (v4.1.1 default) | 5202 | 0 | 0.0% |
+| tiage | 1 (v4.2.1) | 696 | 603 | **86.6%** |
+| dialseg711 | 1 (v4.2.1) | 8367 | 7854 | **93.9%** |
+
+v4.1.1 의 `f0_min_starts=2` default 가 re-entry mechanism 을 사실상 봉인
+(f0 centroid 가 ≥2 episode start 모여야 활성화되는데, 매 boundary 가 새
+topic_id 생성하니 영원히 못 채움). [[v4.2.1]] 의 `f0_min_starts=1` 로 풀면
+schema reinstatement 정상 작동.
+
+**시사**: v4.1.3 + v4.2.1 조합이 paper 의 "non-linear topic reentry"
+정량 근거. v4.2.1 의 marginal F1 효과 (codex 2026-05-19 예측) 와 함께
+보면 — re-entry 가 **양적으론 dramatic 변화 (0% → 87-94%) 지만 정량
+지표상 marginal**. 즉 segmenter 의 topic 구조가 질적으로 달라지지만
+boundary 위치 자체는 비슷.
+
+**Boundary strength bands** (graded_score 기반):
+- `< 0.7` very weak (downstream 보류 권고)
+- `0.7-1.0` weak (repeat 우세)
+- `1.0-1.3` normal
+- `≥ 1.3` strong (즉시 commit)
+
+SeCom 등 downstream uncertainty-aware consumer 가 직접 활용 가능.
+
+**영향**: code 1 + script 1 + methodology doc 1 + REPORT 1 + decision-log
+1줄. v4.1.1 default 무변경. F1/Pk/WD 무변경 (algorithm 무변경).
+
+## 2026-05-21 — v4.1.3 default 변경: f0_min_starts=1 흡수 (v4.2.1 통합)
+
+원래 v4.1.3 = pure output instrumentation (V411 default f0_min_starts=2
+상속). 검증 결과 v4.1.1 default 의 re-entry 가 0% (segmenter 가 매번 새
+topic_id 생성 → f0 centroid 가 영원히 2 episode-start 못 채움 → 봉인).
+"non-linear topic reentry" paper claim 데이터 0 → v4.1.3 자체 가치 약함.
+
+**사용자 결정 (2026-05-21)**: v4.1.3 default 를 `f0_min_starts=1` 로 바꿔
+[[v4.2.1]] 의 SEM2-faithful 변경을 v4.1.3 안으로 흡수. 관찰 도구 +
+관찰 대상 동시 활성화.
+
+**결과**: TIAGE 86.6% / Dialseg711 93.9% re-entries — paper 의
+"non-linear topic reentry" contribution 정량 근거 default 로 즉시 확보.
+explicit `f0_min_starts=2` 전달 시 V411 default 복원 (옛 ablation 참조용).
+
+**[[v4.2.1]] 위치 변화**: 별도 클래스로 보존, default 변경의 명시적
+이름 carrier. v4.1.3 가 그 default 를 흡수했으므로 *기능상 중복*. 다만
+파일·class·이력 모두 그대로 유지 — 향후 ablation / decision-log 참조용.
+
+**영향**: src/hi_em/sem_core_v413.py 의 `__init__` signature 변경
+(`f0_min_starts=1` 명시), v4.1.3.md 결과 / 추천 사용 패턴 갱신, demo
+재실행 (TIAGE+Dialseg711 default 표 갱신). 다른 코드 / v4.2.x 라인 무관.
+
+## 2026-05-21 — v4.2.4-exp negative result 확정 (calibration artifact)
+
+η sweep (2026-05-21_v424_eta_sweep) 의 핵심 우위 — η=0.75 mean Score
+0.5084 (+0.0016 vs v4.1.1) 와 Dialseg711 η=0.5 의 0.6480 ("oracle 천장
+돌파") — 가 δ\* 재calibration 후 모두 사라짐 (`2026-05-21_v424_calib`).
+
+**Calibration 결과** (F1-best δ\*, tiage-train + superseg-validation):
+- tiage-train η=0.5: δ\*=0.5260 (mpnet 단독의 0.5594 보다 -0.033)
+- tiage-train η=0.75: δ\*=0.5209
+- superseg-val η=0.5: δ\*=0.3801 (mpnet 보다 매우 낮음)
+- superseg-val η=0.75: δ\*=0.4529
+
+**Re-cal 후 mean Score**:
+- v4.1.1: 0.5068
+- v4.2.4 @η=0.5 re-cal: 0.4970 (-0.0098)
+- v4.2.4 @η=0.75 re-cal: **0.4900 (-0.0168)**
+
+**Dialseg711 의 0.6480 → 0.5690 (-0.079)**: prior δ\*=0.5594 가 mixed
+signal 에서 우연히 Score-best 근방. F1-best 로 다시 잡으니 boundary
+trigger 잦아져 Pk/WD 악화 → Score 떨어짐. v4.1.1.md 가 superseg val-cal
+에서 미리 경고한 "F1-best 가 과분절 유발" 패턴 정확 재현.
+
+**결정**: v4.2.4-exp **promotion 후보 탈락**, exp suffix 유지, v4.1.1
+default 유지. 코드 보존 (Score-best δ\* / dataset-aware / CSM 학습 후
+CSM-as-encoder v4.2.5 등 후속 연구 출발점).
+
+**Important lesson**: F1-best δ\* ≠ Score-best δ\*. Train calibration
+정책 (F1-best) 이 metric (Score) 과 misaligned 한 점은 v4.x 라인 전체에
+적용되는 caveat. 후속 변형은 Score-best δ\* 직접 sweep 옵션 검토.
+
+**산출**: scripts/calibrate_v424_delta_star.py, outputs/experiments/
+2026-05-21_v424_calib/REPORT.md, v4.2.4.md "판정" 섹션 갱신. 또한
+부산물로 cache: sds_emb_tiage_train_*.pkl (×2 encoder),
+sds_emb_superseg_validation_*.pkl (×2 encoder) — 영구 보존, 미래 train/val
+calibration 빠르게 가능.
+
+## 2026-05-21 — v4.1.3 sub-type 분리 + per-band precision 정량 확보
+
+`outputs/experiments/2026-05-21_v413_reentry_analysis` 분석 결과:
+
+**Per-band precision (graded_score band 별 boundary prediction precision)**:
+
+| dataset | very_weak | weak | normal | strong |
+|---|---:|---:|---:|---:|
+| TIAGE | 0.000 | 0.238 | 0.345 | **0.520** |
+| Dialseg711 | 0.000 | 0.129 | 0.383 | **0.800** |
+
+→ graded_score 가 진짜 calibrated boundary signal. 특히 strong band
+(≥1.3) 의 precision 0.52~0.80 으로 paper 의 "score > 1.3 → 즉시 commit"
+downstream 정책 정량 근거.
+
+**Re-entry sub-type 분리** (case study 보고 두 mechanism 섞임 발견):
+- `same_label_restart`: V411 `_is_restart` 경로, topic_id 유지, 같은 topic 의
+  새 episode
+- `cross_topic_reentry`: 옛 topic 으로 복귀, 진짜 non-linear
+
+| dataset | total re | same_label (n, prec) | cross_topic (n, prec) |
+|---|---:|---|---|
+| TIAGE | 603 | 473 (78%), 0.309 | 130 (22%), 0.315 |
+| Dialseg711 | 7854 | 6586 (84%), 0.319 | 1268 (16%), 0.221 |
+
+**해석**:
+- 78-84% 가 same_label_restart (within-topic resumption) — paper 의
+  "non-linear" claim 과는 의미 다름.
+- Cross_topic_reentry 가 22% / 16% — *진짜* non-linear, paper 가 강조해야
+  할 type.
+- Dialseg711 의 cross_topic precision (0.221) 이 same_label (0.319) 보다
+  낮음 — 옛 topic 으로 복귀 결정에서 f0 의 discrimination power 낮은 듯.
+
+**코드 변경** (`src/hi_em/sem_core_v413.py`):
+- `last_is_same_label_restart`, `last_is_cross_topic_reentry` attribute 추가
+- `same_label_restart_turns()`, `cross_topic_reentry_turns()` 메서드 추가
+- `is_reentry` = OR (backward compat 유지)
+- history dict 에 두 sub-flag 추가
+
+**Paper framing 정정**:
+- 이전: "TIAGE 87%, Dialseg711 94% boundaries are re-entries" (광의)
+- 수정: "Cross-topic re-entries = **22% (TIAGE) / 16% (Dialseg711) of
+  boundaries**, of which 32% / 22% match human-annotated boundaries."
+
+**미해결**: cross_topic_reentry 의 precision 0.22 가 낮은 이유 — f0 centroid
+의 quality 문제일 수 있음. 후속: f0_min_starts=3,4 등 다른 값에서 sweep,
+또는 f0 centroid 의 outlier 제거 변형 검토.
+
+**영향**: src/hi_em/sem_core_v413.py + scripts/analyze_v413_reentry.py +
+v4.1.3.md "결과 / 산출 / 변경이력" 섹션 + outputs/experiments/
+2026-05-21_v413_reentry_analysis/REPORT.md. v4.1.1 default 무관, F1/Pk/WD
+무변경.
+
+## 2026-05-21 — v4.1.3 default revert: f0_min_starts=2 (Score 보존)
+
+같은 날 revision 1 (`f0_min_starts=1` 흡수, v4.2.1 통합) 후 직접 측정
+(`/tmp/test_f0_effect`):
+
+| dataset | f0=2 baseline | f0=1 (revision 1) | Δ |
+|---|---:|---:|---:|
+| TIAGE | 0.4675 | 0.3987 | **-6.9pp** |
+| Dialseg711 | 0.5897 | 0.3940 | **-19.6pp** |
+| SuperDialseg | 0.4631 | 0.3604 | **-10.3pp** |
+
+**원인 진단**: `is_boundary` (label-change OR same-label-restart) 와 metric 의
+boundary (label-change 만) 가 다른 정의. f0=1 활성 시 segmenter 가 옛
+topic_id 재사용 → label-change count 감소 (TIAGE 431→223) → recall 폭락 →
+F1/Score 폭락. v4.2.1 docstring 의 codex "marginal effect" 예측이 실제론
+large drop. 측정 안 했을 뿐.
+
+**SEM2 충실 vs Score trade-off**: 사용자 질문 "SEM2 가 가장 예측오차 적은
+topic 으로 재진입하는 게 맞나?" → 답: 맞음. SEM2 의 `update_f0`/
+`f0_is_trained` 가 첫 등장부터 활성. v4.1.1 의 `f0_min_starts=2` 는
+Hi-EM-only 이탈 (보수). 즉 SEM2 원리는 v4.2.1/v4.1.3-analysis mode 가
+충실. 다만 대화 도메인의 f0 단일 sample noise 가 큰 게 Score 폭락의
+원인 — SEM2 원리 자체의 문제가 아니라 dialogue domain 의 f0 quality 문제.
+
+**결정 (사용자)**: v4.1.3 default 를 `f0_min_starts=2` 로 되돌림.
+- Performance mode (default): Score = v4.1.1 그대로
+- Analysis mode (explicit `f0_min_starts=1`): re-entry 정량 분석 가능,
+  Score 폭락 감수
+
+**Paper framing 수정**: re-entry 는 "v4.1.3 가 expose 하는 sCRP mechanism
+의 behavioral readout" 으로 명시. **default 에선 mechanism dormant**,
+analysis mode 에서만 활성. "94% boundaries are re-entries" 표현 X.
+
+**산출**: src/hi_em/sem_core_v413.py 의 `__init__(f0_min_starts: int = 2)`
+복원, v4.1.3.md 의 "한 줄"/"추천 사용 패턴"/"변경 이력" 갱신.
+
+## 2026-05-21 — v4.1.3 final: re-entry 기능 전체 제거 (graded_score 만)
+
+같은 날 revision 2 (default revert to f0=2) 후 사용자 결정 "토픽 회귀
+하지마" → v4.1.3 에서 **re-entry 관련 전체 제거**.
+
+**제거된 항목**:
+- `last_is_reentry`, `last_is_same_label_restart`, `last_is_cross_topic_reentry` attribute
+- `reentry_turns()`, `same_label_restart_turns()`, `cross_topic_reentry_turns()` method
+- `is_reentry`, `is_same_label_restart`, `is_cross_topic_reentry` history fields
+- `analyze_v413_reentry.py` (script 자체는 보존 — historical record)
+
+**유지 항목**:
+- `last_delta_eff`, `last_graded_score`, `last_is_boundary` attribute
+- `history()`, `graded_scores()`, `boundary_strength()` method
+- Ben-Yakov & Henson 2018 graded profile 매핑
+- per-band precision (TIAGE strong 0.52 / Dialseg711 strong 0.80)
+
+**Paper contribution 정리**:
+- ✅ "graded boundary score (Ben-Yakov & Henson 2018 mapping)" — v4.1.3
+- ❌ "non-linear topic reentry" — paper 에서 제외
+
+**v4.2.1 위치**: ablation 코드로만 보존 (HiEMSegmenterV421 클래스 유지).
+실험·default·paper 어느 쪽에도 사용 안 함. 향후 재검토 필요 시 참조.
+
+**Score 영향**: 0 (algorithm 무변경, output 만 추가). v4.1.1 그대로
+0.4675/0.5897/0.4631 (test 평균 0.5068).
+
+**산출**: src/hi_em/sem_core_v413.py 전면 재작성, scripts/run_v413_demo.py
+재작성 (per-band precision + boundary strength 만), context/methodology/
+v4.1.3.md 전면 갱신 (re-entry 섹션 제거, "제거된 기능" 섹션 추가).
+
+## 2026-05-21 — v4.3.2-exp: CLEAR NEGATIVE (single η), no promotion
+
+[[v4.3.2]] (frozen Sentence-T5 + DailyDialog-trained NextEmbedHead) 의
+Colab 학습 + 3-dataset calibrated z-blend sweep + boundary signal 진단
+종합 결과: **정직 비교 (single η, no test leak) 에서 clear negative**.
+exp suffix 영구 유지.
+
+**정직 비교 (single η = mean-best, 모든 dataset 동일 적용)**:
+
+| | best single η | mean Score | vs v4.1.1 |
+|---|---:|---:|---:|
+| v4.1.1 | — | 0.5068 | — |
+| v4.2.4 (raw, frozen DSE) | 0.75 | 0.5084 | +0.16pp (noise 의심) |
+| **v4.3.2 (calibrated, TX head)** | **0.75** | **0.5023** | **−0.45pp** |
+
+→ v4.3.2 는 어떤 single η 로도 v4.1.1 못 이김.
+
+**Per-dataset best (⚠ test leak, ablation 분석용만 — promotion 근거 X)**:
+- TIAGE η=1: 0.4675 (head 무용)
+- Dialseg711 η=0.75: 0.5997 (+1pp, v4.2.4 의 그림자)
+- SuperDialseg η=1: 0.4631 (head 무용)
+
+⚠ 사용자 정직성 지적 (2026-05-21 후속): "per-dataset best η 는 test
+leak". 그 전 entry 의 "mixed result (+1pp)" 표현은 ablation 정보로 명시,
+판정은 single-η 기준 clear negative 로 정정.
+
+**학습**: 6 ckpt 비교 (MLP / Transformer × NCE 0/0.03/0.05). TX head +
+NCE=0 best (valid loss 0.1323, ACCEPTABLE). Transformer 가 MLP 대비
+명확 우수 (pad-mask + pos-emb + self-attn). NCE auxiliary 는 모든 조합
+에서 trade-off 나쁨.
+
+**Segmentation sweep (3 dataset)**:
+1. Raw blend (TIAGE만): η<1 에서 F1=0 폭락 (δ_model scale 0.171 <<
+   δ_adj 0.5 → 과합병).
+2. Calibrated z-blend (사용자 처방, v4.2.3 패턴 `z = δ/δ*`, 3 dataset):
+   single η=0.75 (mean best) → mean 0.5023 < v4.1.1 0.5068 (**-0.45pp**).
+3. Per-dataset best (⚠ ablation only, test leak): Dialseg711 만 +1pp
+   약신호, TIAGE/SuperDialseg head 무용.
+
+**Boundary signal 진단 (사용자 명령)**: TIAGE test 의 boundary-after
+turn (n=315) vs non-boundary (n=1149) 의 δ_model 분포 비교:
+
+```
+boundary:    0.1799 ± 0.0293
+non:         0.1692 ± 0.0312
+diff:        +0.0107  (방향성 맞음)
+t-test:      t=5.46, p=5.5e-08    (통계 유의)
+Cohen's d:   +0.348               (small-to-medium, 분류로는 약함)
+diff/σ_nb:   0.343 σ              (두 분포 ~86% 겹침)
+```
+
+→ head 가 boundary 정보를 *조금* 학습했지만 mpnet δ_adj 보다 *훨씬*
+약한 신호. blend 가 mpnet 신호 dilute → 회귀.
+
+**진단**:
+- 학습 자체 ✓ (ACCEPTABLE), Architecture (TX) ✓, Calibrated z-blend ✓
+- 그러나 head 의 boundary signal 본질적으로 약함 → segmentation 으로
+  안 옮겨짐 = **task misaligned** (codex/사용자 1차 우려 적중).
+- "Regression-to-mean" 정량 증거: δ_std plateau 0.025-0.036, head 의
+  output 분포가 학습 corpus 평균 방향으로 수렴.
+
+**산출 (negative)**:
+- code 2 변형: `sem_core_v432_exp.py` 에 `calibrated` 옵션 (z-blend +
+  internal δ\*=1), `next_embed_head.py` 에 `NextEmbedHeadTransformer` +
+  `make_head` factory
+- script: `run_v432_smoke.py --calibrated --delta-star-model auto`
+- methodology v4.3.2.md "결과 / 판정" 섹션 채움 (negative result 정직
+  기록)
+
+**학술적 가치 (정직 보고)**:
+1. DailyDialog → TIAGE domain generalization 실패의 정량 데이터
+2. Regression-to-mean 의 직접 증거 (δ_std plateau, boundary signal
+   weak)
+3. Calibrated z-blend (v4.2.3 패턴) 의 safety 재확인 (raw 폭락 회피)
+4. Continuous regression (v4.3.2) vs discriminative ranking (CSM) 비교
+   에서 *부정적* 데이터 — CSM 류가 보조 channel 로 더 적합할 가능성
+   시사 (단 직접 비교 별도)
+
+**결정**: v4.3.2-exp 영구 보존, v4.1.1 default 무변경. 추후 GRU
+head / TIAGE-train 직접 학습 / discriminative objective 등 후속
+가능하나 본 결과로는 우선순위 낮음. [[v4.3.1]] (DialoGPT NLL) sweep
+은 별도 (사용자 GPU 시간 결정).
+
+## 2026-05-21 — v4.2.5-exp 신설: CSM (finetuned BERT-base) 이 δ_model 자리
+
+사용자 + Claude 흐름: 사용자가 Colab 에서 CSM (Coherence Model, Xing &
+Carenini 2021; lxing532/Dialogue-Topic-Segmenter) 학습 완료 (`cpt_277000.pth`,
+state_dict). PE 옵션 로드맵의 (4) 번 항목 — finetuned BERT-base
+discriminative coherence head.
+
+**동기**: [[v4.3.2]] (continuous regression) 의 clear negative 후,
+**NSP-supervised discriminative ranking 학습** 이 regression-to-mean
+한계를 회피하는지 직접 비교. 같은 DailyDialog corpus, 다른 objective.
+
+**알고리즘**:
+- mpnet channel (δ_adj = a·δ_prev + (1-a)·δ_ctx): v4.1.1 default 그대로
+- CSM channel: δ_model(t) = 1 − softmax(decoder([CLS] u_{t-1} [SEP] u_t [SEP]))[0]
+  = incoherence probability
+- coherence_decoder = `Sequential(Linear(768,768), ReLU, Dropout(0.1), Linear(768,2))`
+- BERT backbone = bert-base-uncased (train_csm_hf.py default)
+- Blend: raw (v4.1.1 식) 또는 calibrated z-blend (v4.2.3 패턴, `--calibrated`)
+- use_rnn=False 강제
+
+**v4.3.2 와 직접 비교 (예정)**:
+| | v4.3.2 (TX head) | v4.2.5 (CSM) |
+|---|---|---|
+| 학습 목적 | continuous regression (cosine) | discriminative ranking (marginal hinge) |
+| Output | similarity | probability |
+| Regression-to-mean | 큼 (clear negative 확정) | 원리적으로 낮음 (TBD) |
+
+**SEM 계승 3-step**: PASS (conditional). v4.3.2 와 같은 frozen-encoder
++ learned-head 패턴. dynamics slot 채우는 frozen-f. sCRP/Bayes/B0 무변경.
+
+**산출**:
+- `src/hi_em/sem_core_v425_exp.py` (HiEMSegmenterV425Exp(V411),
+  assign_pair(s_topic, delta_model_t), calibrated 옵션)
+- `scripts/precompute_v425_delta.py` (CSM forward, 3 dataset δ cache)
+- `scripts/run_v425_smoke.py` (η sweep, raw/calibrated, REPORT)
+- `external/Dialogue-Topic-Segmenter/` (clone, gitignored 추가)
+- `context/methodology/v4.2.5.md`
+- `.gitignore` external/ 추가
+
+**진행 중**: precompute background (CPU 30분 추정). sweep 끝나면
+v4.2.5.md "결과 / 판정" 채우고 decision-log 정리. 핵심 비교는
+v4.2.5 (CSM, discriminative) vs v4.3.2 (TX, regression) 의 same-blend
+mean Score.
+
+**결정**: v4.2.5-**exp** suffix 유지, sweep 결과 본 후 promotion 검토.
+v4.1.1 default 무변경. external/ tree 는 gitignored (vendored 안 함).
+
+---
+
+### 2026-05-21 (저녁) — v4.2.5 raw sweep 결과 + 사용자 중단
+
+**진행**: precompute (CPU 9h+) 가 tiage / dialseg711 까지 완료, superseg
+처리 중에 사용자 중단 요청 ("v4.2.5 실행 멈추고 싹다 저장하자").
+
+**결과 (raw blend, single-η mean-best, 2 dataset)**:
+
+| | best η | mean Score | vs v4.1.1 |
+|---|---:|---:|---:|
+| v4.1.1 (η=1) | — | 0.5286 | — |
+| v4.2.5 raw (CSM) | 1.00 | 0.5286 | **−0.0000** |
+
+→ **NEGATIVE** (mean-best 기준). η<1 → mean −8.3pp 폭락.
+
+**데이터셋별 (test-leak, 참고)**:
+- tiage: η=0 (CSM only) **+2.0pp** (F1 +8.5pp, Pk/WD 무변)
+- dialseg711: η=1 (CSM off) best, CSM 섞으면 **−18.6pp 붕괴**
+
+**v4.3.2 와 직접 비교**:
+| | v4.3.2 | v4.2.5 |
+|---|---:|---:|
+| single-η mean-best | −0.45pp | −0.00pp |
+| tiage best | 무유의 | **+2.0pp** |
+
+→ "discriminative ranking 이 regression-to-mean 회피" 가설은 **부분
+지지** (in-domain 데이터셋 한정). 도메인 shift 에는 v4.3.2 보다 *더*
+취약. 두 head 모두 mean-best 기준 net-neutral/negative.
+
+**원인 (잠정)**:
+1. raw scale mismatch (δ_csm ≈ binary {0,1}, mpnet ≈ continuous) — CSM
+   spike 가 δ_eff² dominate. calibrated z-blend 미검증.
+2. dialseg711 (Wikipedia-style) 이 DailyDialog NSP 학습 corpus 와 매우
+   멀음.
+
+**미수행 (사용자 중단)**:
+- superseg precompute (CPU 비용)
+- calibrated z-blend sweep (raw scale 보정 효과 미확인)
+- v4.3.2 와 같은 sample/η 에서 head-only 차이 분리
+
+**보존 자산** (회수 가능):
+- `outputs/runs/_misc/sds_v425delta_tiage_test_csm_bert_base.pkl`
+- `outputs/runs/_misc/sds_v425delta_dialseg711_test_csm_bert_base.pkl`
+- `outputs/runs/_misc/cpt_277000.pth` (CSM ckpt)
+- `src/hi_em/sem_core_v425_exp.py`, `scripts/precompute_v425_delta.py`,
+  `scripts/run_v425_smoke.py`, `external/Dialogue-Topic-Segmenter/`
+
+**결정**: v4.2.5-exp **종결 (net-neutral)**. promotion 안 함. v4.1.1
+default 무변경. 차후 calibrated sweep + superseg 완성 + v4.3.2 와
+head-only ablation 시 재오픈 가능.
+
+**산출**: `outputs/experiments/2026-05-21_v425_csm_2ds_raw/REPORT.md`
+(해석/판정 채워짐), `context/methodology/v4.2.5.md` (결과/판정 채워짐).
