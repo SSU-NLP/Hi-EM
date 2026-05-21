@@ -145,9 +145,14 @@ def _write_report(exp_dir: Path, args, rows: list[dict]) -> None:
         "# TextTiling-online-streaming — AUXILIARY baseline "
         "(3-benchmark, per-turn latency)",
         "",
-        "> **별도 method.** 원본 NLTK/SuperDialseg TextTiling 점수를 *재현하지 않는다*. ",
-        "> causal running mean/std threshold + one-sided depth → boundary set 자체가 다름. ",
-        "> AUXILIARY (codex:rescue 2026-05-20 위임 권고). 핵심 비교값 = **per-turn latency (ms)**.",
+        "> **Paper-ready honest naming (codex 2026-05-21)**: `Streaming-TT-inspired` "
+        "(or `CausalTextTiling-Streaming`). 원본 NLTK/SuperDialseg TextTiling 의 "
+        "결정 규칙 (global mean−std/2 threshold, bilateral depth, paragraph "
+        "min_gap) 모두 변경 → running mean+c·std, one-sided depth, utterance "
+        "min_gap. **TextTiling 의 online 변형이 아니라 *TextTiling-inspired 별도 "
+        "method***. 원본 paper 결과와 같은 표 등재 금지.",
+        "> AUXILIARY (codex:rescue 2026-05-20/21 위임 권고). 핵심 비교값 = "
+        "**per-turn latency (ms)**.",
         "",
         "## 1. Setup",
         f"- **Method**: `hi_em.baselines.StreamingTextTiling` (block-cosine "

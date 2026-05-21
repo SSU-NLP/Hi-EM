@@ -250,6 +250,32 @@ print(seg.state())
 uv run pytest tests/test_graphseg_window.py -v   # 9 ea (tiny embedding fixture, <1s)
 ```
 
+## Paper-ready 정직 명명 가이드 (codex 2026-05-21 algorithm-integrity 검증)
+
+3 baseline 의 *원본 알고리즘 본질 보존도* 가 다름 → paper 본문 표기·표 등재
+정책도 분리. *style/inspired-by* 자격은 강한 *direct online* 자격보다 약함.
+
+| baseline | 본질 보존도 | 정직 명명 (paper) | 원본 paper 결과와 같은 표? | Hi-EM 표 위치 |
+|---|---|---|---|---|
+| `methods/texttiling/online_streaming.py` | **양보** (running threshold / one-sided depth / utt min_gap) | **`Streaming-TT-inspired`** 또는 `CausalTextTiling-Streaming` | **No** (style baseline) | AUXILIARY only |
+| `methods/greedyseg/online_delay2.py` | **보존** (score 공식·HP·argmin greedy·encoder 그대로) | **`GreedySeg-online-delay2`** (강한 명명 OK) | **Yes** (단 offline 결과와 별도 열/블록) | **5행 핵심표 가능** (본 plan 의 유일) |
+| `methods/graphseg/online_window.py` | **양보** (전역 graph·global clique·single-pass merge → window-local) | **`GraphSeg-inspired bounded-window`** (short `GraphSeg-window-d` 는 file/CLI 만) | **No** (style baseline, 강한 `-online` 명명 금지) | AUXILIARY only |
+
+### paper 본문 표기 권장 예시
+
+> "We compare with three online baselines: **(i) a streaming variant inspired
+> by TextTiling** (Hearst, 1997), in which the depth-score threshold is
+> replaced by a causal running statistic; **(ii) GreedySeg-online-delay2**, a
+> direct online adaptation of GreedySeg (Jiang et al., 2023) that preserves
+> the original BERT cosine score and greedy selection rule, with boundary
+> emission delayed by two utterances; and **(iii) a GraphSeg-inspired
+> bounded-window segmenter**, where the original global graph and maximal
+> clique decomposition are replaced with window-local re-computation."
+
+(i)·(iii) 은 *style/inspired-by* 명시, (ii) 만 *direct online adaptation*.
+원본 paper 점수 (SuperDialseg Table 3, Jiang et al. 2023) 와 직접 비교는
+(ii) 만 가능 (그조차도 별도 열/블록).
+
 ## 정직성 / 한계
 
 - **online(prefix-causal) 은 보조(AUXILIARY)** — codex decision-log
