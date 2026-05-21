@@ -97,3 +97,14 @@ benchmarks/EMNLP_dataset/
 /dailydialog_original.zip
 benchmarks/CSM train/
 benchmarks/glove/
+
+# external repos (clone-based, not vendored)
+external/
+benchmarks/SeCom/
+
+# raw datasets / extracted outside benchmarks/ (not vendored)
+data/
+dd_extract/
+
+# secom-swap intermediate temp config (auto-regenerated)
+benchmarks/SeCom/secom/configs/_*_only_tmp.yaml
