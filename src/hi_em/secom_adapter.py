@@ -1,6 +1,6 @@
 """SeCom segmentation backend adapter for v4.1.3.
 
-Wraps :class:`hi_em.sem_core_v413.HiEMSegmenterV413` to satisfy SeCom's
+Wraps :class:`hi_em.hi_dots.HiDoTS` to satisfy SeCom's
 ``segment(sessions: List[List[str]]) -> List[List[str]]`` contract.
 
 SeCom (Microsoft, 2024) uses an LLM (default ``gpt-4o-mini``) to segment
@@ -13,7 +13,7 @@ Design choices
 - **Encoder**: a sentence-transformers model whose output dimension matches
   the segmenter ``dim``. We L2-normalize embeddings (cosine basis) since
   v4.1.x's :math:`\\delta = 1 - \\cos` likelihood assumes unit norm.
-- **Per-session reset**: a fresh :class:`HiEMSegmenterV413` is built for
+- **Per-session reset**: a fresh :class:`HiDoTS` is built for
   every session, matching SeCom's per-session LLM call (no cross-session
   state leak).
 - **Boundary placement**: a boundary at turn *t* starts a new segment with
@@ -30,7 +30,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from hi_em.sem_core_v413 import HiEMSegmenterV413
+from hi_em.hi_dots import HiDoTS
 
 
 @dataclass
@@ -82,7 +82,7 @@ class HiEMSecomSegmenter:
         dim: embedding dimension (must match ``encoder``'s output).
         delta_star: v4.1.x boundary threshold. Encoder-dependent — must be
             calibrated on a held-out set for the chosen encoder.
-        v413_kwargs: extra kwargs forwarded to :class:`HiEMSegmenterV413`.
+        hidots_kwargs: extra kwargs forwarded to :class:`HiDoTS`.
         encode_batch_size: batch size for the encoder (default 32).
         normalize: whether to L2-normalize encoder outputs (default True).
     """
@@ -92,14 +92,14 @@ class HiEMSecomSegmenter:
         encoder: Any,
         dim: int = 768,
         delta_star: float = 0.30,
-        v413_kwargs: dict[str, Any] | None = None,
+        hidots_kwargs: dict[str, Any] | None = None,
         encode_batch_size: int = 32,
         normalize: bool = True,
     ) -> None:
         self.encoder = encoder
         self.dim = dim
         self.delta_star = delta_star
-        self.v413_kwargs = dict(v413_kwargs or {})
+        self.hidots_kwargs = dict(hidots_kwargs or {})
         self.encode_batch_size = encode_batch_size
         self.normalize = normalize
         self.last_latency: SegmentLatency | None = None
@@ -111,10 +111,10 @@ class HiEMSecomSegmenter:
             "strong": 0,
         }
 
-    def _make_segmenter(self) -> HiEMSegmenterV413:
+    def _make_segmenter(self) -> HiDoTS:
         kwargs = {"dim": self.dim, "delta_star": self.delta_star}
-        kwargs.update(self.v413_kwargs)
-        return HiEMSegmenterV413(**kwargs)
+        kwargs.update(self.hidots_kwargs)
+        return HiDoTS(**kwargs)
 
     def _encode(self, texts: Sequence[str]) -> np.ndarray:
         vecs = self.encoder.encode(

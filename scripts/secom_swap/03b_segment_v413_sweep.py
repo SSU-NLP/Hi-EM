@@ -83,7 +83,7 @@ def main() -> None:
     print(f"encoded all in {encode_sec:.1f}s", flush=True)
 
     # Import segmenter
-    from hi_em.sem_core_v413 import HiEMSegmenterV413
+    from hi_em.hi_dots import HiDoTS
 
     sweep_results = []
     per_candidate_segments: dict[float, list[dict]] = {}
@@ -99,7 +99,7 @@ def main() -> None:
                           "answers": conv["answers"],
                           "segments": []}
             for sidx, sess in enumerate(conv["sessions"]):
-                seg = HiEMSegmenterV413(dim=768, delta_star=delta_star)
+                seg = HiDoTS(dim=768, delta_star=delta_star)
                 vecs_sess = encoded[(cidx, sidx)]
                 current: list[str] = []
                 for v, ex in zip(vecs_sess, sess):

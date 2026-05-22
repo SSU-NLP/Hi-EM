@@ -25,7 +25,10 @@ from sklearn.metrics import f1_score
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
-from hi_em.sem_core_v413 import HiEMSegmenterV413  # noqa: E402
+# v4.1.3 full SEM2 form archived to archive/legacy_sem_ablation/ (2026-05-22).
+# This historical demo exercises the full machinery, so it imports from there.
+sys.path.insert(0, str(REPO / "archive" / "legacy_sem_ablation"))
+from sem_core_v413 import HiEMSegmenterV413  # noqa: E402
 
 SDS = REPO / "benchmarks" / "superdialseg_data"
 CACHE = REPO / "outputs" / "runs" / "_misc"

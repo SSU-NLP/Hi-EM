@@ -81,17 +81,13 @@ class TopicV336:
         self.max_history = max_history
         self.seed = seed
 
-        # Per-topic model + optimizer (no shared weights → no interference).
-        # Deterministic per-topic init for reproducibility (CLAUDE.md): seed
-        # by (seed, topic_id) so each topic differs but the run is fixed.
-        # Snapshot/restore global RNG so we don't perturb other randomness.
-        _rng_state = torch.random.get_rng_state()
-        try:
-            torch.manual_seed(self.seed * 100_003 + topic_id)
-            self.model = EventRNN(input_dim=dim, hidden_dim=hidden_dim)
-        finally:
-            torch.random.set_rng_state(_rng_state)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        # Per-topic EventRNN + optimizer are LAZILY constructed — only when
+        # the GRU is actually trained (``update(train_rnn=True)``). With
+        # η=1 / RNN disabled (v4.1.x default) they are never built, which
+        # avoids a torch RNN module construction per topic — profiled at
+        # ~77% of assign() wall time when eagerly constructed (2026-05-22).
+        self.model: EventRNN | None = None
+        self.optimizer: object | None = None
 
         self.mu: np.ndarray = np.zeros(dim, dtype=np.float64)
         self.n: int = 0
@@ -134,12 +130,30 @@ class TopicV336:
     # Update
     # ------------------------------------------------------------------
 
+    def _ensure_model(self) -> None:
+        """Lazily build the per-topic EventRNN + optimizer on first GRU use.
+
+        Deterministic per-topic init for reproducibility (CLAUDE.md): seed
+        by (seed, topic_id). Global RNG is snapshot/restored so other
+        randomness is unperturbed — identical behavior to eager construction.
+        """
+        if self.model is not None:
+            return
+        _rng_state = torch.random.get_rng_state()
+        try:
+            torch.manual_seed(self.seed * 100_003 + self.topic_id)
+            self.model = EventRNN(input_dim=self.dim, hidden_dim=self.hidden_dim)
+        finally:
+            torch.random.set_rng_state(_rng_state)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+
     def _retrain(self) -> None:
         """Replay the full (capped) history: predict x_{i+1} from the GRU
         run over x_{0..i}, cosine loss, ``n_epochs`` epochs."""
         seq = self._seq[-self.max_history :]
         if len(seq) < 2:
             return
+        self._ensure_model()
         x = torch.from_numpy(
             np.asarray(seq, dtype=np.float32)
         )  # (L, dim)

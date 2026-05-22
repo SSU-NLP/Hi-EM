@@ -2411,3 +2411,48 @@ head-only ablation 시 재오픈 가능.
 
 **산출**: `outputs/experiments/2026-05-21_v425_csm_2ds_raw/REPORT.md`
 (해석/판정 채워짐), `context/methodology/v4.2.5.md` (결과/판정 채워짐).
+
+## 2026-05-22 — v4.1.3 dead-code audit → Hi-DoTS (reduced form) main 모델 채택
+
+**맥락**: v4.1.3 (`HiEMSegmenterV413(HiEMSegmenterV411)`) 가 paper 의 main segmenter 인데,
+SeCom-swap latency profiling 중 `assign()` 시간의 77% 가 *안 쓰는* per-topic EventRNN
+모듈 생성에 쓰임을 발견 (η=1 default → RNN 비활성). lazy-init 으로 수정 후 모든 HP 를
+출력 변화로 전수 audit.
+
+**audit 결과 (실증)**: v4.1.3 의 segmentation 출력에 영향을 주는 HP 는
+`delta_star` / `ctx_window` / `ctx_decay` / `ctx_blend_a` 4개뿐 (+ `beta` 극단값만 marginal).
+나머지는 *전부 dead* — 출력 byte-identical:
+- EventRNN 전체 (`eta_prev=1` → δ_model weight 0)
+- f0 / restart / re-entry (`f0_min_starts≥2` circular deadlock 으로 영구 봉인)
+- SEM2 variance machinery (per-topic σ²_k, scaled-inv-χ² posterior — dead f0 로만 흘러감)
+- sticky-CRP `alpha`/`lmda` — `_fresh_baseline_for_prev` (codex 2026-05-18) 의 prior-cancel
+  설계로 repeat-vs-fresh argmax 에서 상쇄
+- `sigma_delta_c`, `var_likelihood_weight`, `pe_prior`, `cos_threshold`, `pe_threshold`,
+  `hard_pe_fallback`, `min_transitions_for_pe` — 모두 dead
+
+**환원 결과**: v4.1.3 의 실제 작동 알고리즘 =
+`δ_eff = a·(1−cos(s_{t-1},s_t)) + (1−a)·(1−cos(causal_window, s_t)); boundary ⟺ δ_eff ≥ δ*`.
+4단계 SEM2 파이프라인 (sCRP prior / RNN PE / σ²_k likelihood / Bayes posterior) 은
+코드로 실행되나 출력 무영향.
+
+**결정** (codex:rescue 위임 → A안 채택): main 모델을 `src/hi_em/hi_dots.py` 의
+`HiDoTS` (reduced form, dead code 0, ~270줄) 로 재정의. v4.1.3 와 byte-identical
+검증 완료 (TIAGE/Dialseg711/SuperSeg 38,242 turn 0 mismatch). SEM2 full form
+(`sem_core_v413.py`) 은 `archive/legacy_sem_ablation/` 으로 이동 — 삭제 아님,
+paper 의 audit disclosure 재현용 ablation 증거물. `src/hi_em/sem_core_v411.py` 등
+공유 인프라는 v4.2.x/v4.3.x 가 의존하므로 src 유지.
+
+**근거 / SEM 계승 정합성**: codex 권고 — paper 는 Hi-DoTS 를 "full SEM2 구현" 이 아니라
+"SEM 의 prediction-error boundary 직관의 minimal online realization" 으로 서술하고,
+"SEM2-style RNN/sticky-CRP/variance 를 구현·audit 했으나 v4.1.3 default 에서 argmax
+결정에 영향 없음" 을 명시 (audit disclosure). main claim 은 graded boundary score +
+online O(1) latency + SeCom LLM-backend drop-in + latency 대폭 감소로 재구성.
+
+**biology revival 검토 후 보류**: 사용자가 신경과학(해마-mPFC-PMN) 메커니즘을 실제
+작동하게 되살리는 안 (mPFC reset / 해마 snapshot / re-entry, segment_id↔event_id 분리)
+을 codex 와 설계까지 했으나 — "새 메커니즘 도입 말고 dead code 제거만" 으로 최종 결정.
+revival 설계는 codex 스레드에 보존, 후속 버전 후보.
+
+**영향**: `secom_adapter.py` → HiDoTS 로 re-point (byte-identical 이라 SeCom-swap 결과 불변).
+`scripts/{run_v413_demo,run_v413_hp_sweep,analyze_v413_reentry}.py` 는 archived v413
+import. `scripts/secom_swap/{03b,13}` 는 HiDoTS 로 re-point. methodology 갱신 필요.

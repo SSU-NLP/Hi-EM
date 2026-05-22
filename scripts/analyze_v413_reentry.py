@@ -27,7 +27,10 @@ import torch
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
-from hi_em.sem_core_v413 import HiEMSegmenterV413  # noqa: E402
+# v4.1.3 full SEM2 form archived (2026-05-22). Re-entry analysis needs the
+# full f0/restart machinery, so it imports the archived class.
+sys.path.insert(0, str(REPO / "archive" / "legacy_sem_ablation"))
+from sem_core_v413 import HiEMSegmenterV413  # noqa: E402
 
 SDS = REPO / "benchmarks" / "superdialseg_data"
 CACHE = REPO / "outputs" / "runs" / "_misc"

@@ -12,6 +12,7 @@
 - **2026-04-28/** (2026-04-28, 24 runs): Phase 4 follow-up `freq_shift` / `persistence` / `sliding` / `hi-em-full-v1` HP 변형. baseline 결과를 못 뒤집음 → Phase 4 같이 폐기.
 - **2026-04-29/** (2026-04-29, 14 runs): 같은 사유로 폐기.
 - **2026-04-30/** (2026-04-30, 1 run): Phase 4 마지막 시도, 폐기.
+- **legacy_sem_ablation/** (2026-05-22): v4.1.3 의 full SEM2 form (`sem_core_v413.py`). 2026-05-22 실증 audit 으로 v4.1.3 의 SEM2 machinery (per-topic EventRNN / f0·restart·re-entry / scaled-inv-χ² variance / sticky-CRP α·λ) 가 *전부 출력에 0 영향* 임이 확인됨 — `_fresh_baseline_for_prev` 의 prior-cancel 설계로 repeat-vs-fresh 결정이 `δ_eff < δ*` 로 환원. main 모델은 `src/hi_em/hi_dots.py` (`HiDoTS`, reduced form, byte-identical 검증) 로 대체. 이 파일은 **삭제 아님 — audit 재현용 ablation 증거물** 로 보존 (paper 의 "we implemented and audited SEM2-style ... found degenerate" disclosure 근거). decision-log 2026-05-22 참조.
 
 ## archive 에 들어오지 않는 것
 
