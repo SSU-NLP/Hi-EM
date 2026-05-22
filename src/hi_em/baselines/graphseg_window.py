@@ -232,7 +232,11 @@ _GLOVE_CACHE: dict[str, tuple[dict[str, np.ndarray], int]] = {}
 
 
 def _load_glove(path: str) -> tuple[dict[str, np.ndarray], int]:
-    """GloVe txt → dict[word → vec]. 메모리 공유 cache."""
+    """GloVe txt → dict[word → vec]. 메모리 공유 cache.
+
+    Streams line-by-line (~990MB 6B.300d 도 peak ~700MB only,
+    splitlines() 안 함). 7-8GB RAM 환경 + swap 압박 시에도 OK.
+    """
     if path in _GLOVE_CACHE:
         return _GLOVE_CACHE[path]
     p = Path(path)
@@ -241,20 +245,21 @@ def _load_glove(path: str) -> tuple[dict[str, np.ndarray], int]:
             f"GloVe 파일 없음: {p}. 다운로드 안내는 methods/README.md 참조.")
     vec: dict[str, np.ndarray] = {}
     dim: int | None = None
-    for line in p.read_text(encoding="utf-8").splitlines():
-        parts = line.rstrip().split(" ")
-        if len(parts) < 3:
-            continue
-        word = parts[0]
-        try:
-            v = np.asarray(parts[1:], dtype=np.float32)
-        except ValueError:
-            continue
-        if dim is None:
-            dim = v.size
-        elif v.size != dim:
-            continue
-        vec[word] = v
+    with p.open("r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.rstrip("\n").split(" ")
+            if len(parts) < 3:
+                continue
+            word = parts[0]
+            try:
+                v = np.asarray(parts[1:], dtype=np.float32)
+            except ValueError:
+                continue
+            if dim is None:
+                dim = v.size
+            elif v.size != dim:
+                continue
+            vec[word] = v
     if dim is None:
         raise RuntimeError(f"GloVe 파싱 실패: {p}")
     _GLOVE_CACHE[path] = (vec, dim)

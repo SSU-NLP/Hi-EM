@@ -42,6 +42,11 @@ def segments_to_boundary_vector(segments: list[list[str]]) -> list[int]:
 
 
 def per_conv_compare(a_segs: list[list[str]], b_segs: list[list[str]]) -> dict:
+    # Filter out empty segments (LLM segmenter occasionally outputs
+    # ``num_exchanges: 0`` lines; downstream stages skip them but they
+    # pollute boundary-vector arithmetic).
+    a_segs = [s for s in a_segs if len(s) > 0]
+    b_segs = [s for s in b_segs if len(s) > 0]
     a_total = sum(len(s) for s in a_segs)
     b_total = sum(len(s) for s in b_segs)
     if a_total != b_total:
