@@ -2421,12 +2421,15 @@ SeCom-swap latency profiling 중 `assign()` 시간의 77% 가 *안 쓰는* per-t
 
 **audit 결과 (실증)**: v4.1.3 의 segmentation 출력에 영향을 주는 HP 는
 `delta_star` / `ctx_window` / `ctx_decay` / `ctx_blend_a` 4개뿐 (+ `beta` 극단값만 marginal).
-나머지는 *전부 dead* — 출력 byte-identical:
+나머지는 default/canonical setting 에서 dead — 출력 byte-identical:
 - EventRNN 전체 (`eta_prev=1` → δ_model weight 0)
 - f0 / restart / re-entry (`f0_min_starts≥2` circular deadlock 으로 영구 봉인)
 - SEM2 variance machinery (per-topic σ²_k, scaled-inv-χ² posterior — dead f0 로만 흘러감)
-- sticky-CRP `alpha`/`lmda` — `_fresh_baseline_for_prev` (codex 2026-05-18) 의 prior-cancel
-  설계로 repeat-vs-fresh argmax 에서 상쇄
+- sticky-CRP `alpha` 및 canonical/default `lmda=10` — `_fresh_baseline_for_prev`
+  (codex 2026-05-18) 의 prior-cancel 설계로 repeat-vs-fresh argmax 에서 상쇄.
+  단 후속 검증에서 `lmda=1` 같은 낮은 stickiness 는 non-prev f0 fallback 경로와
+  상호작용해 일부 데이터에서 출력 차이를 낼 수 있음이 확인됨. 따라서 `lmda` 는
+  전역 dead HP 가 아니라 default/canonical reduced-form parity 조건으로만 제외한다.
 - `sigma_delta_c`, `var_likelihood_weight`, `pe_prior`, `cos_threshold`, `pe_threshold`,
   `hard_pe_fallback`, `min_transitions_for_pe` — 모두 dead
 
@@ -2456,3 +2459,93 @@ revival 설계는 codex 스레드에 보존, 후속 버전 후보.
 **영향**: `secom_adapter.py` → HiDoTS 로 re-point (byte-identical 이라 SeCom-swap 결과 불변).
 `scripts/{run_v413_demo,run_v413_hp_sweep,analyze_v413_reentry}.py` 는 archived v413
 import. `scripts/secom_swap/{03b,13}` 는 HiDoTS 로 re-point. methodology 갱신 필요.
+
+**2026-05-22 후속 — `ctx_window` default 3 → 2 정정**: parity 검증
+(`scripts/verify_hidots_parity.py`, `outputs/experiments/2026-05-22_hidots_parity/`)
+중 발견 — v4.1.x 코드 default `ctx_window=3` 이 보고 수치(TIAGE 0.4675 / Dialseg711
+0.5897 / SuperSeg 0.4631)를 낸 canonical TIAGE-cfg(`m=2`)와 어긋나 있었음. `HiDoTS`
+는 main 모델이므로 default 를 보고 config 에 맞춰 `2` 로 정정. output parity 는 m 과
+무관하게 구조적으로 성립(매칭 config 에서 38,242 turn diff 0 재검증). 산출:
+`context/methodology/hi_dots.md` 신설, `outputs/reports/hi_dots_algorithm_walkthrough.{md,pdf}`
+신규, `scripts/verify_hidots_parity.py` 신규.
+
+---
+
+## 2026-05-23 — Hi-DoTS-v2: lexical-overlap 보정 변형 도입 (검증 대기, v1 유지)
+
+**배경**: [[hi-dots]] (`HiDoTS`) 의 알려진 실패 모드 — wording 은 비슷한데 topic 이
+바뀌는 경계(δ≈낮은데 GT 경계)를 인접 임베딩 cosine 신호로는 못 잡음. 사용자 요청:
+TextTiling 식 단어-빈도 겹침(lexical overlap) 신호를 δ_eff 에 결합해 v2 를 만들고
+세 벤치에서 검증. 사용자 확정 방향 = **어휘 겹침↓ → δ_eff↑ / 겹침↑ → δ_eff↓**
+(어휘 응집 시 경계 억제).
+
+**설계 (codex:rescue 위임)**: 결합 형태·인과적 lexical 신호 정의·HP·SEM 계승
+정당화 모두 codex 권고 채택.
+`δ_eff_v2 = clip_[0,2]( δ_base + w_lex·r_t·(lexdist − μ_lex) )`. `δ_base` = HiDoTS
+δ_eff 불변. `lexdist = 1 − cos_tf(L_{t-1}, subtf(u_t))`, L = 직전 m_lex turn 의
+ρ_lex-감쇠 sublinear-TF 합. `r_t` = 짧은-turn 신뢰 게이트. `μ_lex` = train median
+(residual centering). 가산형 채택 — 곱셈형은 δ_base 가 낮은 바로 그 실패 모드에서
+힘이 약함. lexical 신호는 zero-lag·causal — streaming TextTiling 의 right-block
+닫힘 lag 회피. `w_lex=0` 시 v1 과 byte-parity (검증됨).
+
+**SEM 계승 3-step**: lexical overlap 은 SEM 에 **없음** — SEM 은 structured scene
+dynamics 의 예측가능성으로 boundary 를 설명하지 단어 표면형 cohesion 을 추적하지
+않음(추상화 수준 차이, 의도적 금지 아님). 충돌은 제한적 — lexical 항은 sCRP/local-MAP
+가 아니므로 SEM 원형 충실 재현과는 이질적이나, Hi-DoTS-v2 목표가 SEM-inspired online
+segmentation 이므로 충돌 없음. lexical 항을 **SEM core 가 아닌 domain-specific
+보조 관측 feature** 로 기록. 우선순위: SEM 계승성(online·causal·local) > 도메인
+적합성 > SEM 원형 충실 재현. CLAUDE.md "Retrieval 은 importance score 만" 규칙과는
+무관(segmentation 영역).
+
+**결과** (`outputs/experiments/2026-05-23_hidots_v2/REPORT.md`, official SuperDialseg
+Score, calib=train/validation/30%-tune, w_lex sweep): mean-3 v1 0.4927 → w_lex=0.30
+0.4989 (+0.0062). dialseg711 은 w_lex 단조 증가(+0.005~+0.015, robust 양),
+superseg 약한 양(+0.003~0.005), tiage noise(표본 100, 부호 불안정).
+
+**결정**: **v1 대체 승격 보류**. mean-3 +0.6 Score point 는 약하고 tiage 가 noise
+라 main 모델 교체 근거 부족. 단 dialseg711 단조 추세가 lexical 신호의 원리적 유효성을
+보이므로 폐기도 아님 — `HiDoTSV2` 는 검증 대기 변형으로 보존. **현 main 모델 =
+`HiDoTS` 유지.** 승격 재검토 전제: (a) multi-seed 유의성, (b) lexical HP 2차 grid,
+(c) v1 실패 모드 turn case-level 검증.
+
+**산출**: `src/hi_em/hi_dots_v2.py` 신규, `scripts/run_hidots_v2.py` 신규,
+`context/methodology/hi-dots-v2.md` 신규, `context/03-architecture.md` 갱신.
+
+---
+
+## 2026-05-23 — DTS 표 Ours latency 정직성 정정 (host-shared → realtime per-turn)
+
+**배경**: `outputs/reports/dts_result.md` 의 Online "Ours (p70/p75/p80/oracle)" 4 행이
+Pre. 0 · Seg. 0.2 ms 로 보고돼 있었음. caption 자체에 *"host-shared accounting (encoder
+forward is amortized with the surrounding pipeline's representation step)"* 라고
+명시 — 즉 encoder forward 비용이 표에서 **제외**된 채 보고됨. 사용자 정의("인코딩
+캐시 따로 쓰지 않고 리얼타임 설정에서 매턴마다 계산해서 합치고 턴으로 나눈 값")
+와 정반대. baseline 들(GreedySeg 13 ms 등)은 encoder forward 포함이라 한 표에서
+비대칭.
+
+**조치**: `scripts/measure_hidots_latency.py` 신규 — Def-DTS bundle test split 에서
+seed=0 으로 벤치당 500-turn budget subsample, **encoder 캐시 off + batch=1 + 매 turn
+perf_counter (encode + assign)**, 첫 발화 제외(baseline 들과 동일 정책). encoder
+= MPNet (`multi-qa-mpnet-base-dot-v1`) CPU. 결과 (`outputs/experiments/
+2026-05-23_hidots_latency_realtime/`):
+
+| 벤치 | n turn | Pre. mean (ms) | Pre. p50 | Seg. mean | Seg. p50 |
+|---|---:|---:|---:|---:|---:|
+| tiage | 468 | 1128 | 881 | 0.42 | 0.25 |
+| dialseg711 | 498 | 849 | 738 | 0.34 | 0.23 |
+| superseg | 468 | 932 | 665 | 0.35 | 0.24 |
+| **cross-bench** | **1434** | **967** | **747** | **0.37** | **0.24** |
+
+**결정**: `dts_result.md` 의 Ours 4 행 Pre./Seg. 셀을 0/0.2 → **967/0.37** (cross-bench
+mean) 으로 교체. caption 의 *host-shared accounting* 문장 폐기, *realtime per-turn,
+no cache, ΣΔt/N* 정의로 교체. §4 TODO 의 *"Latency Pre./Seg. split 정밀 측정"* 항목
+체크 처리. §6 해석 문단도 갱신 (segmentation 자체는 sub-ms 로 거의 free, 우세 비용은
+encoder forward).
+
+**한계**: CPU only, MPNet encoder 한정. GPU 또는 MiniLM/MiniLM-int8 인코더로 교체
+시 Pre. 한 자릿수 ms 까지 떨어질 가능성 — 별도 측정 필요. 표본은 벤치당 500-turn
+budget (전수 36k turn 측정 ~6 시간 회피).
+
+**산출**: `scripts/measure_hidots_latency.py` 신규, `outputs/experiments/
+2026-05-23_hidots_latency_realtime/{REPORT.md,latency.json}` 신규,
+`outputs/reports/dts_result.md` 갱신.

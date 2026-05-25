@@ -42,14 +42,32 @@ def main() -> None:
     ap.add_argument("--max_tokens", type=int, default=512)
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument(
+        "--no_think",
+        choices=["reasoning_effort", "chat_template", "off"],
+        default="reasoning_effort",
+        help=(
+            "How to disable hybrid-thinking. reasoning_effort: pass "
+            "reasoning_effort='none' (Crts-served Qwen, gpt-4o family). "
+            "chat_template: pass chat_template_kwargs.enable_thinking=False "
+            "(self-hosted vLLM Qwen3). off: pass nothing (non-thinking models)."
+        ),
+    )
     args = ap.parse_args()
 
     Path(args.save_path).parent.mkdir(parents=True, exist_ok=True)
     load_dotenv(REPO_ROOT / ".env")
-    key = os.environ.get("OPENAI_API_KEY")
+    key = os.environ.get("OPENAI_API_KEY") or "dummy"
     base_url = os.environ.get("OPENAI_BASE_URL")
-    if not key or not base_url:
-        sys.exit("OPENAI_API_KEY / OPENAI_BASE_URL missing in .env")
+    if not base_url:
+        sys.exit("OPENAI_BASE_URL missing (.env or env override)")
+
+    # thinking-disable kwargs for chat.completions.create — endpoint-dependent.
+    think_kwargs: dict = {}
+    if args.no_think == "reasoning_effort":
+        think_kwargs["reasoning_effort"] = "none"
+    elif args.no_think == "chat_template":
+        think_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
 
     import openai
     client = openai.OpenAI(api_key=key, base_url=base_url)
@@ -69,6 +87,10 @@ def main() -> None:
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=args.max_tokens,
                     temperature=args.temperature,
+                    # Hybrid-thinking models otherwise spend the whole token
+                    # budget on <think> and return an empty/truncated answer.
+                    # Mechanism is endpoint-dependent — see --no_think.
+                    **think_kwargs,
                 )
                 content = r.choices[0].message.content or ""
                 return content, time.perf_counter() - t0

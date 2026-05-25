@@ -56,6 +56,15 @@ def main() -> None:
         default="qwen/qwen3.5-9b",
         help="Crts chat slug used for LLM segmentation (overrides config).",
     )
+    ap.add_argument(
+        "--no_think",
+        choices=["reasoning_effort", "chat_template", "off"],
+        default="reasoning_effort",
+        help=(
+            "Disable hybrid-thinking. reasoning_effort: Crts-served Qwen / "
+            "gpt-4o. chat_template: self-hosted vLLM Qwen3. off: non-thinking."
+        ),
+    )
     args = ap.parse_args()
 
     load_dotenv(REPO_ROOT / ".env")
@@ -93,6 +102,40 @@ def main() -> None:
     secom.segment_model = args.segment_model
     secom.segmentor = OpenAILLM(args.segment_model)
     print(f"SeCom segmentor model: {secom.segment_model}")
+
+    # Qwen3.5 (hybrid-thinking) burns the whole token budget on <think> and
+    # returns empty/truncated segmentation. SeCom's OpenAILLM (benchmarks/,
+    # read-only) does not expose reasoning control — inject it by wrapping the
+    # OpenAI client's create(). Mechanism is endpoint-dependent (see --no_think):
+    # Crts-served Qwen honors reasoning_effort; self-hosted vLLM Qwen3 honors
+    # chat_template_kwargs.enable_thinking. Non-thinking models → off.
+    # GPT-5 family: max_tokens / temperature 0.7 / top_p unsupported → translate.
+    is_gpt5 = "gpt-5" in args.segment_model.lower()
+    if args.no_think != "off" or is_gpt5:
+        _cc = secom.segmentor.client.chat.completions
+        _orig_create = _cc.create
+
+        def _create_patched(*a, **kw):  # noqa: ANN002,ANN003
+            if is_gpt5:
+                # GPT-5 requires max_completion_tokens; only temp=1, top_p=1 supported;
+                # reasoning_effort must be one of {minimal, low, medium, high}.
+                if "max_tokens" in kw:
+                    kw["max_completion_tokens"] = max(kw.pop("max_tokens"), 2000)
+                kw.pop("temperature", None)
+                kw.pop("top_p", None)
+                kw.pop("seed", None)
+                kw.setdefault("reasoning_effort", "minimal")
+                return _orig_create(*a, **kw)
+            if args.no_think == "reasoning_effort":
+                kw.setdefault("reasoning_effort", "none")
+            else:  # chat_template
+                eb = dict(kw.get("extra_body") or {})
+                eb.setdefault("chat_template_kwargs", {"enable_thinking": False})
+                kw["extra_body"] = eb
+            return _orig_create(*a, **kw)
+
+        _cc.create = _create_patched
+    print(f"no_think mode: {args.no_think} (is_gpt5={is_gpt5})")
 
     results = []
     per_conv_latency = []

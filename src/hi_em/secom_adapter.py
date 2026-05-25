@@ -117,13 +117,29 @@ class HiEMSecomSegmenter:
         return HiDoTS(**kwargs)
 
     def _encode(self, texts: Sequence[str]) -> np.ndarray:
-        vecs = self.encoder.encode(
-            list(texts),
-            batch_size=self.encode_batch_size,
-            show_progress_bar=False,
-            normalize_embeddings=self.normalize,
-            convert_to_numpy=True,
-        )
+        """Encode exchanges to ``(n, dim)`` float64 vectors.
+
+        Supports two encoder contracts:
+
+        - ``sentence-transformers`` ``SentenceTransformer`` — the rich kwarg
+          signature (batch size, explicit ``normalize_embeddings``).
+        - :mod:`hi_em.embedding` encoders (``QueryEncoder`` / ``APIEncoder``,
+          the latter backed by the Crts ``/v1/embeddings`` API) — these
+          expose ``encode(list[str]) -> L2-normalized ndarray`` and reject
+          the SentenceTransformer kwargs.
+        """
+        items = list(texts)
+        try:
+            vecs = self.encoder.encode(
+                items,
+                batch_size=self.encode_batch_size,
+                show_progress_bar=False,
+                normalize_embeddings=self.normalize,
+                convert_to_numpy=True,
+            )
+        except TypeError:
+            # hi_em.embedding encoder — single-arg encode(), already L2-normalized.
+            vecs = self.encoder.encode(items)
         return np.asarray(vecs, dtype=np.float64)
 
     def segment(self, sessions: list[list[str]]) -> list[list[str]]:

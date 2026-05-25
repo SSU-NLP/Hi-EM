@@ -35,12 +35,13 @@ from __future__ import annotations
 import math
 import os
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 
-_DEFAULT_CKPT = "outputs/runs/_misc/cpt_277000.pth"
+_DEFAULT_CKPT = "methods/CSM/cpt_277000.pth"
 
 
 def _ensure_csm_import():
@@ -130,6 +131,7 @@ class CSMOnlineDelay2:
     _model: object = field(default=None, init=False)
     _tokenizer: object = field(default=None, init=False)
     _device_resolved: Optional[str] = field(default=None, init=False)
+    _neural_sec: float = field(default=0.0, init=False)  # cumulative coherence-forward time
 
     # ------------------------------------------------------------------
     def _ensure_loaded(self) -> None:
@@ -161,30 +163,35 @@ class CSMOnlineDelay2:
     def _coherence_score(self, sent1: str, sent2: str) -> float:
         """One coherence-model forward → continuous coherence score.
 
-        Original lxing532 reads ``softmax(logits)[class_0]``, but on our
-        evaluation domain (MTB+'s ``"[human]: ... [bot]: ..."`` exchanges)
-        the trained classifier saturates near 1.0 for nearly every pair
-        because the role-marked format matches its positive training
-        distribution. We instead read the **raw logit difference**
-        ``logit[class_0] - logit[class_1]`` which preserves continuous
-        signal even when softmax saturates.
+        Matches the SuperDialseg paper baseline
+        (``benchmarks/superdialseg/src/super_dialseg/models/csm/modeling_csm.py:90``):
+        ``sigmoid(logits[:, 0])`` — i.e. read class-0 logit only and pass
+        through sigmoid. The ckpt ``cpt_277000.pth`` (lxing532
+        CoherenceNet) outputs a [1, 2] logit tensor; the paper baseline
+        reuses it as a single-class scorer via sigmoid on class-0.
 
-        The score is then min-max-normalized to [0, 1] downstream by
-        depth_computing's relative left/right peak comparison, so the
-        absolute scale doesn't matter — only the monotonic order does.
+        Note: in MTB+ (``"[human]: ... [bot]: ..."`` role-marked format)
+        the classifier saturates near 1.0 for nearly every pair, which
+        previously motivated a raw-logit-diff hack. On DTS-bundle plain
+        text the sigmoid signal is non-saturated and stable, so we now
+        match the paper formulation. (Earlier raw-diff hack was a
+        domain-specific bypass — see decision-log 2026-05-24.)
         """
         import torch
         tok = self._tokenizer(
             sent1, sent2, padding="max_length",
             max_length=self.max_seq_length, truncation=True, return_tensors="pt",
         )
+        _t0 = time.perf_counter()
         with torch.no_grad():
             tok = {k: v.to(self._device_resolved) for k, v in tok.items()}
             bert_out = self._model.bert(**tok)
             cls = bert_out.last_hidden_state[:, 0, :]
             logits = self._model.coherence_decoder(cls)  # [1, 2]
-        # logit_class0 - logit_class1: large positive = coherent, negative = incoherent.
-        return float((logits[0, 0] - logits[0, 1]).cpu().item())
+        # paper: sigmoid(logits[:, 0]) → coherence score in (0, 1).
+        out = float(torch.sigmoid(logits[0, 0]).cpu().item())
+        self._neural_sec += time.perf_counter() - _t0
+        return out
 
     # ------------------------------------------------------------------
     def push(self, utterance: str) -> list[int]:
@@ -216,10 +223,13 @@ class CSMOnlineDelay2:
                     self._welf.n >= self.warmup_gaps
                     and depth > self._welf.mean + self.alpha * self._welf.std()
                 ):
-                    # gap gi is between utt_{gi+1} and utt_{gi+2} (1-based).
-                    # We emit the utterance index of the LAST utt in segment
-                    # = gi + 1 (1-based).
-                    owner_t = gi + 1
+                    # gap gi is between 0-based utt[gi] and utt[gi+1].
+                    # New segment starts at utt[gi+1] = 1-based index gi+2.
+                    # Gold convention (parse_defdts_dialogue): boundary index
+                    # = 1-based index of the NEW segment's first utt.
+                    # (Earlier this emitted gi+1 = LAST utt of OLD segment,
+                    # causing systematic off-by-one vs gold; fixed 2026-05-24.)
+                    owner_t = gi + 2
                     if owner_t - self._last_boundary_t >= self.min_gap:
                         self._last_boundary_t = owner_t
                         new_boundaries.append(owner_t)
@@ -260,7 +270,9 @@ class CSMOnlineDelay2:
                 self._welf.n >= self.warmup_gaps
                 and depth > self._welf.mean + self.alpha * self._welf.std()
             ):
-                owner_t = gi + 1
+                # See comment in push(): owner_t = 1-based new-segment start
+                # (gi+2), not last-old (gi+1). off-by-one fixed 2026-05-24.
+                owner_t = gi + 2
                 if owner_t - self._last_boundary_t >= self.min_gap:
                     self._last_boundary_t = owner_t
                     out.append(owner_t)

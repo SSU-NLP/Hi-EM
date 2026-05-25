@@ -213,6 +213,8 @@ def main() -> None:
         agg.push_sec += lat.push_sec
         agg.flush_sec += lat.flush_sec
         agg.total_sec += lat.total_sec
+        agg.neural_sec += lat.neural_sec
+        agg.preprocess_sec += lat.preprocess_sec
         agg.per_turn.extend(lat.per_turn)
         print(
             f"  conv {idx}: {lat.n_exchanges} ex → {len(segments)} segs, "

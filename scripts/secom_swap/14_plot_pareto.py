@@ -1,10 +1,11 @@
-"""Figure G: Context length vs QA quality Pareto across 8 methods.
+"""Figure G: Pareto frontier of QA quality vs context length.
 
-X-axis = avg # retrieved tokens (Context Length, paper Table 1).
-Y-axis = GPT4Score (paper's headline QA metric).
+x = avg retrieved tokens per query. y = GPT4Score (1-10, x10 -> 0-100).
+Includes ALL available methods on Long-MT-Bench+: 4 algorithmic, 1
+supervised, 6 LLM-based, 6 Hi-OnTop variants (3 MPNet × 3 int8). Pareto
+frontier highlighted.
 
-Each method = one point. Pareto frontier drawn as connecting line of the
-Pareto-optimal methods (max GPT4Score for each token budget).
+Output: ``plots/pareto_qa_context.{pdf,png}``.
 """
 
 from __future__ import annotations
@@ -20,105 +21,100 @@ EXP = REPO_ROOT / "outputs/experiments/2026-05-21_v413_secom_swap"
 OUT_DIR = EXP / "plots"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# (metrics_filename_stem, pretty label, color, marker, category)
+# Order aligned with downstream_task.md (2026-05-24).
+METHODS = [
+    # Algorithmic baselines
+    ("texttiling",            "TextTiling",     "#666666", "o", "alg"),
+    ("graphseg",              "GraphSeg",       "#9467BD", "s", "alg"),
+    ("greedyseg",             "GreedySeg",      "#8C564B", "^", "alg"),
+    ("csm",                   "CSM",            "#17BECF", "D", "alg"),
+    # Hi-OnTop MPNet
+    ("ours_p60",              r"Hi-OnTop (MPNet, $p_{60}$)", "#D62728", "o", "ours"),
+    ("ours_p70",              r"Hi-OnTop (MPNet, $p_{70}$)", "#E45756", "o", "ours"),
+    ("ours_hidots",           r"Hi-OnTop (MPNet, $p_{80}$)", "#F37C7E", "o", "ours"),
+    # Hi-OnTop int8
+    ("ours_int8_p60",         r"Hi-OnTop (int8, $p_{60}$)",  "#FF7F0E", "X", "ours"),
+    ("ours_int8_p70",         r"Hi-OnTop (int8, $p_{70}$)",  "#FF9F4D", "X", "ours"),
+    ("ours_int8_p80",         r"Hi-OnTop (int8, $p_{80}$)",  "#FFC689", "X", "ours"),
+    # Supervised
+    ("roberta",               "RoBERTa",        "#BCBD22", "P", "sup"),
+    # LLM-based (GPT4Score desc)
+    ("segsweep_gpt5seg",      "GPT-5",          "#8E44AD", "*", "llm"),
+    ("segsweep_qwen35_122bseg", "Qwen3.5-122B-A10B", "#0D5E1F", "*", "llm"),
+    ("segsweep_qwen27bseg",   "Qwen3.5-27B",    "#1F8E3F", "*", "llm"),
+    ("baseline",              "GPT-4o-mini",    "#2CA02C", "*", "llm"),
+    ("segsweep_qwen35_4b",    "Qwen3.5-4B",     "#75B775", "*", "llm"),
+    ("segsweep_llama32_3b",   "Llama3.2-3B",    "#3D9970", "*", "llm"),
+    ("segsweep_ministral3_3b","Mistral3-3B",    "#52B788", "*", "llm"),
+    ("segsweep_qwen35_2b",    "Qwen3.5-2B",     "#A3D6A3", "*", "llm"),
+]
 
-METHODS = {
-    "zero":       ("Zero",            "#888888", "x",   None),
-    "texttiling": ("TextTiling-style","#7B9F35", "v",   None),
-    "graphseg":   ("GraphSeg-style",  "#9467BD", "P",   None),
-    "greedyseg":  ("GreedySeg-style", "#E1812C", "s",   None),
-    "csm":        ("CSM-style (ours-trained)","#1F77B4", "D", None),
-    "ours":       ("Hi-Seg (Ours)",   "#D62728", "*",   220),
-    "baseline":   ("GPT-4o-mini-Seg", "#2CA02C", "o",   None),
-    "full":       ("Full History",    "#666666", "^",   None),
-}
 
+def main():
+    points = []
+    for stem, label, color, marker, cat in METHODS:
+        path = EXP / f"metrics_{stem}.json"
+        if not path.exists():
+            print(f"skip {stem}: no metrics")
+            continue
+        d = json.loads(path.read_text())
+        points.append(dict(
+            label=label, color=color, marker=marker, cat=cat,
+            x=d["n_tokens"], y=d["gpt4_score_x10"],
+        ))
 
-def main() -> None:
-    pts = []
-    for name, (label, color, marker, size) in METHODS.items():
-        p = EXP / f"metrics_{name}.json"
-        d = json.loads(p.read_text())
-        n_tok = d.get("n_tokens") or 0
-        g4 = d.get("gpt4_score_x10") or 0.0
-        bs = d.get("bertscore_f1") or 0.0
-        bleu = d.get("bleu") or 0.0
-        pts.append({
-            "name": name, "label": label, "color": color, "marker": marker,
-            "size": size or 110,
-            "n_tokens": n_tok, "gpt4": g4, "bertscore": bs, "bleu": bleu,
-        })
+    # EMNLP two-column 친화 (single-column ~3.3in, two-col ~7in). 7in 폭 채택.
+    fig, ax = plt.subplots(figsize=(7.0, 4.6))
 
-    # Pareto frontier: sort by n_tokens ascending, keep points whose gpt4
-    # exceeds all earlier ones (lower-token side).
-    sorted_pts = sorted(pts, key=lambda p: p["n_tokens"])
-    pareto = []
-    best = -1
-    for p in sorted_pts:
-        if p["gpt4"] > best:
-            pareto.append(p)
-            best = p["gpt4"]
+    for p in points:
+        s = 80 if p["cat"] == "ours" else 55
+        ax.scatter(p["x"], p["y"], s=s, color=p["color"],
+                   marker=p["marker"], edgecolor="black", linewidth=0.5,
+                   label=p["label"], zorder=3, alpha=0.92)
 
-    fig, ax = plt.subplots(figsize=(7.5, 5.0))
+    # Pareto frontier
+    sorted_p = sorted(points, key=lambda p: p["x"])
+    front = []
+    best_y = -1
+    for p in sorted_p:
+        if p["y"] > best_y:
+            front.append(p); best_y = p["y"]
+    if len(front) >= 2:
+        fx = [p["x"] for p in front]; fy = [p["y"] for p in front]
+        ax.plot(fx, fy, "--", color="#444444", linewidth=0.9, alpha=0.5,
+                zorder=2, label="Pareto frontier")
 
-    # Pareto frontier (drawn first, under scatter)
-    if len(pareto) >= 2:
-        px = [p["n_tokens"] for p in pareto]
-        py = [p["gpt4"] for p in pareto]
-        ax.plot(px, py, "--", color="#666666", linewidth=1.3, alpha=0.6,
-                 label="Pareto frontier", zorder=1)
+    ax.set_xlabel("Avg retrieved tokens per query", fontsize=10)
+    ax.set_ylabel(r"GPT4Score $\uparrow$", fontsize=10)
+    ax.grid(True, linestyle=":", alpha=0.25)
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    ax.tick_params(labelsize=9)
 
-    # Scatter points
-    for p in pts:
-        ax.scatter(p["n_tokens"], p["gpt4"], s=p["size"],
-                    marker=p["marker"], color=p["color"],
-                    edgecolor="black", linewidth=0.7, zorder=3,
-                    label=p["label"])
-        dx, dy = 50, 0.8
-        # offset annotation for legibility
-        if p["name"] == "zero":
-            dx, dy = 100, 1.2
-        if p["name"] == "ours":
-            dx, dy = 120, 1.3
-        if p["name"] == "full":
-            dx, dy = -2500, 1.2
-        if p["name"] == "texttiling":
-            dx, dy = -80, -2.5
-        if p["name"] == "csm":
-            dx, dy = -50, -2.5
-        if p["name"] == "graphseg":
-            dx, dy = 60, -2.0
-        if p["name"] == "greedyseg":
-            dx, dy = 60, 1.0
-        ax.annotate(p["label"], xy=(p["n_tokens"], p["gpt4"]),
-                     xytext=(p["n_tokens"] + dx, p["gpt4"] + dy),
-                     fontsize=8.5, ha="left", zorder=4)
+    # Annotate ONLY the top-1 (avoid overlap clutter)
+    top1 = max(points, key=lambda p: p["y"])
+    ax.annotate(f"{top1['label']} ({top1['y']:.1f})",
+                (top1["x"], top1["y"]),
+                xytext=(top1["x"] + 200, top1["y"] - 0.5),
+                fontsize=8.5, ha="left", va="top",
+                arrowprops=dict(arrowstyle="-", color="#666", lw=0.6),
+                color="#222")
 
-    # Hi-Seg star highlight
-    ours = next(p for p in pts if p["name"] == "ours")
-    ax.scatter(ours["n_tokens"], ours["gpt4"], s=400, marker="*",
-                facecolor="#D62728", edgecolor="black", linewidth=1.0,
-                zorder=5)
-
-    ax.set_xscale("log")
-    ax.set_xlim(50, 50000)
-    ax.set_xlabel("Average # retrieved tokens per query (log scale)", fontsize=10)
-    ax.set_ylabel("GPT4Score (× 10)", fontsize=10)
-    ax.set_ylim(35, 85)
-    ax.grid(True, which="both", linestyle=":", alpha=0.35)
-    ax.set_title(
-        "Context-quality Pareto on Long-MT-Bench+\n"
-        "(Hi-Seg achieves baseline-LLM-level quality at low token budget)",
-        fontsize=10,
-    )
-    # legend disabled (labels are inline)
-    for s in ("top", "right"):
-        ax.spines[s].set_visible(False)
+    # Legend OUTSIDE plot to right
+    leg = ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5),
+                    frameon=False, fontsize=7.8, ncol=1,
+                    handlelength=1.0, labelspacing=0.32,
+                    handletextpad=0.4, borderaxespad=0)
 
     plt.tight_layout()
-    for ext in ("pdf", "png"):
-        out = OUT_DIR / f"pareto_qa_context.{ext}"
-        plt.savefig(out, dpi=200, bbox_inches="tight")
-        print(f"saved {out}")
+
+    pdf = OUT_DIR / "pareto_qa_context.pdf"
+    png = OUT_DIR / "pareto_qa_context.png"
+    fig.savefig(pdf, bbox_inches="tight", dpi=300)
+    fig.savefig(png, bbox_inches="tight", dpi=300)
+    plt.close(fig)
+    print(f"saved {pdf}")
+    print(f"saved {png}")
 
 
 if __name__ == "__main__":

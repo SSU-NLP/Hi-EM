@@ -237,6 +237,37 @@ Claude Code가 파일 1개를 수정·생성·삭제할 때마다 **다른 파�
 
 이유: vLLM 멈춤·STM 폭주·OOM·import error 등 silent failure가 발생해도 사용자가 모르고 기다리는 일을 막는다. 한 번 시작하고 던져두지 않는다.
 
+## Figure 저장 규칙 (최상위 강제 규칙, 2026-05-25)
+
+논문/리뷰용으로 노출되는 모든 figure 의 *canonical* 저장 위치는
+`outputs/figures/` 한 곳. 파일명은 **`figure_<알파벳>_<제목>.{pdf,png}`** 형식 통일.
+
+- **<알파벳>**: A, B, C, ... 순서. **새 figure 추가** 시 가장 작은 미사용
+  letter 부여. **기존 figure 수정·재생성** 시 동일 letter 유지 (PDF 캐시
+  refresh 위해 timestamp 만 갱신, letter 안 바꿈).
+- **<제목>**: snake_case, 그 figure 의 핵심 한 단어 (예: `latency_scatter`,
+  `pareto_qa_context`, `delta_eff_distribution`).
+- **PDF + PNG 둘 다** 저장 (PDF = paper 삽입, PNG = preview / Read tool).
+- experiment 디렉토리 (`outputs/experiments/<exp-name>/plots/`) 에 원본 generation 결과를 두는 건 OK 지만, paper 에 들어갈 *최종본* 은 반드시
+  `outputs/figures/` 로 copy. plot script 수정 → 재생성 → 자동으로
+  `outputs/figures/` 에 sync 까지 한 번에 해 줄 것 (사용자가 따로 안 시켜도).
+
+현재 letter assignment (참조):
+- A — `band_precision` (Hi-OnTop band precision)
+- B — `latency_scatter`
+- C — `timeline_tape_conv3` (Long-MT-Bench+ conv 3 timeline)
+- D — `boundary_density_*` (4 분량: downstream + DTS 3종)
+- E — `segment_length_violin`
+- F — `boundary_agreement`
+- G — `pareto_qa_context`
+- H — `calib_n_convergence_{main,appendix_oracle,appendix_sup}`
+- I — `delta_eff_distribution`
+- J 부터 미사용 — 새 figure 가 들어갈 자리.
+
+이유: figure 수정·인용 시 letter 가 결정적인 reference key. paper LaTeX
+`\ref{fig:I}` / 본문 "Figure I" 와 파일명이 즉시 매칭되어야 함. 다른 위치
+(plots/, reports/, 임시 dir) 에 흩어진 채로 paper 에 삽입 금지.
+
 ## 환경 분리
 
 - `setup_colab.ipynb`는 항상 `.gitignore` 유지. git에 커밋하지 않는다.

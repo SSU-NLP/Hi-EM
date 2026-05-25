@@ -1,6 +1,6 @@
 # v4.1.3 full HP sweep — segmentation Score
 
-2-phase sweep (interacting grid + OAT), tuned on `tiage/train` + `superseg/validation`, no test leakage.
+2-phase sweep (interacting grid + OAT), tuned on `tiage/train` + `superseg/validation` + a seeded `dialseg711` tune split.
 Metric: Score = 0.5·F1 + 0.25·(1−Pk) + 0.25·(1−WD), official SuperDialseg Pk/WD. Encoder = mpnet (cached).
 
 ## Phase 1 — interacting grid (ctx_window × ctx_decay × ctx_blend_a × δ*)
@@ -132,5 +132,5 @@ restart_pe_threshold=0.5
 
 ## 한계 / 검증 미해결
 - Phase-2 OAT 는 interaction 무시 (Phase-1 best 고정 후 1축씩). Phase-1 의 4 HP 외 상호작용은 미탐색.
-- dialseg711 은 train split 없음 → tuning 에 미반영, 순수 zero-shot. swept config 가 dialseg711 에서 회귀하면 overfit 신호.
+- dialseg711 은 official train split 이 없어 test dialogs 를 seeded 30% tune / 70% held-out 으로 나눔. 따라서 `dialseg711` test row 는 full official test 가 아니라 held-out split 이며, literature-comparable full-test 숫자로 직접 인용하면 안 됨.
 - superseg 는 validation (1322) 으로 tune, train(6948) 미사용 (인코딩 비용). validation = test 와 동일 크기라 대표성 OK.

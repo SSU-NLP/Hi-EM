@@ -18,7 +18,6 @@ import json
 import os
 from pathlib import Path
 
-from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
 from hi_em.secom_adapter import HiEMSecomSegmenter
@@ -58,6 +57,19 @@ def main() -> None:
         "--encoder",
         default="sentence-transformers/multi-qa-mpnet-base-dot-v1",
     )
+    ap.add_argument(
+        "--encoder_backend",
+        choices=["api", "local", "onnx"],
+        default="api",
+        help=(
+            "api = Crts /v1/embeddings (default); local = sentence-transformers; "
+            "onnx = sentence-transformers ONNX backend (e.g. MiniLM-int8)."
+        ),
+    )
+    ap.add_argument(
+        "--onnx_file", default="onnx/model_quint8_avx2.onnx",
+        help="ONNX file inside model repo (only for --encoder_backend onnx).",
+    )
     ap.add_argument("--delta_star", type=float, required=True)
     ap.add_argument("--dim", type=int, default=768)
     args = ap.parse_args()
@@ -68,7 +80,27 @@ def main() -> None:
     data = load_jsonl(Path(args.load_path))
     print(f"n_conv: {len(data)}")
 
-    encoder = SentenceTransformer(args.encoder)
+    if args.encoder_backend == "api":
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        from hi_em.embedding import make_encoder
+
+        encoder = make_encoder(backend="api", model=args.encoder)
+        print(f"encoder: Crts API ({args.encoder})")
+    else:
+        from sentence_transformers import SentenceTransformer
+
+        if args.encoder_backend == "onnx":
+            encoder = SentenceTransformer(
+                args.encoder, backend="onnx",
+                model_kwargs={"provider": "CPUExecutionProvider",
+                              "file_name": args.onnx_file},
+            )
+            print(f"encoder: ONNX ({args.encoder} :: {args.onnx_file})")
+        else:
+            encoder = SentenceTransformer(args.encoder)
+            print(f"encoder: local sentence-transformers ({args.encoder})")
     seg = HiEMSecomSegmenter(
         encoder=encoder,
         dim=args.dim,

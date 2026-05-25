@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """v4.1.3 full hyper-parameter sweep (segmentation Score).
 
-2-phase, no test leakage:
+2-phase sweep with explicit tune/held-out split for datasets lacking train:
 
 - **Phase 1 — interacting grid**: ``(ctx_window, ctx_decay, ctx_blend_a,
   delta_star)``. These four jointly shape the causal-window context vector
@@ -9,17 +9,17 @@
 - **Phase 2 — OAT**: every remaining HP swept one-at-a-time, holding the
   Phase-1 winner fixed.
 
-Tuning set (no leakage): ``tiage/train`` + ``superseg/validation`` +
-``dialseg711`` *tune half*. dialseg711 has no official train split, so its
-711-dialog test set is split 50/50 by a seeded shuffle — the tune half
-joins the tuning objective, the held-out half is the dialseg711 test row.
-Final report: ``tiage/test``, ``dialseg711/test-half``, ``superseg/test``.
+Tuning set: ``tiage/train`` + ``superseg/validation`` + ``dialseg711`` tune
+split. dialseg711 has no official train split, so its 711-dialog test set is
+split 30/70 by a seeded shuffle — the 30% tune split joins the tuning
+objective, and the 70% held-out split is the dialseg711 report row.
+Final report: ``tiage/test``, ``dialseg711`` held-out split, ``superseg/test``.
 
 Metric: official SuperDialseg Pk/WD (k=auto) + binary F1,
 ``Score = 0.5·F1 + 0.25·(1−Pk) + 0.25·(1−WD)``. Embeddings = cached
 mpnet pkl (``outputs/runs/_misc/sds_emb_*``).
 
-Tuning objective = mean Score over the two tuning sets.
+Tuning objective = mean Score over the tuning sets.
 """
 
 from __future__ import annotations
@@ -187,7 +187,7 @@ def main() -> None:
 
     # ---- load tuning + test sets ----
     print("[load] tuning + test sets", flush=True)
-    # dialseg711: no official train → 50/50 seeded split.
+    # dialseg711: no official train → 30/70 seeded split.
     ds711_dia = load_dialogs("dialseg711", "test")
     ds711_emb = load_embs("dialseg711", "test")
     (ds711_tune, ds711_test) = split_frac(ds711_dia, ds711_emb, tune_frac=0.30, seed=0)
@@ -202,7 +202,7 @@ def main() -> None:
         print(f"  tune/{n}: {len(d)} dialogs", flush=True)
     test_sets = {
         "tiage": (load_dialogs("tiage", "test"), load_embs("tiage", "test")),
-        "dialseg711": ds711_test,  # held-out half (disjoint from dialseg711_tune)
+        "dialseg711": ds711_test,  # held-out split (disjoint from dialseg711_tune)
         "superseg": (load_dialogs("superseg", "test"), load_embs("superseg", "test")),
     }
     for n, (d, e) in test_sets.items():
@@ -300,7 +300,7 @@ def main() -> None:
 def _write_report(exp_dir: Path, R: dict) -> None:
     L = ["# v4.1.3 full HP sweep — segmentation Score", "",
          "2-phase sweep (interacting grid + OAT), tuned on "
-         "`tiage/train` + `superseg/validation`, no test leakage.",
+         "`tiage/train` + `superseg/validation` + a seeded `dialseg711` tune split.",
          "Metric: Score = 0.5·F1 + 0.25·(1−Pk) + 0.25·(1−WD), official "
          "SuperDialseg Pk/WD. Encoder = mpnet (cached).", ""]
     bp = R.get("phase1_best", {})
@@ -353,8 +353,10 @@ def _write_report(exp_dir: Path, R: dict) -> None:
           "## 한계 / 검증 미해결",
           "- Phase-2 OAT 는 interaction 무시 (Phase-1 best 고정 후 1축씩). "
           "Phase-1 의 4 HP 외 상호작용은 미탐색.",
-          "- dialseg711 은 train split 없음 → tuning 에 미반영, 순수 zero-shot. "
-          "swept config 가 dialseg711 에서 회귀하면 overfit 신호.",
+          "- dialseg711 은 official train split 이 없어 test dialogs 를 seeded "
+          "30% tune / 70% held-out 으로 나눔. 따라서 `dialseg711` test row 는 "
+          "full official test 가 아니라 held-out split 이며, literature-comparable "
+          "full-test 숫자로 직접 인용하면 안 됨.",
           "- superseg 는 validation (1322) 으로 tune, train(6948) 미사용 "
           "(인코딩 비용). validation = test 와 동일 크기라 대표성 OK.",
           ""]

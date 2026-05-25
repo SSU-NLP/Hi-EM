@@ -12,9 +12,11 @@ machinery is **inert** with respect to the segmentation output:
   ``f0_min_starts >= 2`` and never fires;
 - the SEM2 variance machinery (per-topic ``sigma_k^2``,
   scaled-inverse-chi^2 posterior) feeds only the dead f0 likelihood;
-- the sticky-CRP prior weights (``alpha``/``lmda``) and the fixed
-  softness temperature ``sigma_delta^2`` cancel out of the
-  repeat-vs-fresh argmax (by design of ``_fresh_baseline_for_prev``).
+- the sticky-CRP prior weight ``alpha`` and the default/canonical
+  stickiness setting cancel out of the repeat-vs-fresh argmax (by design
+  of ``_fresh_baseline_for_prev``). Very low ``lmda`` values in the
+  archived full form can still affect rare non-prev fallback choices, so
+  ``lmda`` is not claimed as globally dead.
 
 Verified empirically: every one of those hyper-parameters produces
 byte-identical segmentation output across its full range. The Bayesian
@@ -48,7 +50,14 @@ from the main model because it is provably degenerate here.
 Output parity
 -------------
 ``HiDoTS.assign`` is byte-identical to ``HiEMSegmenterV413.assign`` under
-v4.1.3 default settings (verified on TIAGE / Dialseg711 / SuperDialseg).
+matched HP. Verified turn-for-turn (0 differing turns over 38,242 turns)
+at the canonical config ``m=2, rho=0.7, a=0.5, delta*=0.5594`` on
+TIAGE / Dialseg711 / SuperDialseg — see
+``scripts/verify_hidots_parity.py`` and
+``outputs/experiments/2026-05-22_hidots_parity/``. ``ctx_window`` default
+is ``2`` (this canonical config); the v4.1.x code default was ``3``, but
+the reported v4.1.x numbers (TIAGE 0.4675 / Dialseg711 0.5897 /
+SuperDialseg 0.4631) were produced at ``m=2``.
 
 Graded boundary score
 ---------------------
@@ -79,7 +88,8 @@ class HiDoTS:
             when delta_eff >= delta_star. Encoder/dataset-dependent — must
             be calibrated on a held-out set.
         ctx_window: m, number of past utterances in the causal context
-            vector.
+            vector. Default 2 — the canonical TIAGE-calibrated config
+            that produced the reported v4.1.x scores.
         ctx_decay: rho, geometric decay of the causal window (more recent
             utterances weighted higher).
         ctx_blend_a: a, blend weight delta_eff = a*delta_prev +
@@ -93,7 +103,7 @@ class HiDoTS:
         self,
         dim: int,
         delta_star: float = 0.5594,
-        ctx_window: int = 3,
+        ctx_window: int = 2,
         ctx_decay: float = 0.7,
         ctx_blend_a: float = 0.5,
     ) -> None:

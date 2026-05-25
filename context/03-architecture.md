@@ -130,6 +130,27 @@ tests/
 baseline 의 원본(offline)·Hi-EM 수정본(online, prefix-causal) 진입점 정리.
 범위: TextTiling, BayesSeg. 방식 A(wrapper, benchmarks 무복사·read-only 유지).
 - `methods/texttiling/{offline,online}.py`, `methods/bayesseg/{offline,online}.py`, `methods/README.md`
+- 이후 확장: `methods/greedyseg/online_delay2.py`, `methods/graphseg/online_window.py`
 - offline=전체대화(원본 알고리즘 호출), online=`scripts/run_*_prefix.py`(검증본) 실행 진입점
 - 동일 harness: Def-DTS 번들 데이터 + autoseg Pk/WD/F1 + Score. online=AUXILIARY(codex). 산출 outputs/experiments/<name>/REPORT.md
+- **`methods/RoBERTa/{offline/train.py, online/segment.py}`** (2026-05-23 신규)
+  — supervised RoBERTa 분절기 (Coldog2333/SuperDialseg EMNLP 2023 Table 3
+  `RoBERTa` 충실 재현). `offline` = 학습+평가, 경계마다 미래 포함 ~20 윈도우
+  logit 평균. `online` = offline 체크포인트 재사용, 추론만 strict causal —
+  경계 (t-1,t) 를 turn t 시점 causal 윈도우 하나로 1회 결정 (미래 0).
+  harness 예외 — SuperDialseg 번들 데이터 + 논문 official Pk/WD metric.
+  결과 → `outputs/experiments/2026-05-23_roberta_{supervised,online}/`.
 decision-log 2026-05-20 참조.
+
+## src/hi_em/ segmenter 모델 (2026-05-23 갱신)
+
+```
+src/hi_em/
+├── hi_dots.py       # HiDoTS — 현 main DTS 모델 (v4.1.x reduced form, commit 326b86b)
+└── hi_dots_v2.py    # HiDoTSV2(HiDoTS) — lexical-overlap 보정 변형 (검증 대기, 2026-05-23)
+```
+
+- `HiDoTSV2` = `HiDoTS` + TextTiling 식 단어-빈도 겹침 보정항. `w_lex=0` 시 v1 과
+  byte-parity. 설계·결과 → `context/methodology/hi-dots-v2.md`, decision-log 2026-05-23.
+- 실험 entry: `scripts/run_hidots_v2.py` → `outputs/experiments/2026-05-23_hidots_v2/`.
+- 현재 main 모델은 `HiDoTS` 유지 — `HiDoTSV2` 는 v1 대체 승격 보류 (검증 대기).

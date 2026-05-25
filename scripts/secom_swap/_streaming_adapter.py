@@ -26,11 +26,30 @@ class StreamingSegmentLatency:
     push_sec: float = 0.0
     flush_sec: float = 0.0
     total_sec: float = 0.0
+    neural_sec: float = 0.0       # legacy = pure neural-forward (kept for back-compat)
+    preprocess_sec: float = 0.0   # everything before the segmentation decision
+                                  # (tokenization, BoW, POS, GloVe lookup, neural fwd, …)
     per_turn: list[float] = field(default_factory=list)
 
     @property
     def ms_per_exchange(self) -> float:
         return self.total_sec * 1000 / max(1, self.n_exchanges)
+
+    @property
+    def ms_per_exchange_neural(self) -> float:
+        return self.neural_sec * 1000 / max(1, self.n_exchanges)
+
+    @property
+    def ms_per_exchange_logic(self) -> float:
+        return (self.total_sec - self.neural_sec) * 1000 / max(1, self.n_exchanges)
+
+    @property
+    def ms_per_exchange_preprocess(self) -> float:
+        return self.preprocess_sec * 1000 / max(1, self.n_exchanges)
+
+    @property
+    def ms_per_exchange_segdecision(self) -> float:
+        return (self.total_sec - self.preprocess_sec) * 1000 / max(1, self.n_exchanges)
 
     def asdict(self) -> dict[str, Any]:
         import numpy as np
@@ -40,8 +59,14 @@ class StreamingSegmentLatency:
             "push_sec": self.push_sec,
             "flush_sec": self.flush_sec,
             "total_sec": self.total_sec,
+            "neural_sec": self.neural_sec,
+            "preprocess_sec": self.preprocess_sec,
             "ms_per_exchange": self.ms_per_exchange,
             "ms_per_exchange_segment_only": self.ms_per_exchange,
+            "ms_per_exchange_neural": self.ms_per_exchange_neural,
+            "ms_per_exchange_logic": self.ms_per_exchange_logic,
+            "ms_per_exchange_preprocess": self.ms_per_exchange_preprocess,
+            "ms_per_exchange_segdecision": self.ms_per_exchange_segdecision,
             "per_turn_p50_ms": float(np.median(self.per_turn)) * 1000 if self.per_turn else 0.0,
             "per_turn_p95_ms": float(np.percentile(self.per_turn, 95)) * 1000 if self.per_turn else 0.0,
             "per_turn_max_ms": float(np.max(self.per_turn)) * 1000 if self.per_turn else 0.0,
@@ -108,6 +133,16 @@ def run_streaming_segmenter(
         final = seg.flush()
         lat.flush_sec += time.perf_counter() - t_flush
         confirmed.extend(final)
+        lat.neural_sec += float(getattr(seg, "_neural_sec", 0.0))
+        # Preprocess = all work before the segmentation decision (tokenization,
+        # stopword/POS filter, BoW, GloVe lookup, neural fwd). Baselines that
+        # already split this explicitly expose _preprocess_sec; for those where
+        # the only preprocess IS the neural forward (GreedySeg/CSM/Hi-DoTS), we
+        # fall back to _neural_sec so the semantic is consistent.
+        lat.preprocess_sec += float(
+            getattr(seg, "_preprocess_sec",
+                    getattr(seg, "_neural_sec", 0.0))
+        )
         segments.extend(session_segments_from_boundaries(sess, confirmed))
     lat.total_sec = time.perf_counter() - t_total
     return segments, lat

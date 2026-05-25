@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -78,6 +79,11 @@ class GraphSegWindowD:
     _glove: Optional[dict[str, np.ndarray]] = field(default=None, init=False)
     _glove_dim: int = field(default=300, init=False)
     _ic_table: Optional[dict[str, float]] = field(default=None, init=False)
+    _neural_sec: float = field(default=0.0, init=False)  # cumulative GloVe vector-op time
+    # Preprocess = tokenize·POS·stopword·GloVe lookup·IC map·vector stack (everything
+    # *before* the similarity-graph computation). Cosine matrix·clique·merge stay
+    # outside this counter — those are the segmentation decision logic.
+    _preprocess_sec: float = field(default=0.0, init=False)
 
     def __post_init__(self) -> None:
         if self.freq_source not in ("brown", "none"):
@@ -125,21 +131,30 @@ class GraphSegWindowD:
             self._ic_table = _build_ic_table(self.freq_source)
 
     def _prepare_utt(self, text: str) -> tuple[list[str], dict[str, float]]:
+        # All of _prepare_utt is preprocess (tokenization → POS → stopword →
+        # GloVe-membership lookup → IC-weight lookup). Wrap the whole thing
+        # so we don't have to chase every branch.
+        _pp0 = time.perf_counter()
         toks_all = _tokenize(text)
         if self.use_pos_filter and toks_all:
             import nltk
             tags = nltk.pos_tag(toks_all)
+            _t0 = time.perf_counter()
             kept = [w for (w, t) in tags
                     if t in _CONTENT_TAGS and w not in self.stop_words
                     and len(w) > 1 and w in self._glove]
+            self._neural_sec += time.perf_counter() - _t0
         else:
+            _t0 = time.perf_counter()
             kept = [w for w in toks_all
                     if w not in self.stop_words and len(w) > 1
                     and w in self._glove]
+            self._neural_sec += time.perf_counter() - _t0
         # ic_map: 단어별 IC weight (1회 lookup 후 cache)
         ic_map: dict[str, float] = {}
         for w in set(kept):
             ic_map[w] = self._ic_table.get(w, self._ic_table.get("__UNK__", 1.0))
+        self._preprocess_sec += time.perf_counter() - _pp0
         return kept, ic_map
 
     def _utt_pair_similarity(self, i: int, j: int) -> float:
@@ -151,12 +166,20 @@ class GraphSegWindowD:
             return 0.0
         # 비용행렬: 1 - ic_weighted_cosine
         n, m = len(ti), len(tj)
+        # neural-forward: GloVe vector lookup + stack + cosine ops (legacy timer)
+        _t0 = time.perf_counter()
+        # Preprocess: GloVe vector LOOKUP (fetch d-dim vectors per kept token).
+        # The lookup is the last "preprocess" step per Hi-EM's column definition;
+        # the cosine matrix that follows belongs to the similarity-graph segmentation.
+        _pp0 = time.perf_counter()
         vec_i = np.stack([self._glove[w] for w in ti])  # (n, d)
         vec_j = np.stack([self._glove[w] for w in tj])  # (m, d)
-        # cosine matrix (n × m)
+        self._preprocess_sec += time.perf_counter() - _pp0
+        # cosine matrix (n × m) — similarity graph edge weights (segmentation logic)
         nn = vec_i / (np.linalg.norm(vec_i, axis=1, keepdims=True) + 1e-12)
         mm = vec_j / (np.linalg.norm(vec_j, axis=1, keepdims=True) + 1e-12)
         cos = nn @ mm.T  # (n, m)
+        self._neural_sec += time.perf_counter() - _t0
         # IC weight per pair = min(ic_i, ic_j) — Glavaš 식 변형 (보존적)
         ic_i = np.array([self._utt_word_ic[i][w] for w in ti])
         ic_j = np.array([self._utt_word_ic[j][w] for w in tj])

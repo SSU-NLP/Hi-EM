@@ -82,6 +82,9 @@ outputs/experiments/*/*/*/exit_code.txt
 outputs/experiments/*/*/working_state/
 outputs/experiments/*/*/rounds/
 outputs/experiments/*/*/checkpoints/
+# trained model checkpoints (e.g. methods/RoBERTa/offline/train.py)
+outputs/experiments/*/model/
+outputs/experiments/*/*/model/
 
 # General catch-all for raw experiment artifacts wherever they appear
 **/working_state/
@@ -108,3 +111,12 @@ dd_extract/
 
 # secom-swap intermediate temp config (auto-regenerated)
 benchmarks/SeCom/secom/configs/_*_only_tmp.yaml
+
+# Model checkpoints (download externally, do not commit)
+methods/RoBERTa/_roberta_unzip/
+methods/CSM/*.pth
+methods/CSM/*.safetensors
+
+# Embedding caches
+outputs/experiments/2026-05-25_llm_distillation_calib/*.pkl
+outputs/experiments/*/emb_*.pkl

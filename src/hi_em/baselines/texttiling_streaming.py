@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -107,6 +108,8 @@ class StreamingTextTiling:
     _welf: _Welford = field(default_factory=_Welford, init=False)
     _t: int = field(default=0, init=False)  # 누적 utterance 수 (1-based after push)
     _last_boundary_t: int = field(default=-(10**9), init=False)
+    _neural_sec: float = field(default=0.0, init=False)  # no neural component → always 0.0
+    _preprocess_sec: float = field(default=0.0, init=False)  # tokenize + stopword + BoW (Counter)
 
     # ------------------------------------------------------------------ api
     def push(self, utterance: str) -> list[int]:
@@ -121,14 +124,18 @@ class StreamingTextTiling:
         시점에 완전한 boundary 집합을 얻는다.
         """
         self._t += 1
+        # Preprocess: 토큰화·불용어 제거 → bag-of-words (Counter) 누적.
+        # 결정 로직(block-cosine depth + threshold) 전 단계 비용 전부를 묶음.
+        _pp0 = time.perf_counter()
         toks = _tokenize(utterance, self.stop_words)
         new_boundaries: list[int] = []
 
-        # 1) 토큰 누적 + pseudo-sentence close
+        # 1) 토큰 누적 + pseudo-sentence close (Counter 생성 = BoW 벡터)
         for tok in toks:
             self._tok_buf.append(tok)
             if len(self._tok_buf) >= self.w:
                 self._close_pseudo_sentence()
+        self._preprocess_sec += time.perf_counter() - _pp0
 
         # 2) 평가 가능한 새 gap 들을 처리 + boundary candidate 결정
         j = len(self._ps_tf) - 1  # 최신 pseudo-sentence index

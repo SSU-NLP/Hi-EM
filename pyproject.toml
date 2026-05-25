@@ -30,6 +30,9 @@ dependencies = [
     "segeval>=2.0.11",
     "networkx>=3.4.2",
     "scipy>=1.15.3",
+    "optimum>=2.1.0",
+    "onnxruntime>=1.24.3",
+    "optimum-onnx>=0.1.0",
 ]
 
 [dependency-groups]

@@ -11,6 +11,7 @@ codex:rescue 2026-05-20/21 검증 = "본질 보존, 강한 online 명명 OK".
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -61,6 +62,7 @@ class GreedySegOnlineDelay2:
     _model: object = field(default=None, init=False)
     _bert_forwards: int = field(default=0, init=False)
     _last_boundary: int = field(default=0, init=False)
+    _neural_sec: float = field(default=0.0, init=False)  # cumulative BERT-forward time
 
     def __post_init__(self) -> None:
         # device 문자열 형식만 sanity-check (실제 torch 가용성은 lazy)
@@ -126,10 +128,12 @@ class GreedySegOnlineDelay2:
             text or ".", return_tensors="pt", truncation=True,
             max_length=self.max_seq_length, padding=False)
         toks = {k: v.to(self._device_resolved) for k, v in toks.items()}
+        _t0 = time.perf_counter()
         with torch.inference_mode():
             out = self._model(**toks)
         # [CLS] = last_hidden_state[:, 0, :]
         cls = out.last_hidden_state[0, 0].detach().to("cpu").float().numpy()
+        self._neural_sec += time.perf_counter() - _t0
         self._bert_forwards += 1
         return cls
 
