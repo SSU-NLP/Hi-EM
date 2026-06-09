@@ -232,6 +232,13 @@ Colab 학습은 `colab_csm_train.ipynb` `[2b]` 셀로 zip 업로드 → 자동 �
 > QA 벤치(LoCoMo/LongMemEval 등)는 위 "벤치마크 4종" 참조 — 본 DTS
 > 안내 범위 밖.
 
+**6) 참고용 레포 (clone 불필요 — 코드 읽기/비교 전용)**
+
+| 레포 | 용도 |
+|---|---|
+| https://github.com/flippedAben/texttiling | TextTiling online 구현 참고 (ELMo 유/무 버전, UT Austin 2019). 알고리즘 구조 비교용. |
+| https://github.com/KoljaB/RealtimeSTT | 실시간 STT 라이브러리. 평가 데이터는 자체 제작 WAV(`tests/unit/audio/asr-reference.wav`) 1개만 사용. |
+
 ---
 
 ## 빠른 시작

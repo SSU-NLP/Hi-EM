@@ -5,6 +5,20 @@
 정직히 표기**하고 (paper 인용 / 우리 측정 / pending), harness 차이 (데이터·
 metric) 가 있는 비교는 footnote 로 명시한다.
 
+## 0. 인코더 설정 (Hi-OnTop)
+
+세 가지 sentence encoder 비교 (속도 ↔ 표현력 trade-off):
+
+| 인코더 | 모델 ID | 차원 | 백엔드 | encoder latency (ms/turn) |
+|---|---|---:|---|---:|
+| **MPNet** | `sentence-transformers/multi-qa-mpnet-base-dot-v1` | 768 | sentence-transformers (PyTorch fp32) | 129.640 |
+| **MiniLM** | `sentence-transformers/all-MiniLM-L6-v2` | 384 | sentence-transformers (PyTorch fp32) | 59.160 |
+| **MiniLM-int8** | `sentence-transformers/all-MiniLM-L6-v2` (ONNX `model_quint8_avx2.onnx`) | 384 | ONNX Runtime CPU (int8 quantized) | 11.700 |
+
+Hi-OnTop HP 동일: ctx_window m=2, decay ρ=0.7, blend a=0.5.
+
+δ\* 절대값은 인코더별 distribution 영역이 다르므로 **인코더마다 재calibration 필수** — δ_eff 분포의 percentile (label-free) 만 transferable. (§3.3 Observation 1 참조, Figure J cross-encoder percentile mapping 그림으로 검증.)
+
 ## 1. δ\* calibration (사용자 제공 — 참조용)
 
 ```latex
@@ -49,8 +63,41 @@ metric) 가 있는 비교는 footnote 로 명시한다.
 
 출처:
 - 표 안의 **p80 / best** 값 = `outputs/experiments/2026-05-23_encoder_comparison/REPORT.md`.
-- 표 caption 에서 언급된 **test-side oracle** 값 = `outputs/experiments/2026-05-24_hidots_oracle_best/REPORT.md` (cached embeddings 으로 fresh 재계산).
+- 표 caption 에서 언급된 **test-side oracle** 값 = `outputs/experiments/2026-05-24_hiontop_oracle_best/REPORT.md` (cached embeddings 으로 fresh 재계산).
 - 이전 버전의 본 표는 "oracle" 컬럼 라벨로 표시했으나 실제 값은 **train-side best** 였음 (2026-05-24 라벨 정정).
+
+### 1.1 Label-free LLM-distillation calibration (별도 경로, 참조용)
+
+위 §1 (DTS supervised tuning) 과는 **다른 calibration 경로** — MTB+ 전체
+(n=666 δ_eff) 에서 LLM segmenter (GPT-5 / Qwen3.5-27B / Qwen3.5-122B-A10B)
+의 boundary 를 pseudo-label 로 두고 percentile p ∈ [60,80] (1-step) sweep,
+pairwise F1 최대화. 인코더 × LLM ref 별 수렴된 best_p / δ\* / F1:
+
+| Encoder | LLM Ref | best_p | δ\* | F1 |
+|:--------|:--------|------:|------:|------:|
+| MPNet       | GPT-5             | 73 | 0.5037 | 0.920 |
+| MPNet       | Qwen3.5-27B       | 71 | 0.4854 | 0.918 |
+| MPNet       | Qwen3.5-122B-A10B | 71 | 0.4854 | 0.917 |
+| MiniLM      | GPT-5             | 72 | 0.7638 | 0.921 |
+| MiniLM      | Qwen3.5-27B       | 72 | 0.7638 | 0.922 |
+| MiniLM      | Qwen3.5-122B-A10B | 72 | 0.7638 | 0.913 |
+| MiniLM-int8 | GPT-5             | 72 | 0.7678 | 0.914 |
+| MiniLM-int8 | Qwen3.5-27B       | 72 | 0.7678 | 0.916 |
+| MiniLM-int8 | Qwen3.5-122B-A10B | 68 | 0.6511 | 0.909 |
+
+요지:
+- best_p 가 **71–73 에 집중** (인코더·LLM ref 무관). out-of-distribution
+  selection (§1 의 DTS-기반 p70/p80) 과 in-distribution LLM-distill best_p
+  가 거의 일치 → 본 표 p70 / p80 행 (§2) 의 단일-값 선택이 robust.
+- δ\* 절대값은 인코더 마다 다름 (MPNet ≈ 0.49, MiniLM/int8 ≈ 0.76) — bounded
+  cosine 분포 영역 차이 (§3.3 Observation 1).
+- F1 ≥ 0.91 across all 9 cells → LLM-distill best_p 가 robust converged
+  point. Fig P (`outputs/figures/figure_P_distill_n_convergence_mtbp.{pdf,
+  png}`) 가 이 수렴 곡선.
+
+출처: `outputs/experiments/2026-05-25_llm_distillation_calib/results.json`.
+LaTeX 표 source 는 `outputs/reports/downstream_task.md` § Label-free
+calibration 결과 참조 (중복 보관 회피).
 
 ---
 
@@ -84,8 +131,8 @@ metric) 가 있는 비교는 footnote 로 명시한다.
 & Pre. & Seg. \\
 \midrule
 
-\multirow{15}{*}{\textbf{Online}}
-& \multirow{14}{*}{\textit{Unsupervised}}
+\multirow{21}{*}{\textbf{Online}}
+& \multirow{20}{*}{\textit{Unsupervised}}
 & TextTiling-Style$^{\ast}$ & 0.527 & 0.548 & 0.225 & 0.344 & 0.471 & 0.490 & 0.271 & 0.395 & 0.462 & 0.467 & 0.262 & 0.399 & 0.020   & 0.013 \\
 & & GraphSeg-Style$^{\ast}$  & 0.493 & 0.516 & 0.252 & 0.374 & 0.449 & 0.482 & 0.366 & 0.450 & 0.539 & 0.542 & 0.164 & 0.312 & 4.818   & 1.309 \\
 & & GreedySeg-Style$^{\ast}$ & 0.537 & 0.554 & 0.142 & 0.298 & 0.416 & 0.443 & 0.412 & 0.491 & 0.507 & 0.511 & 0.278 & 0.384 & 232.230 & 2.611 \\
@@ -97,11 +144,25 @@ metric) 가 있는 비교는 footnote 로 명시한다.
 & & Ours (MPNet, sup)$^{\star}$      & 0.446 & 0.499 & 0.378 & 0.453 & 0.285 & 0.321 & 0.562 & 0.630 & 0.471 & 0.546 & 0.434 & 0.463 & 129.640 & 0.042 \\
 & & Ours (MPNet, oracle)$^{\ddagger}$ & 0.439 & 0.529 & 0.429 & 0.473 & 0.285 & 0.321 & 0.562 & 0.630 & 0.469 & 0.556 & 0.441 & 0.464 & 129.640 & 0.043 \\
 \cmidrule(l){3-17}
+& & Ours (MiniLM, p60)       & 0.441 & 0.567 & 0.444 & 0.470 & 0.405 & 0.575 & 0.480 & 0.495 & 0.500 & 0.591 & 0.402 & \textbf{0.429} & 59.160 & 0.290 \\
+& & Ours (MiniLM, p70)       & 0.423 & 0.516 & 0.439 & \textbf{0.485} & 0.347 & 0.460 & 0.526 & 0.561 & 0.521 & 0.573 & 0.351 & 0.402 & 59.160 & 0.290 \\
+& & Ours (MiniLM, p80)       & 0.423 & 0.469 & 0.385 & 0.469 & 0.308 & 0.366 & 0.545 & \textbf{0.604} & 0.530 & 0.556 & 0.287 & 0.372 & 59.160 & 0.290 \\
+& & Ours (MiniLM, sup)$^{\star}$      & 0.421 & 0.469 & 0.394 & 0.475 & 0.305 & 0.347 & 0.544 & 0.609 & 0.491 & 0.609 & 0.419 & 0.435 & 59.160 & 0.290 \\
+& & Ours (MiniLM, oracle)$^{\ddagger}$ & 0.425 & 0.524 & 0.444 & 0.485 & 0.305 & 0.347 & 0.544 & 0.609 & 0.481 & 0.630 & 0.432 & 0.438 & 59.160 & 0.290 \\
+\cmidrule(l){3-17}
 & & Ours (MiniLM-int8, p60)  & 0.444 & 0.569 & 0.446 & 0.470 & 0.397 & 0.556 & 0.482 & 0.503 & 0.506 & 0.594 & 0.395 & \textbf{0.423} & 11.700 & 0.049 \\
 & & Ours (MiniLM-int8, p70)  & 0.419 & 0.507 & 0.442 & 0.489 & 0.342 & 0.449 & 0.528 & 0.566 & 0.523 & 0.574 & 0.350 & 0.401 & 11.700 & 0.069 \\
 & & Ours (MiniLM-int8, p80)  & 0.404 & 0.458 & 0.416 & \textbf{0.493} & 0.307 & 0.365 & 0.551 & \textbf{0.607} & 0.532 & 0.555 & 0.273 & 0.365 & 11.700 & 0.050 \\
 & & Ours (MiniLM-int8, sup)$^{\star}$      & 0.419 & 0.497 & 0.426 & 0.484 & 0.294 & 0.332 & 0.543 & 0.615 & 0.479 & 0.666 & 0.440 & 0.434 & 11.700 & 0.039 \\
 & & Ours (MiniLM-int8, oracle)$^{\ddagger}$ & 0.418 & 0.507 & 0.440 & 0.489 & 0.295 & 0.342 & 0.550 & 0.616 & 0.480 & 0.648 & 0.436 & 0.436 & 11.700 & 0.044 \\
+\cmidrule(l){3-17}
+& & Ours (Granite-int8, p60)$^{\S}$ & 0.453 & 0.584 & 0.397 & 0.439 & 0.414 & 0.572 & 0.468 & 0.488 & 0.494 & 0.581 & 0.409 & 0.436 & -- & -- \\
+& & Ours (Granite-int8, p70)$^{\S}$ & 0.460 & 0.549 & 0.369 & 0.432 & 0.361 & 0.458 & 0.505 & 0.548 & 0.500 & 0.546 & 0.379 & 0.428 & -- & -- \\
+& & Ours (Granite-int8, p80)$^{\S}$ & 0.452 & 0.498 & 0.329 & 0.427 & 0.321 & 0.372 & 0.515 & 0.584 & 0.511 & 0.532 & 0.316 & 0.397 & -- & -- \\
+\cmidrule(l){3-17}
+& & Ours (Para-Multi-int8, p60)$^{\P}$ & 0.455 & 0.584 & 0.403 & 0.442 & 0.395 & 0.556 & 0.480 & 0.502 & 0.503 & 0.607 & 0.399 & 0.422 & -- & -- \\
+& & Ours (Para-Multi-int8, p70)$^{\P}$ & 0.437 & 0.521 & 0.383 & 0.452 & 0.345 & 0.444 & 0.512 & 0.559 & 0.513 & 0.576 & 0.367 & 0.411 & -- & -- \\
+& & Ours (Para-Multi-int8, p80)$^{\P}$ & 0.436 & 0.486 & 0.321 & 0.430 & 0.316 & 0.368 & 0.516 & 0.587 & 0.518 & 0.552 & 0.312 & 0.389 & -- & -- \\
 \addlinespace
 \cmidrule(l){3-17}
 
@@ -110,7 +171,7 @@ metric) 가 있는 비교는 footnote 로 명시한다.
 
 \midrule
 
-\multirow{5}{*}{\textbf{Offline}}
+\multirow{6}{*}{\textbf{Offline}}
 & \multirow{4}{*}{\textit{Unsupervised}}
 & TextTiling$^{\dagger}$ & 0.469 & 0.488 & 0.204 & 0.363 & 0.470 & 0.493 & 0.425 & 0.482 & 0.441 & 0.453 & 0.388 & 0.471 & -- & -- \\
 & & GraphSeg$^{\dagger}$  & 0.496 & 0.515 & 0.238 & 0.366 & 0.412 & 0.442 & 0.392 & 0.483 & 0.450 & 0.454 & 0.249 & 0.398 & -- & -- \\
@@ -154,11 +215,22 @@ CSM-Style row: \texttt{methods/CSM/cpt\_277000.pth} (lxing532 CoherenceNet, bert
 | Unsup. | **Ours (p80, MPNet)** | 0.449 | 0.480 | 0.326 | 0.431 | 0.299 | 0.353 | 0.558 | **0.616** | 0.482 | 0.506 | 0.342 | 0.424 | 129.640 | 0.052 |
 | Unsup. | Ours (sup, MPNet)$^★$ | 0.446 | 0.499 | 0.378 | 0.453 | 0.285 | 0.321 | 0.562 | 0.630 | 0.471 | 0.546 | 0.434 | 0.463 | 129.640 | 0.042 |
 | Unsup. | Ours (oracle, MPNet)$^‡$ | 0.439 | 0.529 | 0.429 | 0.473 | 0.285 | 0.321 | 0.562 | 0.630 | 0.469 | 0.556 | 0.441 | 0.464 | 129.640 | 0.043 |
+| Unsup. | **Ours (p60, MiniLM)** | 0.441 | 0.567 | 0.444 | 0.470 | 0.405 | 0.575 | 0.480 | 0.495 | 0.500 | 0.591 | 0.402 | **0.429** | 59.160 | 0.290 |
+| Unsup. | **Ours (p70, MiniLM)** | 0.423 | 0.516 | 0.439 | **0.485** | 0.347 | 0.460 | 0.526 | 0.561 | 0.521 | 0.573 | 0.351 | 0.402 | 59.160 | 0.290 |
+| Unsup. | **Ours (p80, MiniLM)** | 0.423 | 0.469 | 0.385 | 0.469 | 0.308 | 0.366 | 0.545 | **0.604** | 0.530 | 0.556 | 0.287 | 0.372 | 59.160 | 0.290 |
+| Unsup. | Ours (sup, MiniLM)$^★$ | 0.421 | 0.469 | 0.394 | 0.475 | 0.305 | 0.347 | 0.544 | 0.609 | 0.491 | 0.609 | 0.419 | 0.435 | 59.160 | 0.290 |
+| Unsup. | Ours (oracle, MiniLM)$^‡$ | 0.425 | 0.524 | 0.444 | 0.485 | 0.305 | 0.347 | 0.544 | 0.609 | 0.481 | 0.630 | 0.432 | 0.438 | 59.160 | 0.290 |
 | Unsup. | **Ours (p60, MiniLM-int8)** | 0.444 | 0.569 | 0.446 | 0.470 | 0.397 | 0.556 | 0.482 | 0.503 | 0.506 | 0.594 | 0.395 | **0.423** | 11.700 | 0.049 |
 | Unsup. | **Ours (p70, MiniLM-int8)** | 0.419 | 0.507 | 0.442 | 0.489 | 0.342 | 0.449 | 0.528 | 0.566 | 0.523 | 0.574 | 0.350 | 0.401 | 11.700 | 0.069 |
 | Unsup. | **Ours (p80, MiniLM-int8)** | 0.404 | 0.458 | 0.416 | **0.493** | 0.307 | 0.365 | 0.551 | **0.607** | 0.532 | 0.555 | 0.273 | 0.365 | 11.700 | 0.050 |
 | Unsup. | Ours (sup, MiniLM-int8)$^★$ | 0.419 | 0.497 | 0.426 | 0.484 | 0.294 | 0.332 | 0.543 | 0.615 | 0.479 | 0.666 | 0.440 | 0.434 | 11.700 | 0.039 |
 | Unsup. | Ours (oracle, MiniLM-int8)$^‡$ | 0.418 | 0.507 | 0.440 | 0.489 | 0.295 | 0.342 | 0.550 | 0.616 | 0.480 | 0.648 | 0.436 | 0.436 | 11.700 | 0.044 |
+| Unsup. | **Ours (Granite-int8, p60)**$^§$ | 0.453 | 0.584 | 0.397 | 0.439 | 0.414 | 0.572 | 0.468 | 0.488 | 0.494 | 0.581 | 0.409 | 0.436 | — | — |
+| Unsup. | **Ours (Granite-int8, p70)**$^§$ | 0.460 | 0.549 | 0.369 | 0.432 | 0.361 | 0.458 | 0.505 | 0.548 | 0.500 | 0.546 | 0.379 | 0.428 | — | — |
+| Unsup. | **Ours (Granite-int8, p80)**$^§$ | 0.452 | 0.498 | 0.329 | 0.427 | 0.321 | 0.372 | 0.515 | 0.584 | 0.511 | 0.532 | 0.316 | 0.397 | — | — |
+| Unsup. | **Ours (Para-Multi-int8, p60)**$^¶$ | 0.455 | 0.584 | 0.403 | 0.442 | 0.395 | 0.556 | 0.480 | 0.502 | 0.503 | 0.607 | 0.399 | 0.422 | — | — |
+| Unsup. | **Ours (Para-Multi-int8, p70)**$^¶$ | 0.437 | 0.521 | 0.383 | 0.452 | 0.345 | 0.444 | 0.512 | 0.559 | 0.513 | 0.576 | 0.367 | 0.411 | — | — |
+| Unsup. | **Ours (Para-Multi-int8, p80)**$^¶$ | 0.436 | 0.486 | 0.321 | 0.430 | 0.316 | 0.368 | 0.516 | 0.587 | 0.518 | 0.552 | 0.312 | 0.389 | — | — |
 | Sup. | RoBERTa$^{*,\sharp}$ | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
 
 ### Offline
@@ -183,6 +255,8 @@ CSM-Style row: \texttt{methods/CSM/cpt\_277000.pth} (lxing532 CoherenceNet, bert
 | $^\ddagger$ | oracle δ\* — labeled **test** sweep (label leakage at eval, not deployable). supervised upper bound (천장). | Ours (oracle, MPNet/MiniLM-int8) |
 | $^\sharp$ | full eval 미실행 (CPU 환경 한계), 50-dial smoke 에서 online ≈ offline (Δ ±0.001 수준) → offline 행이 근사 | online RoBERTa |
 | $^\flat$ | CSM online run 진행 중 (background task) — 완료 시 채움 | online CSM |
+| $^§$ | `ibm-granite/granite-embedding-97m-multilingual-r2` ONNX quint8_avx2 (dim=384). latency 미측정. 출처: `outputs/experiments/2026-06-03_granite_percentile/REPORT.md` | Ours (Granite-int8) |
+| $^¶$ | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` ONNX quint8_avx2 (dim=384). latency 미측정. 출처: `outputs/experiments/2026-06-03_paraphrase_multilingual_percentile/REPORT.md` | Ours (Para-Multi-int8) |
 | 굵게 | 해당 setting 안 best (per-dataset Score) | — |
 
 ### 각 수치의 정확한 출처
@@ -205,20 +279,20 @@ CSM-Style row: \texttt{methods/CSM/cpt\_277000.pth} (lxing532 CoherenceNet, bert
 | CSM online | `methods/CSM/online/delay2.py` | **실행 중** (background task `bcfu2ka95`, 완료 시 `2026-05-23_csm_online_delay2/REPORT.md`) |
 | RoBERTa offline | `methods/RoBERTa/offline/train.py` | `2026-05-23_roberta_supervised/REPORT.md` ✓ (Run-1) |
 | RoBERTa online | `methods/RoBERTa/online/segment.py` | **REPORT 없음 — GPU 본 런 대기** (smoke 만 통과) |
-| Hi-DoTS (Ours) | `src/hi_em/hi_dots.py` (코드는 src/, runner 는 여러 곳) | `2026-05-23_encoder_comparison/REPORT.md` + `2026-05-23_hidots_v2/REPORT.md` ✓ |
+| Hi-OnTop (Ours) | `src/hi_em/hi_ontop.py` (코드는 src/, runner 는 여러 곳) | `2026-05-23_encoder_comparison/REPORT.md` + `2026-05-23_hiontop_v2/REPORT.md` ✓ |
 
 ### 셀 값의 현재 출처
 
-- **Ours (Hi-DoTS) p60 / p70 / p80, MPNet**: p70/p80 Pk/WD/F1/Score = `2026-05-23_percentile_generality/per_metric_mpnet_n200.json` (calib N=200, seed=0). p60 = `2026-05-24_hidots_p60/per_metric.json` (`scripts/compute_hidots_p60.py`). MPNet `multi-qa-mpnet-base-dot-v1`, m=2 ρ=0.7 a=0.5. δ\* per (bench, p):
+- **Ours (Hi-OnTop) p60 / p70 / p80, MPNet**: p70/p80 Pk/WD/F1/Score = `2026-05-23_percentile_generality/per_metric_mpnet_n200.json` (calib N=200, seed=0). p60 = `2026-05-24_hiontop_p60/per_metric.json` (`scripts/compute_hiontop_p60.py`). MPNet `multi-qa-mpnet-base-dot-v1`, m=2 ρ=0.7 a=0.5. δ\* per (bench, p):
   - TIAGE: p60=0.5296 · p70=0.5618 · p80=0.6016
   - Dialseg711: p60=0.5145 · p70=0.5514 · p80=0.5939
   - SuperDialseg: p60=0.5304 · p70=0.5751 · p80=0.6194
   - vs full-N calib 와 \|ΔScore\| ≤ 0.003 — `calib_n_convergence` 와 정합.
-- **Ours (Hi-DoTS) p60 / p70 / p80, MiniLM-int8**: 출처 = `2026-05-24_hidots_minilm_int8_percentile/REPORT.md` (p70/p80) + `2026-05-24_hidots_p60/per_metric.json` (p60). δ\* per (bench, p):
+- **Ours (Hi-OnTop) p60 / p70 / p80, MiniLM-int8**: 출처 = `2026-05-24_hiontop_minilm_int8_percentile/REPORT.md` (p70/p80) + `2026-05-24_hiontop_p60/per_metric.json` (p60). δ\* per (bench, p):
   - TIAGE: p60=0.7334 · p70=0.7763 · p80=0.8223
   - Dialseg711: p60=0.7033 · p70=0.7519 · p80=0.8029
   - SuperDialseg: p60=0.7255 · p70=0.7839 · p80=0.8409
-- **Ours (best, MPNet/MiniLM-int8)** = train-side labeled δ\* sweep. tiage/superseg 는 train split, dialseg711 은 test 70:30 split 의 70% 를 calib 으로 사용. 출처 = `outputs/experiments/2026-05-24_hidots_oracle_best/REPORT.md` ("best" 행). 정확히 `scripts/run_encoder_comparison.py` 함수 import + cached embeddings 으로 fresh 재계산 (이전 dts_result.md / delta_star_calibration.md 의 "oracle" 컬럼이 사실은 "best" 였던 라벨 혼선 수정).
+- **Ours (best, MPNet/MiniLM-int8)** = train-side labeled δ\* sweep. tiage/superseg 는 train split, dialseg711 은 test 70:30 split 의 70% 를 calib 으로 사용. 출처 = `outputs/experiments/2026-05-24_hiontop_oracle_best/REPORT.md` ("best" 행). 정확히 `scripts/run_encoder_comparison.py` 함수 import + cached embeddings 으로 fresh 재계산 (이전 dts_result.md / delta_star_calibration.md 의 "oracle" 컬럼이 사실은 "best" 였던 라벨 혼선 수정).
 - **Ours (oracle, MPNet/MiniLM-int8)** = test-side δ\* sweep (supervised upper bound). 출처 = 동일 REPORT 의 "oracle" 행. p60/p70/p80 의 percentile 무라벨 추정이 닿을 수 있는 천장. Pk/WD/F1 모두 보고 (이전엔 Score 만 보고했으나 fresh 측정 결과는 다 갖춰져 있음).
 - **Offline rows (paper-cited $^\dagger$)**: 표 caption 정책상 offline 비-Ours 는 Jiang et al. 2023 Table 3 인용 — 우리 `methods/{texttiling,greedyseg,CSM}/offline/` 도 동일 알고리즘을 재현하나 별도 REPORT 가 아직 없으므로 paper 값을 그대로 사용 (apples-to-apples 가 더 정확하다면 우리 runner 실행 결과로 교체 가능).
 - **Online 비-Ours rows ($^\ast$)**: 우리 `methods/{texttiling,graphseg,greedyseg}/online/` REPORT 값 (Def-DTS 번들 + segeval Pk/WD).
@@ -273,16 +347,16 @@ uv run python methods/CSM/offline/whole_dialogue.py
 
 - [ ] **Online 비-Ours 행 harness 통일**: superdialseg_data + official NLTK Pk/WD 로 재측정
   → 한 표 안 모든 셀이 apples-to-apples (현재는 Def-DTS+segeval 과 SDS+NLTK 혼재).
-- [x] **Ours (best/oracle) Pk/WD/F1 (2026-05-24)**: `scripts/compute_hidots_oracle_best.py`
+- [x] **Ours (best/oracle) Pk/WD/F1 (2026-05-24)**: `scripts/compute_hiontop_oracle_best.py`
   로 cached embeddings + `run_encoder_comparison.py` 함수 import 하여 fresh 재계산. 결과 =
-  `outputs/experiments/2026-05-24_hidots_oracle_best/REPORT.md`. MPNet · MiniLM-int8
+  `outputs/experiments/2026-05-24_hiontop_oracle_best/REPORT.md`. MPNet · MiniLM-int8
   각각 best (train sweep) + oracle (test sweep) 4 행 추가, 이전 calibration 표의
   "oracle" 라벨이 실제로는 "best" 였던 혼선 정정.
-- [x] **Latency Pre./Seg. split 정밀 측정 (2026-05-23, idle 재측정)**: `scripts/measure_hidots_latency.py`
+- [x] **Latency Pre./Seg. split 정밀 측정 (2026-05-23, idle 재측정)**: `scripts/measure_hiontop_latency.py`
   로 단일 발화 forward + assign 을 매 turn 측정 (cache off, batch=1, seed=0, 벤치당
-  500-turn budget). 최초 측정 (`2026-05-23_hidots_latency_realtime/`) 은 동시에 돌던
+  500-turn budget). 최초 측정 (`2026-05-23_hiontop_latency_realtime/`) 은 동시에 돌던
   CSM-online 두 프로세스의 CPU contention 으로 부풀려져 (967 ms) 무효화. CSM kill 후
-  idle 재측정 → `outputs/experiments/2026-05-23_hidots_latency_realtime_idle/REPORT.md`:
+  idle 재측정 → `outputs/experiments/2026-05-23_hiontop_latency_realtime_idle/REPORT.md`:
   cross-bench mean Pre. **130 ms** (p50 101) · Seg. **0.30 ms** (p50 0.23). 표의 Ours
   4 행 및 caption 갱신 완료.
 
@@ -293,7 +367,7 @@ uv run python methods/CSM/offline/whole_dialogue.py
 - **Offline + Supervised** = RoBERTa SuperDialseg-trained 가 압도 (SDS Score 0.798,
   TIAGE 0.482, DS711 0.702).
 - **Offline + Unsupervised** = CSM 이 가장 강함 (DS711 0.660, TIAGE 0.509, SDS 0.458).
-- **Online + Unsupervised** = **Ours (Hi-DoTS) 가 모든 데이터셋에서 online unsupervised
+- **Online + Unsupervised** = **Ours (Hi-OnTop) 가 모든 데이터셋에서 online unsupervised
   baseline 들을 능가**. 데이터셋마다 best percentile 이 다름:
   - TIAGE: **p70 0.458** (best baseline 0.374, +0.084)
   - Dialseg711: **p80 0.616** (best baseline 0.491, +0.125)

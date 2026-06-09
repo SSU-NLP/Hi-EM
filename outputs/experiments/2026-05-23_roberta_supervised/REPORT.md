@@ -4,7 +4,7 @@
 
 - **목적**: Coldog2333/SuperDialseg (EMNLP 2023, `2023.emnlp-main.249`) 논문
   **Table 3 의 `RoBERTa`** (plain supervised dialogue segmenter) 를 충실 재현.
-  Hi-DoTS / Hi-DoTS-v2 (무감독 online segmenter) 의 supervised 상한
+  Hi-OnTop / Hi-OnTop-v2 (무감독 online segmenter) 의 supervised 상한
   baseline 으로 둔다.
 - **재현 근거**: 논문 Appendix A.1/A.2 (입력 구성·하이퍼파라미터) + repo
   `src/super_dialseg/utils/data/data_collator.py` (verbatim, `__getitem_input__`
@@ -84,17 +84,17 @@ early stopping 이 patience=10 으로 epoch 14 에서 중단, best(epoch 4) 보�
   tiage 0.538 / dialseg711 0.668. byte 일치는 애초에 불가(아래 한계)지만
   방법·하이퍼파라미터·입력 구성을 논문/repo 그대로 맞춰 논문 수치
   근방(±0.06 이내, 평균 +0.013)에 안착.
-- **Hi-DoTS 대비** (참고, official 동일 metric — [[2026-05-22_hidots_baseline_table]]
-  / `2026-05-23_hidots_v2`):
+- **Hi-OnTop 대비** (참고, official 동일 metric — [[2026-05-22_hiontop_baseline_table]]
+  / `2026-05-23_hiontop_v2`):
 
   | | tiage | superseg | dialseg711 |
   |---|---:|---:|---:|
-  | Hi-DoTS-v1 (무감독 online) | 0.433 | 0.428 | 0.617 |
+  | Hi-OnTop-v1 (무감독 online) | 0.433 | 0.428 | 0.617 |
   | **RoBERTa supervised** | **0.538** | **0.816** | **0.668** |
 
   supervised RoBERTa 가 세 벤치 모두 우위, 특히 in-domain superseg 에서
   압도(+0.39). **단 비대칭 비교**: RoBERTa 는 (1) 라벨 학습 (2) 발화
-  `i+1` 이후를 보는 윈도우(offline) (3) 별도 학습 필요. Hi-DoTS 는
+  `i+1` 이후를 보는 윈도우(offline) (3) 별도 학습 필요. Hi-OnTop 는
   무감독·past-only online. RoBERTa 우위는 "supervised offline 상한"
   이지 online 무감독 주장과 1:1 비교 아님. paper 표에 baseline 으로
   넣을 때 이 비대칭을 명시할 것.
@@ -123,7 +123,7 @@ early stopping 이 patience=10 으로 epoch 14 에서 중단, best(epoch 4) 보�
 - **재현 대상은 plain RoBERTa 만**: 논문 `MVRoBERTa`(Table 5, role/DA 입력
   임베딩, Score 0.808)·repo `RobertaMultiTask`(MT, da/role 출력 헤드)는
   미구현 (사용자 지시 — plain 만).
-- **Hi-DoTS 와의 dialseg711 비교는 비엄밀**: 본 RoBERTa run 은 full 711
-  test, `2026-05-23_hidots_v2` 의 dialseg711 은 30/70 split 의 70%
+- **Hi-OnTop 와의 dialseg711 비교는 비엄밀**: 본 RoBERTa run 은 full 711
+  test, `2026-05-23_hiontop_v2` 의 dialseg711 은 30/70 split 의 70%
   held-out → dialseg711 행은 1:1 동일 데이터 아님. tiage/superseg test 는
   동일.

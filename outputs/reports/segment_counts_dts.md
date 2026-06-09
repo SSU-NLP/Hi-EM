@@ -22,7 +22,7 @@ prompt 와는 다른 방식. 본 표에 미포함.)
 ## 데이터 출처 — 두 가지 split 가족 (정직 표기)
 
 baseline (TextTiling/GraphSeg/GreedySeg/CSM) 의 pred 수는 `Def-DTS` 번들 위 측정 (각
-method 의 REPORT 직접 참조). Hi-DoTS 는 `superdialseg_data` 위 측정 (encoder cache 정합).
+method 의 REPORT 직접 참조). Hi-OnTop 는 `superdialseg_data` 위 측정 (encoder cache 정합).
 **turn 수가 다소 다름** (DS711: 18639 vs 19350; SDS: 16006 vs 17328) — 데이터 전처리 차이
 이지만 method 간 density 비교 (% 단위) 는 ±1% 영향, 결론에는 영향 없음.
 
@@ -50,7 +50,7 @@ method 의 REPORT 직접 참조). Hi-DoTS 는 `superdialseg_data` 위 측정 (en
 - **GreedySeg**: TIAGE/DS711 거의 정확, SDS 큰 과소분절 (-39%).
 - **CSM**: 세 벤치 모두 *과분절 경향* (TIAGE/DS711 +20~37%, SDS -30%).
 
-## 2. Hi-DoTS / Hi-OnTop (superdialseg_data, full test split)
+## 2. Hi-OnTop / Hi-OnTop (superdialseg_data, full test split)
 
 ### MPNet 인코더
 
@@ -80,7 +80,7 @@ method 의 REPORT 직접 참조). Hi-DoTS 는 `superdialseg_data` 위 측정 (en
 - p80 → density 0.17~0.19 → TIAGE 정확 (0.20), DS711 정확 (0.14), SDS 큰 과소분절 (0.18 vs 0.23).
 
 **핵심 관찰**:
-- *Hi-DoTS 는 보편적으로 over-segment* (p60/p70), 특히 DS711 에서. sparse boundary
+- *Hi-OnTop 는 보편적으로 over-segment* (p60/p70), 특히 DS711 에서. sparse boundary
   데이터인데 percentile 기반 threshold 가 적절히 보수적이지 못함.
 - **p80 이 boundary density 측면에선 gold 와 가장 가까움** (TIAGE/DS711 거의 일치).
   하지만 Score 는 p70 이 더 높음 — **density 만으로는 best 가 안 됨** (false positive 의
@@ -151,14 +151,14 @@ Mistral3-3B-Seg   & -- & -- & -- & -- & -- & -- \\
 \textbf{Gold (Def-DTS)} &  315 & \textbf{0.201} & 2743 & \textbf{0.147} & 4017 & \textbf{0.251} \\
 \bottomrule
 \end{tabular}
-\caption{Predicted boundary count and boundary density (= boundaries / turns) across DTS benchmarks. Online unsupervised baselines measured on the Def-DTS bundle; Hi-DoTS measured on the original SuperDialseg-data bundle (encoder cache compatibility, $\pm$1\% turn-count drift). Hi-DoTS at $p70$ over-segments TIAGE and Dialseg711 ($1.3$--$2.0\times$ gold density) while matching SuperDialseg ($0.29$ vs $0.25$). $p80$ matches gold density on TIAGE/Dialseg711 but under-segments SuperDialseg. Sup/oracle reflect $\delta^{*}$ chosen on labeled train/test respectively (cf.\ \texttt{delta\_star\_calibration.md}). $^{\dagger}$LLM-based segmenters (GPT-5 / Qwen / GPT-4o-mini / Mistral / Llama) were applied only to Long-MT-Bench+ downstream evaluation (cf.\ \texttt{segment\_counts\_downstream.md}); their DTS boundary density is unmeasured in this project (cost prohibitive for $2{,}133$ dialogues $\times$ LLM call).}
+\caption{Predicted boundary count and boundary density (= boundaries / turns) across DTS benchmarks. Online unsupervised baselines measured on the Def-DTS bundle; Hi-OnTop measured on the original SuperDialseg-data bundle (encoder cache compatibility, $\pm$1\% turn-count drift). Hi-OnTop at $p70$ over-segments TIAGE and Dialseg711 ($1.3$--$2.0\times$ gold density) while matching SuperDialseg ($0.29$ vs $0.25$). $p80$ matches gold density on TIAGE/Dialseg711 but under-segments SuperDialseg. Sup/oracle reflect $\delta^{*}$ chosen on labeled train/test respectively (cf.\ \texttt{delta\_star\_calibration.md}). $^{\dagger}$LLM-based segmenters (GPT-5 / Qwen / GPT-4o-mini / Mistral / Llama) were applied only to Long-MT-Bench+ downstream evaluation (cf.\ \texttt{segment\_counts\_downstream.md}); their DTS boundary density is unmeasured in this project (cost prohibitive for $2{,}133$ dialogues $\times$ LLM call).}
 \label{tab:boundary_density_dts}
 \end{table*}
 ```
 
 ## 검증 미해결
 
-- **두 split family 사용** — baselines 는 Def-DTS 번들, Hi-DoTS 는 SDS-data 번들. Turn
+- **두 split family 사용** — baselines 는 Def-DTS 번들, Hi-OnTop 는 SDS-data 번들. Turn
   카운트 차이 (DS711 18639 vs 19350, SDS 16006 vs 17328) 는 데이터 전처리 차이 (last-turn
   inclusion, role label 분리). 결론에 큰 영향 없으나, 직접 비교 시 한 가족으로 통일하면
   더 깔끔.

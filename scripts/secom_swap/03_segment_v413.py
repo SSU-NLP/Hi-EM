@@ -72,6 +72,11 @@ def main() -> None:
     )
     ap.add_argument("--delta_star", type=float, required=True)
     ap.add_argument("--dim", type=int, default=768)
+    # Hi-OnTop dual-signal blend (ablation): a=0.0 → ctx-only, a=1.0 → prev-only,
+    # default 0.5 = paper baseline.
+    ap.add_argument("--ctx_blend_a", type=float, default=0.5)
+    ap.add_argument("--ctx_window", type=int, default=2)
+    ap.add_argument("--ctx_decay", type=float, default=0.7)
     args = ap.parse_args()
 
     Path(args.save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -105,6 +110,11 @@ def main() -> None:
         encoder=encoder,
         dim=args.dim,
         delta_star=args.delta_star,
+        hiontop_kwargs={
+            "ctx_window": args.ctx_window,
+            "ctx_decay": args.ctx_decay,
+            "ctx_blend_a": args.ctx_blend_a,
+        },
     )
 
     per_conv_latency: list[dict] = []

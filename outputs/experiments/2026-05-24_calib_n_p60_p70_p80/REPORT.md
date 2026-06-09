@@ -7,7 +7,7 @@ Setup (기존 `diag_calib_n_convergence.py` 와 동일):
 - **oracle** = continuous Score sweep on **test** itself (절대 천장, label leakage 인정)
 - N grid = [3, 5, 10, 25, 50, 100, 200, 400] (cap 까지)
 - 3-seed bootstrap (seed ∈ {0,1,2}), N=cap 은 single point
-- Hi-DoTS HP: m=2, ρ=0.7, a=0.5
+- Hi-OnTop HP: m=2, ρ=0.7, a=0.5
 
 ## mpnet / tiage  (oracle 0.4729, cap 300)
 

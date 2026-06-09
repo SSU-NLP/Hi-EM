@@ -6,7 +6,7 @@ Coldog2333/SuperDialseg (EMNLP 2023, ``2023.emnlp-main.249``) 의 Table 3
 ``data_collator.py`` (`__getitem_input__` roberta 분기) 그대로 학습·평가한다.
 
 **offline** — supervised, 학습 필요, 슬라이딩 윈도우 안에서 발화 ``i+1`` 이후를
-관측. Hi-EM 의 online segmenter (Hi-DoTS 등) 와 비교 시 비대칭임을 명시할 것.
+관측. Hi-EM 의 online segmenter (Hi-OnTop 등) 와 비교 시 비대칭임을 명시할 것.
 
 repo 기반 실행 (Hi-EM repo clone 후 그대로):
 
@@ -348,8 +348,8 @@ def write_report(exp_dir: Path, cfg, history, results, n_train, n_val) -> None:
         + ("smoke run — 재현 판정 불가 (`--limit` 제거 후 본 런 필요)."
            if cfg["limit"] else
            "논문 RoBERTa 행 근방이면 방법 충실 재현 성공."),
-        "- **Hi-DoTS 대비 비대칭**: 본 모델은 supervised·offline(윈도우 안 "
-        "미래 발화 관측)·학습 필요. Hi-DoTS 는 무감독 online past-only. "
+        "- **Hi-OnTop 대비 비대칭**: 본 모델은 supervised·offline(윈도우 안 "
+        "미래 발화 관측)·학습 필요. Hi-OnTop 는 무감독 online past-only. "
         "RoBERTa 우위는 supervised offline 상한 — online 무감독과 1:1 비교 아님.",
         "",
         "## 5. 한계 / 검증 미해결",

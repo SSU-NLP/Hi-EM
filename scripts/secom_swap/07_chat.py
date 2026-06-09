@@ -78,20 +78,32 @@ def main() -> None:
             data.append(json.loads(line))
     print(f"n_conv: {len(data)}, model: {args.model}", flush=True)
 
+    # GPT-5 family compat: max_tokens unsupported (→ max_completion_tokens),
+    # only temperature=1, top_p=1, reasoning_effort∈{minimal,low,medium,high}.
+    is_gpt5_family = any(tag in args.model.lower()
+                          for tag in ("gpt-5", "gpt-5.5"))
+
     def call(prompt: str) -> tuple[str, float]:
         t0 = time.perf_counter()
         for attempt in range(3):
             try:
-                r = client.chat.completions.create(
-                    model=args.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=args.max_tokens,
-                    temperature=args.temperature,
-                    # Hybrid-thinking models otherwise spend the whole token
-                    # budget on <think> and return an empty/truncated answer.
-                    # Mechanism is endpoint-dependent — see --no_think.
-                    **think_kwargs,
-                )
+                if is_gpt5_family:
+                    r = client.chat.completions.create(
+                        model=args.model,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_completion_tokens=max(args.max_tokens, 2000),
+                        reasoning_effort="minimal",
+                    )
+                else:
+                    r = client.chat.completions.create(
+                        model=args.model,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=args.max_tokens,
+                        temperature=args.temperature,
+                        # Hybrid-thinking models otherwise spend the whole token
+                        # budget on <think> and return an empty/truncated answer.
+                        **think_kwargs,
+                    )
                 content = r.choices[0].message.content or ""
                 return content, time.perf_counter() - t0
             except Exception as e:

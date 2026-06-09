@@ -23,7 +23,7 @@ import numpy as np
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
-from hi_em.hi_dots import HiDoTS  # noqa: E402
+from hi_em.hi_ontop import HiOnTop  # noqa: E402
 from run_encoder_comparison import (  # noqa: E402
     DSTAR_GRID, M, RHO, A, ENCODERS, MPNET_REUSE,
     load_dialogs, score_set, best_score_dstar,
@@ -117,7 +117,7 @@ def main() -> None:
          "- **oracle** = continuous Score sweep on **test** itself (절대 천장, label leakage 인정)",
          "- N grid = [3, 5, 10, 25, 50, 100, 200, 400] (cap 까지)",
          "- 3-seed bootstrap (seed ∈ {0,1,2}), N=cap 은 single point",
-         "- Hi-DoTS HP: m=2, ρ=0.7, a=0.5",
+         "- Hi-OnTop HP: m=2, ρ=0.7, a=0.5",
          ""]
     for enc in ENCS:
         for ds in ("tiage", "dialseg711", "superseg"):

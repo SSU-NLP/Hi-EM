@@ -25,7 +25,7 @@ from sklearn.metrics import f1_score
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
-from hi_em.hi_dots import HiDoTS  # noqa: E402
+from hi_em.hi_ontop import HiOnTop  # noqa: E402
 
 SDS = REPO / "benchmarks" / "superdialseg_data"
 CACHE = REPO / "outputs" / "runs" / "_misc"
@@ -118,7 +118,7 @@ def encode(enc, ds, split, dialogs):
 
 
 def delta_eff_seq(emb):
-    seg = HiDoTS(dim=emb.shape[1], delta_star=1.0,
+    seg = HiOnTop(dim=emb.shape[1], delta_star=1.0,
                  ctx_window=M, ctx_decay=RHO, ctx_blend_a=A)
     for s in emb:
         seg.assign(s.astype(np.float64))
@@ -208,7 +208,7 @@ def main():
         "(Score=0.5F1+0.25(1−Pk)+0.25(1−WD)).",
         f"δ* = 인코더별 train split 보정 (서브샘플 ≤{TRAIN_CAP}). "
         "dialseg711 은 train split 부재 → test 70:30 (70%를 보정).",
-        "Hi-DoTS HP: m=2, ρ=0.7, a=0.5.",
+        "Hi-OnTop HP: m=2, ρ=0.7, a=0.5.",
         "",
         "## Ours (p80)  — δ* = train δ_eff 80-percentile",
         "",

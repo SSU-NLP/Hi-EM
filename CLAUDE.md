@@ -262,7 +262,10 @@ Claude Code가 파일 1개를 수정·생성·삭제할 때마다 **다른 파�
 - G — `pareto_qa_context`
 - H — `calib_n_convergence_{main,appendix_oracle,appendix_sup}`
 - I — `delta_eff_distribution`
-- J 부터 미사용 — 새 figure 가 들어갈 자리.
+- L — `percentile_score_curve` (DTS Score vs percentile)
+- P — `distill_n_convergence_mtbp` (MTB+ LLM-distill N-convergence, p∈[5,95])
+- Q — `mtbp_percentile_curve` (MTB+ F1 vs percentile, Fig L counterpart, p∈[5,95])
+- J, K, M, N, O — 다른 figure 가 차지 (별도 추적). 새 figure 는 R 부터.
 
 이유: figure 수정·인용 시 letter 가 결정적인 reference key. paper LaTeX
 `\ref{fig:I}` / 본문 "Figure I" 와 파일명이 즉시 매칭되어야 함. 다른 위치

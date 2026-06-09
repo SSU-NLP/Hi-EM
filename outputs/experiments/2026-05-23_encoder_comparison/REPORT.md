@@ -2,7 +2,7 @@
 
 데이터 = superdialseg_data, 공식 SuperDialseg metric (Score=0.5F1+0.25(1−Pk)+0.25(1−WD)).
 δ* = 인코더별 train split 보정 (서브샘플 ≤400). dialseg711 은 train split 부재 → test 70:30 (70%를 보정).
-Hi-DoTS HP: m=2, ρ=0.7, a=0.5.
+Hi-OnTop HP: m=2, ρ=0.7, a=0.5.
 
 ## Ours (p80)  — δ* = train δ_eff 80-percentile
 

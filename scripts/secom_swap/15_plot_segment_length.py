@@ -30,7 +30,7 @@ METHODS = [
     ("csm",              "CSM",                 "#17BECF"),
     ("ours_p60",         r"Hi-OnTop (MPNet, $p_{60}$)", "#D62728"),
     ("ours_p70",         r"Hi-OnTop (MPNet, $p_{70}$)", "#E45756"),
-    ("ours_hidots",      r"Hi-OnTop (MPNet, $p_{80}$)", "#F37C7E"),
+    ("ours_hiontop",      r"Hi-OnTop (MPNet, $p_{80}$)", "#F37C7E"),
     ("ours_int8_p60",    r"Hi-OnTop (int8, $p_{60}$)",  "#FF7F0E"),
     ("ours_int8_p70",    r"Hi-OnTop (int8, $p_{70}$)",  "#FF9F4D"),
     ("ours_int8_p80",    r"Hi-OnTop (int8, $p_{80}$)",  "#FFC689"),

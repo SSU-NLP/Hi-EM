@@ -1,4 +1,4 @@
-# §3 Method — Hi-DoTS
+# §3 Method — Hi-OnTop
 
 > EMNLP-style draft (Algorithm-first). LaTeX-ready prose. Citation placeholders
 > use `\citep{...}`. Tables and figures are referenced as `\autoref{tab:...}` /
@@ -8,11 +8,11 @@
 
 ## 3 Method
 
-We introduce \textsc{Hi-DoTS}, an online, encoder-agnostic dialogue topic
+We introduce \textsc{Hi-OnTop}, an online, encoder-agnostic dialogue topic
 segmenter whose only data-adaptive parameter is a scalar decision threshold
 calibrated without boundary labels.  §3.1 fixes notation; §3.2 specifies the
 segmenter; §3.3 introduces our label-free calibration recipe; §3.4 describes
-how \textsc{Hi-DoTS} drops into a memory-augmented dialogue pipeline.
+how \textsc{Hi-OnTop} drops into a memory-augmented dialogue pipeline.
 
 ### 3.1 Preliminaries
 
@@ -47,7 +47,7 @@ defaults.
 
 ### 3.2 Streaming Segmentation with Causal Context
 
-\textsc{Hi-DoTS} computes a context-aware distance $\delta_{\mathrm{eff}}(t)$
+\textsc{Hi-OnTop} computes a context-aware distance $\delta_{\mathrm{eff}}(t)$
 between $s_t$ and a windowed view of its past, and emits a boundary whenever
 $\delta_{\mathrm{eff}}(t)$ exceeds a calibrated threshold.  The design is
 intentionally minimalist — no learned dynamics, no future buffer, no per-topic
@@ -102,7 +102,7 @@ once on a single held-out development set (TIAGE-train) and reuse them across
 data-adaptive (§3.3).
 
 **Complexity.**
-Beyond the encoder forward pass, \textsc{Hi-DoTS} performs $\mathcal{O}(m)$
+Beyond the encoder forward pass, \textsc{Hi-OnTop} performs $\mathcal{O}(m)$
 arithmetic operations per turn and maintains $\mathcal{O}(m)$ persistent
 state.  No gradients, no recurrence, no future buffer; the entire segmenter is
 $\sim$\,20 lines of NumPy.  In our measurements (§4.3) the encoder forward
@@ -166,13 +166,13 @@ set, no gradient computation.
     $\sim$\,0.022 Score averaged across nine cells.
 
 Together, these two facts yield a practical recipe for deploying
-\textsc{Hi-DoTS} on a new domain: gather $\sim$\,100 unlabeled in-domain
+\textsc{Hi-OnTop} on a new domain: gather $\sim$\,100 unlabeled in-domain
 dialogues, encode them once, and read off $\delta^{*}_{p_{70}}$.  No boundary
 annotation, no hyperparameter search, no model adaptation.
 
 ### 3.4 Application to Conversational Memory
 
-\textsc{Hi-DoTS} is designed as a low-cost segmentation module for
+\textsc{Hi-OnTop} is designed as a low-cost segmentation module for
 *memory-augmented dialogue systems*.  We instantiate it as a drop-in
 replacement for the LLM-based segmenter in SeCom \citep{pan2024secom}, a
 recent pipeline for long-horizon conversational QA.  The original SeCom
@@ -183,7 +183,7 @@ generation — are unchanged.
 **Pipeline (SeCom-swap).**  Given a multi-session conversation $C$:
 
 1.  *Segmentation.*  Partition each session of $C$ into topic segments using
-    \textsc{Hi-DoTS} (§3.2), with $\delta^{*}_{p_x}$ calibrated by Eq. (5) on
+    \textsc{Hi-OnTop} (§3.2), with $\delta^{*}_{p_x}$ calibrated by Eq. (5) on
     the held-out training half of $C$ itself (still label-free; see §3.3).
 2.  *Memory compression.*  Apply LLMLingua-2
     \citep{pan2024llmlingua2} to each segment, producing a compressed memory
@@ -195,13 +195,13 @@ generation — are unchanged.
 
 Only step 1 is replaced; steps 2--4 retain SeCom's original implementation.
 This isolation lets us attribute any change in QA performance to
-segmentation quality alone, and lets us compare \textsc{Hi-DoTS} against
+segmentation quality alone, and lets us compare \textsc{Hi-OnTop} against
 (i) the LLM-based segmenter it replaces, (ii) unsupervised baselines
 (TextTiling, GreedySeg, CSM, GraphSeg), and (iii) a supervised baseline
 (RoBERTa).
 
 **Encoder choice and latency.**
-\textsc{Hi-DoTS} imposes no constraint on the encoder beyond $L_2$-normalized
+\textsc{Hi-OnTop} imposes no constraint on the encoder beyond $L_2$-normalized
 cosine geometry.  We instantiate it with two encoders of contrasting cost:
 MPNet (110M parameters, fp32) and MiniLM-int8 (22M parameters, ONNX
 \texttt{quint8\_avx2}).  Because $\delta^{*}$ is recalibrated per encoder via
@@ -219,7 +219,7 @@ maintaining QA performance to within $0.5$ GPT-4 score points
 - [ ] §4 (Experiments) numbers fill-in once int8 pipeline (`b0yohgkef`) completes.
 - [ ] Confirm SeCom citation key (Pan et al. 2024) matches \texttt{secom.bib}.
 - [ ] Replace placeholder \autoref{tab:...} keys with final labels.
-- [ ] Consider adding a Figure for §3.2 (per-turn $\delta_{\mathrm{eff}}$ curve with $\delta^{*}$ overlay) — data ready in `outputs/experiments/.../diag_hidots_segmentation_demo/`.
+- [ ] Consider adding a Figure for §3.2 (per-turn $\delta_{\mathrm{eff}}$ curve with $\delta^{*}$ overlay) — data ready in `outputs/experiments/.../diag_hiontop_segmentation_demo/`.
 - [ ] Consider adding a Figure for §3.3 (percentile-Score curve per benchmark) — data ready in `outputs/experiments/2026-05-23_percentile_generality/`.
 - [ ] §3.2 cite original $\delta_{\mathrm{prev}}$-only baselines GreedySeg and CSM.
 - [ ] Decide whether to keep both MPNet and MiniLM-int8 rows in main downstream table, or move MPNet to ablation appendix.

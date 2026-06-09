@@ -11,13 +11,13 @@
 
 \textbf{원리 2: 경계의 강도 정보는 결정과 함께 보존된다.} 해마는 사건 경계에서 반응하되, 경계가 뚜렷할수록 더 큰 반응을 낸다~\citep{baldassano2017discovering, ben2018hippocampal} — 결정과 함께 보존된 강도 정보가 downstream에서 경계 강도에 따른 처리를 가능하게 한다.
 
-본 논문은 매 시점마다 이중 시간 척도의 예측 오류를 누적하고 그 강도를 함께 출력하는 온라인 알고리즘 Hi-DoTS를 제안한다. 이 효과를 검증하기 위해 DTS 표준 벤치마크에서 평가하며, 장기 대화 메모리 시스템에서의 plug-in 검증을 수행한다. Our contributions are listed as follows:
+본 논문은 매 시점마다 이중 시간 척도의 예측 오류를 누적하고 그 강도를 함께 출력하는 온라인 알고리즘 Hi-OnTop를 제안한다. 이 효과를 검증하기 위해 DTS 표준 벤치마크에서 평가하며, 장기 대화 메모리 시스템에서의 plug-in 검증을 수행한다. Our contributions are listed as follows:
 
 \begin{itemize}
 
-\item \textbf{Hi-DoTS 프레임워크 제안:} 뇌 인지 과정을 영감 삼아 라벨이나 미래 정보 없이 가볍게 동작하는 프레임워크를 제안하며, TIAGE · Dialseg711 · SuperDialseg에서 ~만큼의 성능 향상을 보인다(Score [TBD]).
+\item \textbf{Hi-OnTop 프레임워크 제안:} 뇌 인지 과정을 영감 삼아 라벨이나 미래 정보 없이 가볍게 동작하는 프레임워크를 제안하며, TIAGE · Dialseg711 · SuperDialseg에서 ~만큼의 성능 향상을 보인다(Score [TBD]).
 
-\item \textbf{장기 대화 메모리 시스템에서의 plug-in 검증:} SeCom 파이프라인의 분절 백엔드를 Hi-DoTS로 교체하여, 베이스라인 대비 seg latency가 turn당 $O(N) \to O(1)$로 감소하면서 다운스트림 retrieval 품질이 효과적으로 유지됨을 보인다.
+\item \textbf{장기 대화 메모리 시스템에서의 plug-in 검증:} SeCom 파이프라인의 분절 백엔드를 Hi-OnTop로 교체하여, 베이스라인 대비 seg latency가 turn당 $O(N) \to O(1)$로 감소하면서 다운스트림 retrieval 품질이 효과적으로 유지됨을 보인다.
 
 \end{itemize}
 

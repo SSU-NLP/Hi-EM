@@ -1,6 +1,6 @@
-"""δ* calibration for Hi-DoTS on Long-MT-Bench+ with the mpnet encoder.
+"""δ* calibration for Hi-OnTop on Long-MT-Bench+ with the mpnet encoder.
 
-Hi-DoTS' default ``delta_star`` was tuned on TIAGE *train* with Hi-EM's bge
+Hi-OnTop' default ``delta_star`` was tuned on TIAGE *train* with Hi-EM's bge
 encoder. SeCom uses ``multi-qa-mpnet-base-dot-v1`` (different embedding
 geometry), so the cosine-distance distribution differs → ``delta_star``
 must be re-estimated. Long-MT-Bench+ has no ground-truth boundaries, so we
@@ -12,7 +12,7 @@ Two modes
 - ``delta_prev``: percentiles of raw ``δ_prev = 1 - cos(s_{t-1}, s_t)``.
   This is **m-independent** (no causal window).
 - ``delta_eff``: percentiles of ``δ_eff = a·δ_prev + (1-a)·δ_ctx`` — the
-  quantity Hi-DoTS actually thresholds. ``δ_ctx`` depends on the causal
+  quantity Hi-OnTop actually thresholds. ``δ_ctx`` depends on the causal
   window ``m`` (``ctx_window``), so this mode **must be re-run whenever
   ``ctx_window`` changes** (e.g. the m=3 → m=2 default change). This is the
   principled target for δ* since δ* is compared against δ_eff, not δ_prev.
@@ -86,7 +86,7 @@ def main() -> None:
     ap.add_argument("--n_conv", type=int, default=11)
     ap.add_argument(
         "--mode", choices=["delta_prev", "delta_eff"], default="delta_eff",
-        help="delta_eff = the quantity Hi-DoTS thresholds (m-dependent).",
+        help="delta_eff = the quantity Hi-OnTop thresholds (m-dependent).",
     )
     ap.add_argument("--ctx_window", type=int, default=2)
     ap.add_argument("--ctx_decay", type=float, default=0.7)
@@ -165,12 +165,12 @@ def main() -> None:
             cos = (sv[:-1] * sv[1:]).sum(axis=1)
             all_deltas.extend((1.0 - cos).tolist())
             per_session_n_turns.append(n)
-    else:  # delta_eff — replay each session through Hi-DoTS
-        from hi_em.hi_dots import HiDoTS
+    else:  # delta_eff — replay each session through Hi-OnTop
+        from hi_em.hi_ontop import HiOnTop
 
         for start, n in session_spans:
             sv = vecs[start : start + n]
-            seg = HiDoTS(
+            seg = HiOnTop(
                 dim=args.dim,
                 delta_star=1.0,  # irrelevant — δ_eff is independent of δ*
                 ctx_window=args.ctx_window,
@@ -213,7 +213,7 @@ def main() -> None:
             f"mode={args.mode}: p80 ≈ boundary at ~20% of turns ≈ 2-3 segments "
             "per 13-turn session. "
             + (
-                f"δ_eff at ctx_window={args.ctx_window} — the quantity Hi-DoTS "
+                f"δ_eff at ctx_window={args.ctx_window} — the quantity Hi-OnTop "
                 "actually thresholds; re-run if ctx_window changes."
                 if args.mode == "delta_eff"
                 else "raw δ_prev — m-independent proxy; δ* is applied to δ_eff "

@@ -36,7 +36,7 @@ METHODS = [
     # Hi-OnTop (MPNet)
     ("ours_p60",              r"Hi-OnTop (MPNet, $p_{60}$)", "#D62728", "ours"),
     ("ours_p70",              r"Hi-OnTop (MPNet, $p_{70}$)", "#E45756", "ours"),
-    ("ours_hidots",           r"Hi-OnTop (MPNet, $p_{80}$)", "#F37C7E", "ours"),
+    ("ours_hiontop",           r"Hi-OnTop (MPNet, $p_{80}$)", "#F37C7E", "ours"),
     # Hi-OnTop (int8)
     ("ours_int8_p60",         r"Hi-OnTop (int8, $p_{60}$)",  "#FF7F0E", "ours"),
     ("ours_int8_p70",         r"Hi-OnTop (int8, $p_{70}$)",  "#FF9F4D", "ours"),

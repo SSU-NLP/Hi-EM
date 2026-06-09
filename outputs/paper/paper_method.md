@@ -1,7 +1,7 @@
 ```latex
 \section{Method}
 
-We introduce \textsc{Hi-DoTS}, an online dialogue topic segmenter that operates under the response-unknown, future-blind regime motivated in §1. The segmenter realizes two cognitively-grounded principles operationally: (i) it accumulates prediction error at \emph{two time scales}—an adjacent-turn distance and a decayed causal-context distance—and (ii) it preserves the \emph{strength} of each boundary alongside the discrete decision, so that downstream consumers can act on graded confidence rather than a hard $0/1$ stream. §3.1 fixes the problem setup and notation; §3.2 specifies the segmenter and its graded readout; §3.3 introduces a label-free calibration recipe that requires no boundary annotations; §3.4 instantiates the segmenter as a drop-in module inside a memory-augmented conversational pipeline.
+We introduce \textsc{Hi-OnTop}, an online dialogue topic segmenter that operates under the response-unknown, future-blind regime motivated in §1. The segmenter realizes two cognitively-grounded principles operationally: (i) it accumulates prediction error at \emph{two time scales}—an adjacent-turn distance and a decayed causal-context distance—and (ii) it preserves the \emph{strength} of each boundary alongside the discrete decision, so that downstream consumers can act on graded confidence rather than a hard $0/1$ stream. §3.1 fixes the problem setup and notation; §3.2 specifies the segmenter and its graded readout; §3.3 introduces a label-free calibration recipe that requires no boundary annotations; §3.4 instantiates the segmenter as a drop-in module inside a memory-augmented conversational pipeline.
 
 \subsection{Preliminaries}
 \label{sec:3.1}
@@ -14,10 +14,10 @@ using only the causal prefix $u_{\le t}$. This \emph{prefix-causal} constraint�
 $$\delta(x, y) = 1 - \cos(x, y) \in [0, 2].$$
 We make no assumption about $f$ beyond unit-norm outputs; the segmenter is therefore agnostic to the choice of encoder.
 
-\subsection{Hi-DoTS: Dual-Time-Scale Segmenter with Graded Output}
+\subsection{Hi-OnTop: Dual-Time-Scale Segmenter with Graded Output}
 \label{sec:3.2}
 
-\textsc{Hi-DoTS} computes a context-aware effective distance $\delta_{\mathrm{eff}}(t)$ between $s_t$ and a windowed view of its causal past, then emits a boundary when $\delta_{\mathrm{eff}}(t)$ crosses a calibrated threshold $\delta^{*}$. The design is intentionally minimalist—no learned dynamics, no future buffer, no per-topic state—so that the segmenter can be transplanted across encoders and domains without retraining.
+\textsc{Hi-OnTop} computes a context-aware effective distance $\delta_{\mathrm{eff}}(t)$ between $s_t$ and a windowed view of its causal past, then emits a boundary when $\delta_{\mathrm{eff}}(t)$ crosses a calibrated threshold $\delta^{*}$. The design is intentionally minimalist—no learned dynamics, no future buffer, no per-topic state—so that the segmenter can be transplanted across encoders and domains without retraining.
 
 \textbf{Adjacent (short-scale) distance.} The atomic signal is the cosine distance between consecutive embeddings,
 \begin{equation}
@@ -44,7 +44,7 @@ b_t \;=\; \mathbb{1}\!\bigl[\,\delta_{\mathrm{eff}}(t) > \delta^{*}\,\bigr]. \la
 \end{equation}
 Equation~\ref{eq:deff} operationalizes Principle~1 of §1: the short- and long-scale prediction errors are tracked jointly, in line with the multi-time-scale account of event boundary formation in the brain~\citep{geerligs2022partially}. The mixing weight $a$ governs how much of the signal comes from the immediate transition versus the accumulated context; we keep $a$, together with $m$ and $\rho$, as small fixed structural hyperparameters of the segmenter, distinct from the data-adaptive threshold $\delta^{*}$ that §3.3 calibrates.
 
-\textbf{Graded boundary readout.} Beyond the binary decision in Eq.~\ref{eq:decision}, \textsc{Hi-DoTS} exposes the normalized confidence
+\textbf{Graded boundary readout.} Beyond the binary decision in Eq.~\ref{eq:decision}, \textsc{Hi-OnTop} exposes the normalized confidence
 \begin{equation}
 g_t \;=\; \delta_{\mathrm{eff}}(t) \,/\, \delta^{*}, \label{eq:graded}
 \end{equation}
@@ -61,7 +61,7 @@ The threshold $\delta^{*}$ is the only data-dependent parameter of the segmenter
 
 \textbf{Observation 2 (loose prior on boundary density).} Per-domain boundary rates fall in a predictable band—a small fraction of turns initiate new topics in human dialogue, with the exact ratio dictated by genre rather than by any per-deployment quantity. This bounds the useful percentile range tightly enough that a small family of candidate percentiles covers all reasonable deployments.
 
-\textbf{Percentile threshold.} Given a label-free calibration set $\mathcal{C}$ of in-domain dialogues—boundary annotations are \emph{not} required—we encode each utterance, run \textsc{Hi-DoTS} forward over $\mathcal{C}$ to collect the $\delta_{\mathrm{eff}}$ samples, and set
+\textbf{Percentile threshold.} Given a label-free calibration set $\mathcal{C}$ of in-domain dialogues—boundary annotations are \emph{not} required—we encode each utterance, run \textsc{Hi-OnTop} forward over $\mathcal{C}$ to collect the $\delta_{\mathrm{eff}}$ samples, and set
 \begin{equation}
 \delta^{*}_{p_x} \;=\; \mathrm{Percentile}_{x}\!\Bigl(\,\bigl\{\delta_{\mathrm{eff}}(t) : u_t \in \mathcal{C}\bigr\}\,\Bigr). \label{eq:px}
 \end{equation}
@@ -81,17 +81,17 @@ Together, the two claims yield a deployment recipe that requires no boundary lab
 \subsection{Application to Conversational Memory}
 \label{sec:3.4}
 
-\textsc{Hi-DoTS} is designed as a low-cost segmentation module for memory-augmented dialogue systems, which typically interleave segmentation with downstream stages of memory compression, retrieval, and answer generation. We instantiate it as a drop-in replacement for the segmenter inside such a pipeline; all other stages are reused without modification, isolating segmentation quality as the only controlled variable.
+\textsc{Hi-OnTop} is designed as a low-cost segmentation module for memory-augmented dialogue systems, which typically interleave segmentation with downstream stages of memory compression, retrieval, and answer generation. We instantiate it as a drop-in replacement for the segmenter inside such a pipeline; all other stages are reused without modification, isolating segmentation quality as the only controlled variable.
 
 \textbf{Pipeline.} Given a multi-session conversation $C$:
 
 \begin{enumerate}
-\item \emph{Segmentation.} Partition each session of $C$ into topic segments using \textsc{Hi-DoTS} (§3.2). $\delta^{*}_{p_x}$ is calibrated on the in-domain dialogues themselves via Eq.~\ref{eq:px}; because calibration consumes no boundary labels, sharing dialogues between calibration and downstream evaluation introduces no QA-side leakage.
+\item \emph{Segmentation.} Partition each session of $C$ into topic segments using \textsc{Hi-OnTop} (§3.2). $\delta^{*}_{p_x}$ is calibrated on the in-domain dialogues themselves via Eq.~\ref{eq:px}; because calibration consumes no boundary labels, sharing dialogues between calibration and downstream evaluation introduces no QA-side leakage.
 \item \emph{Memory compression.} Each segment is compressed by the pipeline's original compression module.
 \item \emph{Retrieval.} Compressed segments are encoded, indexed, and retrieved by cosine similarity at query time.
 \item \emph{Generation.} The retrieved segment(s) and the question are passed to the answer generator.
 \end{enumerate}
 Only step~1 is replaced; the remaining stages preserve the host pipeline's behavior so that any change in downstream performance can be attributed to the segmentation module alone.
 
-\textbf{Encoder as a latency–quality knob.} Because $\delta^{*}$ is recalibrated per encoder via Eq.~\ref{eq:px}, the encoder used by \textsc{Hi-DoTS} is a pure latency–quality knob, not an algorithmic change: smaller or quantized encoders can be substituted to reduce per-turn segmentation latency without modifying any other component of the segmenter, while larger encoders may be used when quality is the dominant constraint. The empirical trade-off and a comparison against an LLM-based segmenter in the same host pipeline are reported in §4.5.
+\textbf{Encoder as a latency–quality knob.} Because $\delta^{*}$ is recalibrated per encoder via Eq.~\ref{eq:px}, the encoder used by \textsc{Hi-OnTop} is a pure latency–quality knob, not an algorithmic change: smaller or quantized encoders can be substituted to reduce per-turn segmentation latency without modifying any other component of the segmenter, while larger encoders may be used when quality is the dominant constraint. The empirical trade-off and a comparison against an LLM-based segmenter in the same host pipeline are reported in §4.5.
 ```

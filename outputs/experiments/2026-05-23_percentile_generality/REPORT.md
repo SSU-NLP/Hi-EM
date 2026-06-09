@@ -4,7 +4,7 @@
 
 **방법**: 각 (인코더, 벤치) full calib (TIAGE 300 · Dialseg711 498 · SuperDialseg 2000) → δ\*_{p50,…,p95} (5 단위) 계산 → test Score. test-side oracle 과 비교.
 
-**HP**: Hi-DoTS m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg (0.5F1+0.25(1−Pk)+0.25(1−WD)).
+**HP**: Hi-OnTop m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg (0.5F1+0.25(1−Pk)+0.25(1−WD)).
 
 ## Score (각 percentile 의 test Score; **bold** = 셀 best)
 

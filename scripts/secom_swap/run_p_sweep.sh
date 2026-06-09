@@ -1,5 +1,5 @@
 #!/bin/bash
-# Long-MT-Bench+ downstream eval — p60/p70/p80 percentile sweep for Hi-DoTS δ*.
+# Long-MT-Bench+ downstream eval — p60/p70/p80 percentile sweep for Hi-OnTop δ*.
 #
 # δ* values from outputs/.../delta_star_calibration_p_sweep.json (delta_eff
 # mode, m=2, ρ=0.7, a=0.5):

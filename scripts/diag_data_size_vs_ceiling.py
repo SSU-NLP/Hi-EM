@@ -23,7 +23,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
-from hi_em.hi_dots import HiDoTS  # noqa: E402
+from hi_em.hi_ontop import HiOnTop  # noqa: E402
 from run_encoder_comparison import (  # noqa: E402
     DSTAR_GRID, M, RHO, A, ENCODERS, MPNET_REUSE,
     load_dialogs, score_set,
@@ -35,7 +35,7 @@ BENCHES = ("tiage", "dialseg711", "superseg")
 
 
 def delta_eff_seq(emb):
-    seg = HiDoTS(dim=emb.shape[1], delta_star=1.0,
+    seg = HiOnTop(dim=emb.shape[1], delta_star=1.0,
                  ctx_window=M, ctx_decay=RHO, ctx_blend_a=A)
     for s in emb:
         seg.assign(s.astype(np.float64))
@@ -153,7 +153,7 @@ def main() -> None:
         "**방법**: 각 (인코더, 벤치) 셀에서 test 자체에서 δ* sweep [0.35, 0.95] "
         "(data-snooping 허용) → calib 와 무관한 알고리즘+데이터 천장.",
         "",
-        "**HP**: Hi-DoTS m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg "
+        "**HP**: Hi-OnTop m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg "
         "(0.5F1+0.25(1−Pk)+0.25(1−WD)).",
         "",
         "## 데이터 크기",

@@ -9,12 +9,12 @@ to the §4 tables that anchor each claim.
 
 ## 3 Method
 
-We introduce \textsc{Hi-DoTS}, an online dialogue topic segmenter whose only
+We introduce \textsc{Hi-OnTop}, an online dialogue topic segmenter whose only
 data-adaptive parameter is a scalar threshold calibrated from a small set of
 **unlabeled** in-domain dialogues.  §3.1 fixes notation and evaluation; §3.2
 specifies the segmenter; §3.3 introduces our label-free calibration recipe and
 states the two empirical regularities that make it work; §3.4 describes the
-downstream pipeline in which \textsc{Hi-DoTS} replaces an LLM-based segmenter.
+downstream pipeline in which \textsc{Hi-OnTop} replaces an LLM-based segmenter.
 
 ### 3.1 Preliminaries
 
@@ -44,7 +44,7 @@ SuperDialseg default.  Baseline hyperparameters follow their published values.
 
 ### 3.2 Streaming Segmentation with Causal Context
 
-\textsc{Hi-DoTS} computes a context-aware distance $\delta_{\mathrm{eff}}(t)$
+\textsc{Hi-OnTop} computes a context-aware distance $\delta_{\mathrm{eff}}(t)$
 between $s_t$ and a windowed view of its immediate past, and emits a boundary
 whenever $\delta_{\mathrm{eff}}(t)$ exceeds a calibrated threshold.  We
 deliberately omit learned dynamics, future context, and per-topic state, so
@@ -97,7 +97,7 @@ set (TIAGE-train) at $m = 2$, $\rho = 0.7$, $a = 0.5$, and reused without
 modification across all benchmarks, encoders, and downstream tasks.  Only the
 threshold $\delta^{*}$ is data-adaptive (§3.3).
 
-**Complexity.**  Beyond the encoder forward pass, \textsc{Hi-DoTS} performs
+**Complexity.**  Beyond the encoder forward pass, \textsc{Hi-OnTop} performs
 $\mathcal{O}(m)$ operations per turn and maintains $\mathcal{O}(m)$ persistent
 state.  No gradients, no recurrence, no future buffer; the entire segmenter is
 $\sim$\,20 lines of NumPy.  In our measurements the encoder forward dominates
@@ -177,7 +177,7 @@ $\arg\max_{p \in \{60, 70, 80\}} \mathrm{Score}_{p}$ (cheap label-free sweep).
 
 ### 3.4 Application to Conversational Memory
 
-\textsc{Hi-DoTS} is designed as a low-cost segmentation module for
+\textsc{Hi-OnTop} is designed as a low-cost segmentation module for
 *memory-augmented dialogue systems*.  We instantiate it as a drop-in
 replacement for the LLM-based segmenter in SeCom \citep{pan2024secom}, a
 recent pipeline for long-horizon conversational QA on Long-MT-Bench+
@@ -188,7 +188,7 @@ generation — are unchanged.
 **Pipeline (SeCom-swap).**  Given a multi-session conversation $C$:
 
 1.  *Segmentation.*  Partition each session of $C$ into topic segments using
-    \textsc{Hi-DoTS} (§3.2).  We calibrate $\delta^{*}$ on $C$ itself via
+    \textsc{Hi-OnTop} (§3.2).  We calibrate $\delta^{*}$ on $C$ itself via
     Eq.\,(5); calibration is label-free, so this is not data leakage in the
     QA sense (boundary annotations are nowhere observed).
 2.  *Memory compression.*  Apply LLMLingua-2 \citep{pan2024llmlingua2} to
@@ -203,7 +203,7 @@ generation — are unchanged.
 Only step 1 is replaced; steps 2–4 retain SeCom's original implementation,
 which isolates segmentation quality as the controlled variable.
 
-**Encoder choice and latency.**  \textsc{Hi-DoTS} imposes no constraint on the
+**Encoder choice and latency.**  \textsc{Hi-OnTop} imposes no constraint on the
 encoder beyond $L_2$-normalized cosine geometry.  We compare two encoders of
 contrasting cost: MPNet (110M, fp32) and MiniLM-int8 (22M, ONNX
 \texttt{quint8\_avx2}; \citealp{onnxruntime}).  Because $\delta^{*}$ is
@@ -222,7 +222,7 @@ Observation 1 of §3.3.
 Sweeping the percentile family $p \in \{p_{60}, p_{70}, p_{80}\}$ on
 MiniLM-int8 yields a clean U-shape on the QA metric — $78.75 \rightarrow
 \mathbf{79.90}_{\,p_{70}} \rightarrow 75.87$ — with $p_{70}$ as the peak
-(\autoref{tab:downstream}).  At $p_{70}$, \textsc{Hi-DoTS} outperforms the
+(\autoref{tab:downstream}).  At $p_{70}$, \textsc{Hi-OnTop} outperforms the
 LLM-based segmenter it replaces (\texttt{gpt-4o-mini-Seg}, $78.13$ GPT-4
 Score, $646\,\text{ms/turn}$) by $+1.77$ points while being $8.4\times$ faster
 end-to-end, and trails the much larger Qwen-27B-Seg ($81.28$, $1{,}616$\,ms)
@@ -237,12 +237,12 @@ by only $1.4$ points at $21\times$ the throughput.
 - **\autoref{tab:percentile-grid}** — percentile $\times$ (encoder, bench) Score grid (10 percentiles × 9 cells = 90 entries). Source: `outputs/experiments/2026-05-23_percentile_generality/REPORT.md`. Anchors Claim 2.
 - **\autoref{tab:calib-n}** — $N$ vs.\ Score (3 encoders × 3 benches, $N \in \{25, 50, 100, 200, 400, 1000, 2000\}$). Source: `outputs/experiments/2026-05-23_calib_n_convergence/REPORT.md` + `2026-05-23_superseg_calib_size_check/REPORT.md`. Anchors Claim 1.
 - **\autoref{tab:downstream}** — Long-MT-Bench+ downstream QA + Pre./Seg. latency. Source: `outputs/reports/downstream_task.md`. Anchors §3.4 latency claim.
-- **\autoref{tab:segmentation}** — TIAGE/Dialseg711/SuperDialseg Score with all baselines (TextTiling, GreedySeg, CSM, GraphSeg, RoBERTa, Hi-DoTS). Source: `outputs/reports/dts_result.md` (pending).
+- **\autoref{tab:segmentation}** — TIAGE/Dialseg711/SuperDialseg Score with all baselines (TextTiling, GreedySeg, CSM, GraphSeg, RoBERTa, Hi-OnTop). Source: `outputs/reports/dts_result.md` (pending).
 
 ## TODO
 
 - [ ] Confirm citation keys against `references.bib`.
 - [ ] Replace placeholder \autoref labels with final ones.
-- [ ] Add Figure 1 (per-turn $\delta_{\mathrm{eff}}$ curve with $\delta^{*}$ overlay) — data ready in `outputs/experiments/.../diag_hidots_segmentation_demo/`.
+- [ ] Add Figure 1 (per-turn $\delta_{\mathrm{eff}}$ curve with $\delta^{*}$ overlay) — data ready in `outputs/experiments/.../diag_hiontop_segmentation_demo/`.
 - [ ] Add Figure 2 (percentile-Score curve) — data ready.
 - [ ] §3.4 GPT-4 score gap "within 0.5" — pending int8 pipeline (`b0yohgkef`) completion to verify.

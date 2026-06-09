@@ -31,7 +31,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
-from hi_em.hi_dots import HiDoTS  # noqa: E402
+from hi_em.hi_ontop import HiOnTop  # noqa: E402
 from run_encoder_comparison import (  # noqa: E402
     DSTAR_GRID, M, RHO, A, ENCODERS, MPNET_REUSE,
     load_dialogs, score_set,
@@ -44,7 +44,7 @@ PERCENTILES = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95]
 
 
 def delta_eff_seq(emb):
-    seg = HiDoTS(dim=emb.shape[1], delta_star=1.0,
+    seg = HiOnTop(dim=emb.shape[1], delta_star=1.0,
                  ctx_window=M, ctx_decay=RHO, ctx_blend_a=A)
     for s in emb:
         seg.assign(s.astype(np.float64))
@@ -158,7 +158,7 @@ def main() -> None:
         "498 · SuperDialseg 2000) → δ\\*_{p50,…,p95} (5 단위) 계산 → test "
         "Score. test-side oracle 과 비교.",
         "",
-        "**HP**: Hi-DoTS m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg "
+        "**HP**: Hi-OnTop m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg "
         "(0.5F1+0.25(1−Pk)+0.25(1−WD)).",
         "",
         "## Score (각 percentile 의 test Score; **bold** = 셀 best)",

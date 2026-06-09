@@ -1,6 +1,6 @@
-"""Per-turn CPU encode latency for the Hi-DoTS mpnet encoder.
+"""Per-turn CPU encode latency for the Hi-OnTop mpnet encoder.
 
-Hi-DoTS' ``assign()`` is genuinely per-turn, but the SeCom adapter encodes a
+Hi-OnTop' ``assign()`` is genuinely per-turn, but the SeCom adapter encodes a
 whole session in one batched call. The baseline segmenters (CSM / GreedySeg /
 GraphSeg) are measured turn-by-turn via streaming ``push()``. For an
 apples-to-apples *online* End-to-end latency, the encoder must also be timed

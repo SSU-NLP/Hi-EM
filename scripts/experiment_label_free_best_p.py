@@ -7,7 +7,7 @@ segment-length prior L 와 가장 가까운 predicted seg len 을 내는 percent
 
 Protocol:
 1. MTB+ 11 conv (54 session, 720 turn) — int8 ONNX encoder 로 embedding
-2. session 단위로 HiDoTS δ_eff sequence 계산
+2. session 단위로 HiOnTop δ_eff sequence 계산
 3. 모든 δ_eff pool → percentile grid {p50, p55, ..., p90} 에서 δ*_p
 4. 각 p 에 대해 session 별 boundary count → conv 별 predicted segment count →
    avg predicted segment length = total_turns / total_predicted_segments
@@ -32,7 +32,7 @@ from sentence_transformers import SentenceTransformer
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
-from hi_em.hi_dots import HiDoTS  # noqa: E402
+from hi_em.hi_ontop import HiOnTop  # noqa: E402
 
 MTBP_PATH = REPO / "benchmarks" / "SeCom" / "experiment" / "data" / "mtbp" / "mtbp.jsonl"
 OUT_EXP = REPO / "outputs" / "experiments" / "2026-05-25_label_free_best_p"
@@ -40,7 +40,7 @@ OUT_FIG = REPO / "outputs" / "figures"
 OUT_EXP.mkdir(parents=True, exist_ok=True)
 OUT_FIG.mkdir(parents=True, exist_ok=True)
 
-# Hi-DoTS HP (paper main)
+# Hi-OnTop HP (paper main)
 M, RHO, A = 2, 0.7, 0.5
 P_GRID = list(range(50, 91, 5))  # 50, 55, 60, ..., 90
 
@@ -68,8 +68,8 @@ def compute_delta_eff_per_session(encoder, mtbp):
                 continue
             vecs = encoder.encode(sess, normalize_embeddings=True,
                                    convert_to_numpy=True, show_progress_bar=False)
-            seg = HiDoTS(dim=vecs.shape[1], delta_star=1.0,
-                         ctx_window=M, ctx_decay=RHO, ctx_blend_a=A)
+            seg = HiOnTop(dim=vecs.shape[1], delta_star=1.0,
+                          ctx_window=M, ctx_decay=RHO, ctx_blend_a=A)
             for v in vecs:
                 seg.assign(v.astype(np.float64))
             deffs = np.array([float(h["delta_eff"]) for h in seg.history()])

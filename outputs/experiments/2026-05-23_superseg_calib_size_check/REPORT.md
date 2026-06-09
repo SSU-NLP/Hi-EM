@@ -4,7 +4,7 @@
 
 **방법**: 기존 MPNet train 캐시 400 dialog → bootstrap subsample N ∈ {50, 100, 200, 300, 400}, 각 N 에 3 seed → δ*_p80 / δ*_best-Score 계산 후 full 1322 test 에서 Score 측정.
 
-**HP**: Hi-DoTS m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg (0.5F1+0.25(1−Pk)+0.25(1−WD)).
+**HP**: Hi-OnTop m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg (0.5F1+0.25(1−Pk)+0.25(1−WD)).
 
 ## 결과 (mean ± std, 3 seeds)
 
@@ -33,7 +33,7 @@ calib 측 최고 (N=400 best-Score) = 0.4626 → **천장과 0.0017 차이**. �
 ## 결론
 
 - 400 dialog 가 superseg ~0.43–0.46 Score 천장의 원인이 **아님** — 50 도 같은 천장 도달.
-- 실제 천장은 **Hi-DoTS 알고리즘의 데이터 적합도** (m=2 local context + bounded cosine 으로 doc-grounded subtopic shift 감지 한계). 다음 결정은 calib 보강이 아니라 **알고리즘 측 변경** — 예: m=3+ context, learnable scoring, doc-grounded 구조 활용.
+- 실제 천장은 **Hi-OnTop 알고리즘의 데이터 적합도** (m=2 local context + bounded cosine 으로 doc-grounded subtopic shift 감지 한계). 다음 결정은 calib 보강이 아니라 **알고리즘 측 변경** — 예: m=3+ context, learnable scoring, doc-grounded 구조 활용.
 
 ## 한계
 

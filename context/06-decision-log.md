@@ -2412,7 +2412,7 @@ head-only ablation 시 재오픈 가능.
 **산출**: `outputs/experiments/2026-05-21_v425_csm_2ds_raw/REPORT.md`
 (해석/판정 채워짐), `context/methodology/v4.2.5.md` (결과/판정 채워짐).
 
-## 2026-05-22 — v4.1.3 dead-code audit → Hi-DoTS (reduced form) main 모델 채택
+## 2026-05-22 — v4.1.3 dead-code audit → Hi-OnTop (reduced form) main 모델 채택
 
 **맥락**: v4.1.3 (`HiEMSegmenterV413(HiEMSegmenterV411)`) 가 paper 의 main segmenter 인데,
 SeCom-swap latency profiling 중 `assign()` 시간의 77% 가 *안 쓰는* per-topic EventRNN
@@ -2438,14 +2438,14 @@ SeCom-swap latency profiling 중 `assign()` 시간의 77% 가 *안 쓰는* per-t
 4단계 SEM2 파이프라인 (sCRP prior / RNN PE / σ²_k likelihood / Bayes posterior) 은
 코드로 실행되나 출력 무영향.
 
-**결정** (codex:rescue 위임 → A안 채택): main 모델을 `src/hi_em/hi_dots.py` 의
-`HiDoTS` (reduced form, dead code 0, ~270줄) 로 재정의. v4.1.3 와 byte-identical
+**결정** (codex:rescue 위임 → A안 채택): main 모델을 `src/hi_em/hi_ontop.py` 의
+`HiOnTop` (reduced form, dead code 0, ~270줄) 로 재정의. v4.1.3 와 byte-identical
 검증 완료 (TIAGE/Dialseg711/SuperSeg 38,242 turn 0 mismatch). SEM2 full form
 (`sem_core_v413.py`) 은 `archive/legacy_sem_ablation/` 으로 이동 — 삭제 아님,
 paper 의 audit disclosure 재현용 ablation 증거물. `src/hi_em/sem_core_v411.py` 등
 공유 인프라는 v4.2.x/v4.3.x 가 의존하므로 src 유지.
 
-**근거 / SEM 계승 정합성**: codex 권고 — paper 는 Hi-DoTS 를 "full SEM2 구현" 이 아니라
+**근거 / SEM 계승 정합성**: codex 권고 — paper 는 Hi-OnTop 를 "full SEM2 구현" 이 아니라
 "SEM 의 prediction-error boundary 직관의 minimal online realization" 으로 서술하고,
 "SEM2-style RNN/sticky-CRP/variance 를 구현·audit 했으나 v4.1.3 default 에서 argmax
 결정에 영향 없음" 을 명시 (audit disclosure). main claim 은 graded boundary score +
@@ -2456,24 +2456,24 @@ online O(1) latency + SeCom LLM-backend drop-in + latency 대폭 감소로 재�
 을 codex 와 설계까지 했으나 — "새 메커니즘 도입 말고 dead code 제거만" 으로 최종 결정.
 revival 설계는 codex 스레드에 보존, 후속 버전 후보.
 
-**영향**: `secom_adapter.py` → HiDoTS 로 re-point (byte-identical 이라 SeCom-swap 결과 불변).
+**영향**: `secom_adapter.py` → HiOnTop 로 re-point (byte-identical 이라 SeCom-swap 결과 불변).
 `scripts/{run_v413_demo,run_v413_hp_sweep,analyze_v413_reentry}.py` 는 archived v413
-import. `scripts/secom_swap/{03b,13}` 는 HiDoTS 로 re-point. methodology 갱신 필요.
+import. `scripts/secom_swap/{03b,13}` 는 HiOnTop 로 re-point. methodology 갱신 필요.
 
 **2026-05-22 후속 — `ctx_window` default 3 → 2 정정**: parity 검증
-(`scripts/verify_hidots_parity.py`, `outputs/experiments/2026-05-22_hidots_parity/`)
+(`scripts/verify_hiontop_parity.py`, `outputs/experiments/2026-05-22_hiontop_parity/`)
 중 발견 — v4.1.x 코드 default `ctx_window=3` 이 보고 수치(TIAGE 0.4675 / Dialseg711
-0.5897 / SuperSeg 0.4631)를 낸 canonical TIAGE-cfg(`m=2`)와 어긋나 있었음. `HiDoTS`
+0.5897 / SuperSeg 0.4631)를 낸 canonical TIAGE-cfg(`m=2`)와 어긋나 있었음. `HiOnTop`
 는 main 모델이므로 default 를 보고 config 에 맞춰 `2` 로 정정. output parity 는 m 과
 무관하게 구조적으로 성립(매칭 config 에서 38,242 turn diff 0 재검증). 산출:
-`context/methodology/hi_dots.md` 신설, `outputs/reports/hi_dots_algorithm_walkthrough.{md,pdf}`
-신규, `scripts/verify_hidots_parity.py` 신규.
+`context/methodology/hi_ontop.md` 신설, `outputs/reports/hi_ontop_algorithm_walkthrough.{md,pdf}`
+신규, `scripts/verify_hiontop_parity.py` 신규.
 
 ---
 
-## 2026-05-23 — Hi-DoTS-v2: lexical-overlap 보정 변형 도입 (검증 대기, v1 유지)
+## 2026-05-23 — Hi-OnTop-v2: lexical-overlap 보정 변형 도입 (검증 대기, v1 유지)
 
-**배경**: [[hi-dots]] (`HiDoTS`) 의 알려진 실패 모드 — wording 은 비슷한데 topic 이
+**배경**: [[hi-ontop]] (`HiOnTop`) 의 알려진 실패 모드 — wording 은 비슷한데 topic 이
 바뀌는 경계(δ≈낮은데 GT 경계)를 인접 임베딩 cosine 신호로는 못 잡음. 사용자 요청:
 TextTiling 식 단어-빈도 겹침(lexical overlap) 신호를 δ_eff 에 결합해 v2 를 만들고
 세 벤치에서 검증. 사용자 확정 방향 = **어휘 겹침↓ → δ_eff↑ / 겹침↑ → δ_eff↓**
@@ -2481,7 +2481,7 @@ TextTiling 식 단어-빈도 겹침(lexical overlap) 신호를 δ_eff 에 결합
 
 **설계 (codex:rescue 위임)**: 결합 형태·인과적 lexical 신호 정의·HP·SEM 계승
 정당화 모두 codex 권고 채택.
-`δ_eff_v2 = clip_[0,2]( δ_base + w_lex·r_t·(lexdist − μ_lex) )`. `δ_base` = HiDoTS
+`δ_eff_v2 = clip_[0,2]( δ_base + w_lex·r_t·(lexdist − μ_lex) )`. `δ_base` = HiOnTop
 δ_eff 불변. `lexdist = 1 − cos_tf(L_{t-1}, subtf(u_t))`, L = 직전 m_lex turn 의
 ρ_lex-감쇠 sublinear-TF 합. `r_t` = 짧은-turn 신뢰 게이트. `μ_lex` = train median
 (residual centering). 가산형 채택 — 곱셈형은 δ_base 가 낮은 바로 그 실패 모드에서
@@ -2491,25 +2491,25 @@ TextTiling 식 단어-빈도 겹침(lexical overlap) 신호를 δ_eff 에 결합
 **SEM 계승 3-step**: lexical overlap 은 SEM 에 **없음** — SEM 은 structured scene
 dynamics 의 예측가능성으로 boundary 를 설명하지 단어 표면형 cohesion 을 추적하지
 않음(추상화 수준 차이, 의도적 금지 아님). 충돌은 제한적 — lexical 항은 sCRP/local-MAP
-가 아니므로 SEM 원형 충실 재현과는 이질적이나, Hi-DoTS-v2 목표가 SEM-inspired online
+가 아니므로 SEM 원형 충실 재현과는 이질적이나, Hi-OnTop-v2 목표가 SEM-inspired online
 segmentation 이므로 충돌 없음. lexical 항을 **SEM core 가 아닌 domain-specific
 보조 관측 feature** 로 기록. 우선순위: SEM 계승성(online·causal·local) > 도메인
 적합성 > SEM 원형 충실 재현. CLAUDE.md "Retrieval 은 importance score 만" 규칙과는
 무관(segmentation 영역).
 
-**결과** (`outputs/experiments/2026-05-23_hidots_v2/REPORT.md`, official SuperDialseg
+**결과** (`outputs/experiments/2026-05-23_hiontop_v2/REPORT.md`, official SuperDialseg
 Score, calib=train/validation/30%-tune, w_lex sweep): mean-3 v1 0.4927 → w_lex=0.30
 0.4989 (+0.0062). dialseg711 은 w_lex 단조 증가(+0.005~+0.015, robust 양),
 superseg 약한 양(+0.003~0.005), tiage noise(표본 100, 부호 불안정).
 
 **결정**: **v1 대체 승격 보류**. mean-3 +0.6 Score point 는 약하고 tiage 가 noise
 라 main 모델 교체 근거 부족. 단 dialseg711 단조 추세가 lexical 신호의 원리적 유효성을
-보이므로 폐기도 아님 — `HiDoTSV2` 는 검증 대기 변형으로 보존. **현 main 모델 =
-`HiDoTS` 유지.** 승격 재검토 전제: (a) multi-seed 유의성, (b) lexical HP 2차 grid,
+보이므로 폐기도 아님 — `HiOnTopV2` 는 검증 대기 변형으로 보존. **현 main 모델 =
+`HiOnTop` 유지.** 승격 재검토 전제: (a) multi-seed 유의성, (b) lexical HP 2차 grid,
 (c) v1 실패 모드 turn case-level 검증.
 
-**산출**: `src/hi_em/hi_dots_v2.py` 신규, `scripts/run_hidots_v2.py` 신규,
-`context/methodology/hi-dots-v2.md` 신규, `context/03-architecture.md` 갱신.
+**산출**: `src/hi_em/hi_ontop_v2.py` 신규, `scripts/run_hiontop_v2.py` 신규,
+`context/methodology/hi-ontop-v2.md` 신규, `context/03-architecture.md` 갱신.
 
 ---
 
@@ -2523,11 +2523,11 @@ forward is amortized with the surrounding pipeline's representation step)"* 라�
 와 정반대. baseline 들(GreedySeg 13 ms 등)은 encoder forward 포함이라 한 표에서
 비대칭.
 
-**조치**: `scripts/measure_hidots_latency.py` 신규 — Def-DTS bundle test split 에서
+**조치**: `scripts/measure_hiontop_latency.py` 신규 — Def-DTS bundle test split 에서
 seed=0 으로 벤치당 500-turn budget subsample, **encoder 캐시 off + batch=1 + 매 turn
 perf_counter (encode + assign)**, 첫 발화 제외(baseline 들과 동일 정책). encoder
 = MPNet (`multi-qa-mpnet-base-dot-v1`) CPU. 결과 (`outputs/experiments/
-2026-05-23_hidots_latency_realtime/`):
+2026-05-23_hiontop_latency_realtime/`):
 
 | 벤치 | n turn | Pre. mean (ms) | Pre. p50 | Seg. mean | Seg. p50 |
 |---|---:|---:|---:|---:|---:|
@@ -2546,6 +2546,60 @@ encoder forward).
 시 Pre. 한 자릿수 ms 까지 떨어질 가능성 — 별도 측정 필요. 표본은 벤치당 500-turn
 budget (전수 36k turn 측정 ~6 시간 회피).
 
-**산출**: `scripts/measure_hidots_latency.py` 신규, `outputs/experiments/
-2026-05-23_hidots_latency_realtime/{REPORT.md,latency.json}` 신규,
+**산출**: `scripts/measure_hiontop_latency.py` 신규, `outputs/experiments/
+2026-05-23_hiontop_latency_realtime/{REPORT.md,latency.json}` 신규,
 `outputs/reports/dts_result.md` 갱신.
+
+### 2026-06-08: AMI 도메인 robustness 진단 + Hi-OnTop v3(granularity-adaptive) 라인 신설 + Hi-DoTS→Hi-OnTop rename
+
+**1) AMI(회의 음성) 도메인 진단 — turn 단위 붕괴, 원인 = granularity 불일치**
+
+AMI scenario meetings(NXT manual annotation, manifest 12미팅)로 Hi-OnTop 도메인
+robustness 검증. **turn(=AMI segment) 단위로 완전 붕괴**:
+- 같은 화제 인접 발화 cosine 중앙값 **0.167** (60%가 cos<0.2), δ_eff 경계 분리
+  **AUC 0.567**(≈무정보), top-level F1 0.05~0.07, δ* p80=0.88·p98=0.98(거의 전 인접쌍이 경계처럼).
+- 원인: 회의 발화 31%가 1단어 backchannel(yeah/okay/mm-hmm), median 4단어로 짧고
+  다화자 반응형 → "같은 화제=비슷한 발화" 라는 방법 전제 불성립. 진짜 top 경계의
+  31~44%가 ≤2단어 발화 위에 있어 **후처리(짧은 발화 drop/경계금지/defer) 전부 실패**
+  (실측: F1 0.05→0.02, 신호 자체가 빔).
+- **고정 시간 블록(전 화자 발화 이어붙임)으로 단위 교체 시 회복**: win sweep —
+  30s AUC0.669, 45s 0.689, **60s 0.664/bestF1 0.379·bestScore 0.446**, 90s 0.629.
+  같은화제 cos 0.167→0.44. **60s가 sweet spot이나 = AMI에 최적화된 magic number**
+  (label-free 철학 위배). 산출: `scripts/ami_topic_eval.py`(turn), `ami_topic_block_eval.py`(블록),
+  `outputs/experiments/2026-06-08_ami_topic_block_w{30,45,60,90}/`.
+
+**2) 결정 — Hi-OnTop v3 = "granularity 적응" major 라인 신설, 경쟁 후보 2종**
+
+적응 축 정리: v1=고정 / **v2=threshold 적응**(lexical 잔차가 turn별 effective δ*) /
+**v3=granularity 적응**(무엇을 분절기에 넣을지). v3 아래 같은 문제의 경쟁 해법 2종:
+- **v3.1 (B)** — 명시적 단위 적응: 시간 대신 content량(~N단어/토큰) 기준 적응 블록.
+  단위 선택 층을 δ_eff 앞에 둠. (TextTiling baseline 과는 *역할* 이 다름 — baseline은
+  최종 경계 산출기, v3.1은 unit 형성기.)
+- **v3.2 (C)** — SEM 계승형: 고정 블록 폐기, turn 유지하되 각 발화를 **현재 segment
+  누적 centroid μ_k**(=현재 event model)와 비교 + 짧은 발화 down-weight + sCRP
+  stickiness(α)로 단일 blip 흡수 → segment 경계가 sequential MAP에서 emerge, magic 단위 없음.
+  δ_ctx(고정 window m=2)의 *segment 전체-window + 경계 reset* 일반화.
+
+**승자 = 정식 v3 승격** (.x 후보/ablation 보존). 결정 규칙(사후 cherry-pick 방지):
+(a) AMI turn 단위 AUC 0.567/F1 0.05 대비 유의 상승, (b) DTS 3벤치(TIAGE/Dialseg711/
+SuperSeg) v1/v2 무회귀, (c) magic number 없이 label-free/deployable 유지(남는 HP는
+인코더·모델 속성, 도메인 의존 아님). 기존 experimental→승격 패턴(v3.3.10→v4.1.1) 계승.
+
+**SEM 계승 3-step (v3.2 핵심)**: ① backchannel 처리는 SEM/SEM2 입력 도메인(풍부한
+scene/단락) 밖이라 미구현 — 의도적 배제 아님. ② 누적 centroid 비교 = SEM `f_k.update(x_t)`
+근사, α의 blip 흡수 = sticky prior 본래 역할 → SEM 메커니즘 직접 구현, 철학 충돌 없음.
+③ 본 엔트리로 근거 기록. **v3.1(B)의 lexical/표면 cohesion은 SEM 비계승**(sCRP 연결고리
+없음) — 실용 대안으로만.
+
+**구현 순서**: v3.2(C) 먼저(`hi_ontop_v3_event_exp.py`/`HiOnTopV3Event`) → AMI+DTS 실측 →
+v3.1(B)(`hi_ontop_v3_unit_exp.py`/`HiOnTopV3Unit`) → 비교표 → 승자 v3 승격.
+
+**3) Hi-DoTS → Hi-OnTop 전면 rename (흔적 제거)**
+
+Hi-DoTS는 Hi-OnTop의 옛 이름. 코드는 이미 마이그레이션 완료(`hi_ontop.py`/`HiOnTop`),
+잔존하던 backward-compat shim(`hi_dots.py`/`hi_dots_v2.py`)·별칭(`HiDoTS=HiOnTop`)·파일명·
+디렉토리·문서 흔적을 전부 제거. shim 2개 삭제, 파일/디렉토리 44개 rename, 텍스트 67개
+파일 치환(Hi-DoTS→Hi-OnTop 등). DTS(task)·Def-DTS(외부레포)는 불변. 검증: 텍스트 흔적 0,
+import smoke OK, 테스트 회귀 0(267 passed; 기존 실패 4건은 STM/locomo-data 무관 이슈).
+**미해결**: figure PDF/PNG 내부 렌더링 텍스트(압축 스트림)는 재생성 필요, methodology
+`hi_ontop.md`/`hi-ontop.md` 중복(구 `hi_dots.md`/`hi-dots.md`) 병합 보류.

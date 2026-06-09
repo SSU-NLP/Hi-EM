@@ -4,7 +4,7 @@
 
 **방법**: 각 (인코더, 벤치) 셀에서 test 자체에서 δ* sweep [0.35, 0.95] (data-snooping 허용) → calib 와 무관한 알고리즘+데이터 천장.
 
-**HP**: Hi-DoTS m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg (0.5F1+0.25(1−Pk)+0.25(1−WD)).
+**HP**: Hi-OnTop m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg (0.5F1+0.25(1−Pk)+0.25(1−WD)).
 
 ## 데이터 크기
 

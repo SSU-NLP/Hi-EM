@@ -57,7 +57,7 @@ def get_v413_graded_scores(conv: dict, delta_star: float):
     Returns: (flat_scores, session_break_indices, ours_boundaries_global).
     Each session is processed with a fresh segmenter (same as adapter).
     """
-    from hi_em.hi_dots import HiDoTS
+    from hi_em.hi_ontop import HiOnTop
 
     # int8 ONNX encoder to match the int8 p70 boundary overlay in the figure.
     encoder = SentenceTransformer(
@@ -73,7 +73,7 @@ def get_v413_graded_scores(conv: dict, delta_star: float):
             continue
         vecs = encoder.encode(sess, normalize_embeddings=True,
                               convert_to_numpy=True, show_progress_bar=False)
-        seg = HiDoTS(dim=384, delta_star=delta_star)
+        seg = HiOnTop(dim=384, delta_star=delta_star)
         for t, (v, _) in enumerate(zip(vecs, sess)):
             _, is_bnd = seg.assign(v.astype(np.float64))
             flat_scores.append(seg.last_graded_score)

@@ -35,7 +35,7 @@ from sentence_transformers import SentenceTransformer
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
-from hi_em.hi_dots import HiDoTS  # noqa: E402
+from hi_em.hi_ontop import HiOnTop  # noqa: E402
 
 MTBP_PATH = REPO / "benchmarks/SeCom/experiment/data/mtbp/mtbp.jsonl"
 RDIR = REPO / "benchmarks/SeCom/experiment/result/mtbp"
@@ -45,7 +45,7 @@ OUT_FIG = REPO / "outputs/figures"
 OUT_EXP.mkdir(parents=True, exist_ok=True)
 OUT_FIG.mkdir(parents=True, exist_ok=True)
 
-P_GRID = list(range(60, 81))  # 60..80 inclusive, step 1
+P_GRID = list(range(5, 96))  # 5..95 inclusive, step 1 (expanded 2026-05-26)
 M, RHO, A = 2, 0.7, 0.5
 
 ENCODERS = {
@@ -116,8 +116,8 @@ def compute_delta_eff_from_embeddings(per_conv_emb):
     for cid, sess_emb in per_conv_emb.items():
         sess_deff = []
         for si, vecs in sess_emb:
-            seg = HiDoTS(dim=vecs.shape[1], delta_star=1.0,
-                         ctx_window=M, ctx_decay=RHO, ctx_blend_a=A)
+            seg = HiOnTop(dim=vecs.shape[1], delta_star=1.0,
+                          ctx_window=M, ctx_decay=RHO, ctx_blend_a=A)
             for v in vecs:
                 seg.assign(v.astype(np.float64))
             deffs = np.array([float(h["delta_eff"]) for h in seg.history()])
@@ -126,7 +126,7 @@ def compute_delta_eff_from_embeddings(per_conv_emb):
     return per_conv
 
 
-def hidots_global_boundary_indices(per_conv_deff, dstar):
+def hiontop_global_boundary_indices(per_conv_deff, dstar):
     """For each conv, return list of GLOBAL turn indices that are boundaries
     (i.e. boundary AFTER that turn).
 
@@ -218,10 +218,10 @@ def main() -> None:
         sweep_rows = []
         for p in P_GRID:
             dstar = float(np.percentile(pool, p))
-            hidots_bnd = hidots_global_boundary_indices(per_conv_deff, dstar)
+            hiontop_bnd = hiontop_global_boundary_indices(per_conv_deff, dstar)
             row = {"p": p, "dstar": dstar}
             for ref, llm_b in llm_bnd.items():
-                f1s = [pairwise_f1(hidots_bnd[c], llm_b[c]) for c in cids]
+                f1s = [pairwise_f1(hiontop_bnd[c], llm_b[c]) for c in cids]
                 row[f"f1_vs_{ref}"] = float(np.mean(f1s))
             sweep_rows.append(row)
         sweep_cache[enc_name] = sweep_rows

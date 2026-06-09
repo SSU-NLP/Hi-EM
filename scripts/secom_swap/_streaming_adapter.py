@@ -137,7 +137,7 @@ def run_streaming_segmenter(
         # Preprocess = all work before the segmentation decision (tokenization,
         # stopword/POS filter, BoW, GloVe lookup, neural fwd). Baselines that
         # already split this explicitly expose _preprocess_sec; for those where
-        # the only preprocess IS the neural forward (GreedySeg/CSM/Hi-DoTS), we
+        # the only preprocess IS the neural forward (GreedySeg/CSM/Hi-OnTop), we
         # fall back to _neural_sec so the semantic is consistent.
         lat.preprocess_sec += float(
             getattr(seg, "_preprocess_sec",

@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from hi_em.hi_dots import HiDoTS  # noqa: E402
+from hi_em.hi_ontop import HiOnTop  # noqa: E402
 
 SDS = REPO_ROOT / "benchmarks/superdialseg_data"
 CACHE = REPO_ROOT / "outputs/runs/_misc"
@@ -83,7 +83,7 @@ def collect_scores(ds):
     assert len(embs) == len(dia)
     gs, ys = [], []
     for (utts, yt), emb in zip(dia, embs):
-        seg = HiDoTS(dim=emb.shape[1], delta_star=DSTAR[ds],
+        seg = HiOnTop(dim=emb.shape[1], delta_star=DSTAR[ds],
                      ctx_window=M, ctx_decay=RHO, ctx_blend_a=A)
         for t, v in enumerate(emb):
             seg.assign(np.asarray(v, dtype=np.float64))

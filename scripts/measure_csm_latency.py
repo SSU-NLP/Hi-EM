@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """CSM-online per-turn latency split (Pre. vs Seg., idle CPU, realtime).
 
-dts_result.md 의 CSM-Style 행 latency 컬럼 채우기 위함. Hi-DoTS latency
-측정 (`measure_hidots_latency.py`) 과 동일 정의:
+dts_result.md 의 CSM-Style 행 latency 컬럼 채우기 위함. Hi-OnTop latency
+측정 (`measure_hiontop_latency.py`) 과 동일 정의:
 - per-turn 매번 perf_counter
 - Pre. = coherence_score (= tokenize + BERT forward) 1 회
 - Seg. = push() 안의 나머지 (depth + welford + threshold + emit)

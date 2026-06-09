@@ -18,6 +18,59 @@ segmentation 단계 ms/turn (idle CPU·MTB+ 720턴·batch=1), 출처 `latency_sp
 3. p60 / p80 행은 percentile 민감도 보고용 ablation.
 자세한 절차는 §해석 § "Calibration 절차" 참고.
 
+### Label-free calibration 결과 (LLM-distillation, MTB+ pool)
+
+§4.4.2 / Fig P 본문에 대응. MTB+ 전체 (n=666 δ_eff) 에서 각 LLM segmenter
+ref 를 pseudo-label 로 두고 percentile p ∈ {60..80} 1-step grid 를 sweep, F1 최대화.
+인코더 × LLM ref 별 수렴된 best_p / δ\* / F1:
+
+| Encoder | LLM Ref | best_p | δ\* | F1 |
+|:--------|:--------|------:|------:|------:|
+| MPNet       | GPT-5             | 73 | 0.5037 | 0.920 |
+| MPNet       | Qwen3.5-27B       | 71 | 0.4854 | 0.918 |
+| MPNet       | Qwen3.5-122B-A10B | 71 | 0.4854 | 0.917 |
+| MiniLM      | GPT-5             | 72 | 0.7638 | 0.921 |
+| MiniLM      | Qwen3.5-27B       | 72 | 0.7638 | 0.922 |
+| MiniLM      | Qwen3.5-122B-A10B | 72 | 0.7638 | 0.913 |
+| MiniLM-int8 | GPT-5             | 72 | 0.7678 | 0.914 |
+| MiniLM-int8 | Qwen3.5-27B       | 72 | 0.7678 | 0.916 |
+| MiniLM-int8 | Qwen3.5-122B-A10B | 68 | 0.6511 | 0.909 |
+
+추세: best_p ≈ 71–73 (인코더·LLM ref 무관, 122B-A10B 한 셀만 68). Layer 1 의
+p70 선택은 이 분포의 mode 와 일치 → out-of-distribution selection (DTS-기반)
+이지만 LLM-distill 의 in-distribution best_p 와 거의 동일. 데이터: `outputs/
+experiments/2026-05-25_llm_distillation_calib/results.json` + Fig P
+(`outputs/figures/figure_P_distill_n_convergence_mtbp.{pdf,png}`).
+
+```latex
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llrrr}
+\toprule
+\textbf{Encoder} & \textbf{LLM Ref} & \textbf{best $p$} & \textbf{$\delta^\ast$} & \textbf{F1} \\
+\midrule
+\multirow{3}{*}{MPNet}       & GPT-5             & 73 & 0.5037 & 0.920 \\
+                              & Qwen3.5-27B       & 71 & 0.4854 & 0.918 \\
+                              & Qwen3.5-122B-A10B & 71 & 0.4854 & 0.917 \\
+\midrule
+\multirow{3}{*}{MiniLM}      & GPT-5             & 72 & 0.7638 & 0.921 \\
+                              & Qwen3.5-27B       & 72 & 0.7638 & 0.922 \\
+                              & Qwen3.5-122B-A10B & 72 & 0.7638 & 0.913 \\
+\midrule
+\multirow{3}{*}{MiniLM-int8} & GPT-5             & 72 & 0.7678 & 0.914 \\
+                              & Qwen3.5-27B       & 72 & 0.7678 & 0.916 \\
+                              & Qwen3.5-122B-A10B & 68 & 0.6511 & 0.909 \\
+\bottomrule
+\end{tabular}
+\caption{Label-free LLM-distillation calibration on Long-MT-Bench+ ($n=666$ $\delta_{\rm eff}$).
+For each encoder $\times$ LLM segmenter reference, percentile $p\in[60,80]$ is selected by
+maximizing pairwise boundary $F_1$ against the LLM-pseudo-boundary. The resulting best $p$ is
+remarkably stable (71--73) across encoders and reference LLMs.}
+\label{tab:llm_distill_best_p}
+\end{table}
+```
+
 ## LaTeX
 
 ```latex
@@ -62,18 +115,36 @@ GreedySeg-Style-Seg
 & 68.58 & 17.69 & 37.68 & 21.41 & 30.92 & 88.61 & 5.38 & 1495 & 296.54 & 15.06 \\
 CSM-Style-Seg
 & 64.24 & 14.88 & 33.77 & 18.38 & 27.72 & 87.92 & 9.17 & 2430 & 305.26 & 17.27 \\
-Hi-OnTop (MPNet, p60)
+Ours (MPNet, p60)
 & 77.50 & 21.13 & 40.79 & 24.76 & 33.92 & 89.19 & 2.58 & 776 & 106.93 & 0.058 \\
-Hi-OnTop (MPNet, p70)
+Ours (MPNet, p70)
 & 79.27 & 20.62 & 41.03 & 24.17 & 34.01 & 89.19 & 3.13 & 894 & 106.93 & 0.056 \\
-Hi-OnTop (MPNet, p80)
+Ours (MPNet, p80)
 & 77.40 & 19.63 & 39.47 & 23.21 & 32.72 & 88.91 & 4.27 & 1124 & 106.93 & 0.052 \\
-Hi-OnTop (int8, p60)
+Ours (MiniLM, p60)
+& 78.26 & 20.60 & 41.13 & 24.78 & 34.15 & 89.18 & 2.59 & 783 & 59.16 & 0.061 \\
+Ours (MiniLM, p70)
+& 80.28 & 20.64 & 41.37 & 24.60 & 34.26 & 89.26 & 3.00 & 861 & 59.16 & 0.105 \\
+Ours (MiniLM, p80)
+& 77.22 & 19.63 & 39.82 & 23.26 & 33.13 & 89.02 & 4.16 & 1132 & 59.16 & 0.070 \\
+Ours (MiniLM-int8, p60)
 & 78.75 & 20.53 & 41.23 & 24.70 & 34.25 & 89.23 & 2.60 & 785 & 45.70 & 0.049 \\
-Hi-OnTop (int8, p70)
+Ours (MiniLM-int8, p70)
 & 79.90 & 20.86 & 41.21 & 24.62 & 34.37 & 89.27 & 3.00 & 863 & 45.70 & 0.069 \\
-Hi-OnTop (int8, p80)
+Ours (MiniLM-int8, p80)
 & 75.87 & 19.06 & 39.17 & 22.86 & 32.50 & 88.90 & 4.28 & 1146 & 45.70 & 0.050 \\
+Ours (MPNet, cal-p71) 
+& 79.17 & 20.29 & 40.50 & 23.80 & 33.43 & 89.11 & 3.18 & 907 & 106.93 & 0.188 \\
+Ours (MiniLM, cal-p72)
+& 79.31 & 20.67 & 40.91 & 23.95 & 33.72 & 89.19 & 3.10 & 895 & 59.16 & 0.070 \\
+Ours (MiniLM-int8, cal-p72)
+& 80.14 & 20.96 & 41.09 & 24.49 & 34.16 & 89.28 & 3.14 & 905 & 45.70 & 0.073 \\
+\midrule
+\multicolumn{11}{l}{\textit{Ablation — Hi-OnTop blend weight $a$ (MPNet, p70):}} \\
+Ours (MPNet, $a{=}0.0$, ctx only)
+& 78.72 & 21.43 & 41.21 & 24.49 & 34.15 & 89.23 & 3.03 & 867 & 106.93 & 0.318 \\
+Ours (MPNet, $a{=}1.0$, prev only)
+& 78.75 & 20.43 & 40.33 & 23.72 & 33.46 & 89.10 & 3.10 & 891 & 106.93 & 0.071 \\
 
 \midrule
 \multicolumn{11}{c}{\textbf{Supervised}} \\
@@ -94,7 +165,7 @@ Qwen3.5-122B-A10B-Seg
 Qwen3.5-27B-Seg
 & 81.28 & 21.42 & 41.23 & 24.58 & 34.17 & 89.28 & 2.99 & 863 & -- & -- \\
 GPT-4o-mini-Seg
-& 78.13 & 21.89 & 40.71 & 23.94 & 33.62 & 89.14 & 2.56 & 750 & -- & 646 \\
+& 78.13 & 21.89 & 40.71 & 23.94 & 33.62 & 89.14 & 2.56 & 750 & -- & -- \\
 Qwen3.5-4B-Seg
 & 76.77 & 20.51 & 40.10 & 23.42 & 33.12 & 89.06 & 3.27 & 945 & -- & -- \\
 Llama3.2-3B-Seg
@@ -125,9 +196,15 @@ Qwen3.5-2B-Seg
 | **unsup. DTS** | **Hi-OnTop (MPNet, p60)** | **77.50** | 21.13 | 40.79 | 24.76 | 33.92 | 89.19 | 2.58 | 776 | 106.93 | **0.058** |
 | **unsup. DTS** | **Hi-OnTop (MPNet, p70)** | **79.27** | 20.62 | 41.03 | 24.17 | 34.01 | 89.19 | 3.13 | 894 | 106.93 | **0.056** |
 | **unsup. DTS** | **Hi-OnTop (MPNet, p80)** | **77.40** | 19.63 | 39.47 | 23.21 | 32.72 | 88.91 | 4.27 | 1124 | 106.93 | **0.052** |
+| **unsup. DTS** | **Hi-OnTop (MiniLM, p60)** | **78.26** | 20.60 | 41.13 | 24.78 | 34.15 | 89.18 | 2.59 | 783 | **59.16** | **0.061** |
+| **unsup. DTS** | **Hi-OnTop (MiniLM, p70)** | **80.28** | 20.64 | 41.37 | 24.60 | 34.26 | 89.26 | 3.00 | 861 | **59.16** | **0.105** |
+| **unsup. DTS** | **Hi-OnTop (MiniLM, p80)** | **77.22** | 19.63 | 39.82 | 23.26 | 33.13 | 89.02 | 4.16 | 1132 | **59.16** | **0.070** |
 | **unsup. DTS** | **Hi-OnTop (int8, p60)** | **78.75** | 20.53 | 41.23 | 24.70 | 34.25 | 89.23 | 2.60 | 785 | **45.70** | **0.049** |
 | **unsup. DTS** | **Hi-OnTop (int8, p70)** | **79.90** | 20.86 | 41.21 | 24.62 | 34.37 | 89.27 | 3.00 | 863 | **45.70** | **0.069** |
 | **unsup. DTS** | **Hi-OnTop (int8, p80)** | 75.87 | 19.06 | 39.17 | 22.86 | 32.50 | 88.90 | 4.28 | 1146 | **45.70** | **0.050** |
+| **unsup. DTS** | **Hi-OnTop (MPNet, best-p=71)** | 79.17 | 20.29 | 40.50 | 23.80 | 33.43 | 89.11 | 3.18 | 907 | 106.93 | **0.188** |
+| **unsup. DTS** | **Hi-OnTop (MiniLM, best-p=72)** | **79.31** | 20.67 | 40.91 | 23.95 | 33.72 | 89.19 | 3.10 | 895 | **59.16** | **0.070** |
+| **unsup. DTS** | **Hi-OnTop (int8, best-p=72)** | **80.14** | 20.96 | 41.09 | 24.49 | 34.16 | 89.28 | 3.14 | 905 | **45.70** | **0.073** |
 | sup. DTS | RoBERTa-Style-Seg | 74.44 | 18.67 | 37.92 | 22.34 | 31.04 | 88.68 | 3.21 | 929 | 428.09 | 0.01 |
 | LLM DTS (SeCom) | GPT-4o-mini-Seg | 78.13 | 21.89 | 40.71 | 23.94 | 33.62 | 89.14 | 2.56 | 750 | — | 646 |
 | LLM DTS (SeCom) | GPT-5-Seg | 80.63 | 20.98 | 41.16 | 24.67 | 33.91 | 89.25 | 3.09 | 892 | — | 737 |

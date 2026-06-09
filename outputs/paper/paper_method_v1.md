@@ -1,4 +1,4 @@
-# §3 Method — Hi-DoTS
+# §3 Method — Hi-OnTop
 
 > EMNLP-style draft (Algorithm-first). Outline:
 > - 3.1 Preliminaries
@@ -34,7 +34,7 @@ following the SuperDialseg benchmark.
 
 ## 3.2 Streaming Segmentation with Causal Context
 
-We propose **Hi-DoTS** (*Hi*erarchical *Do*t-product *T*opic *S*egmenter), a
+We propose **Hi-OnTop** (*Hi*erarchical *Do*t-product *T*opic *S*egmenter), a
 single-pass online segmenter whose decision relies on a context-aware distance
 $\delta_{\text{eff}}(t)$ between the current utterance and a windowed view of its
 past. The design is intentionally minimalist: no learned dynamics, no future
@@ -84,7 +84,7 @@ defaults are selected once on TIAGE-train and held constant across all
 benchmarks, encoders, and downstream tasks; only $\delta^{*}$ is data-adaptive
 (Section 3.3).
 
-**Complexity.**  Hi-DoTS is $\mathcal{O}(m)$ per turn in arithmetic operations
+**Complexity.**  Hi-OnTop is $\mathcal{O}(m)$ per turn in arithmetic operations
 beyond the encoder forward pass, with $\mathcal{O}(m)$ persistent state.  No
 gradients, no recurrent computation, no future buffer — the entire segmenter is
 expressible as $\sim 20$ lines of numpy.  In practice the encoder forward
@@ -137,7 +137,7 @@ $\mathcal{C}$.
   average across 9 cells.
 
 Together these two observations license a *practical recipe* for deploying
-Hi-DoTS to a new domain with neither boundary labels nor expensive
+Hi-OnTop to a new domain with neither boundary labels nor expensive
 hyperparameter search: gather $\sim 100$ unlabeled in-domain dialogs, encode
 once, and read off $\delta^{*}_{p_{70}}$.
 
@@ -145,7 +145,7 @@ once, and read off $\delta^{*}_{p_{70}}$.
 
 ## 3.4 Application to Conversational Memory
 
-Hi-DoTS is intended as a low-cost segmentation module for **memory-augmented
+Hi-OnTop is intended as a low-cost segmentation module for **memory-augmented
 dialogue systems**.  We instantiate it as a drop-in replacement for the
 LLM-based segmenter inside the SeCom\,\citep{secom} pipeline for long-horizon
 QA on Long-MT-Bench+.
@@ -154,7 +154,7 @@ QA on Long-MT-Bench+.
 performs the following:
 
 1.  **Segmentation** — partition each session of $C$ into topic segments using
-    Hi-DoTS (Section 3.2).
+    Hi-OnTop (Section 3.2).
 2.  **Memory compression** — apply LLMLingua-2 to each segment to produce a
     compressed memory token sequence.
 3.  **Retrieval** — index compressed segments via MPNet + FAISS; at query time,
@@ -164,12 +164,12 @@ performs the following:
 
 Crucially, **only step 1 is replaced**; steps 2–4 retain SeCom's original
 implementation.  This isolates the effect of segmentation quality on
-end-to-end QA, and lets us compare Hi-DoTS to (i) an LLM-based segmenter
+end-to-end QA, and lets us compare Hi-OnTop to (i) an LLM-based segmenter
 (SeCom's own; \texttt{gpt-4o-mini-Seg}), (ii) unsupervised baselines
 (TextTiling, GreedySeg, CSM, GraphSeg), and (iii) a supervised baseline
 (RoBERTa).
 
-**Encoder choice and latency.**  Hi-DoTS imposes no constraint on the encoder
+**Encoder choice and latency.**  Hi-OnTop imposes no constraint on the encoder
 beyond L2-normalized cosine geometry.  We instantiate it with three encoders of
 increasing compression: MPNet (110M, fp32), MiniLM (22M, fp32), and
 MiniLM-int8 (22M, quantized ONNX with \texttt{quint8\_avx2}).  Because

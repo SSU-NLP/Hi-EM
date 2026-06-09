@@ -22,18 +22,9 @@ OUT_DIR = REPO_ROOT / "outputs/experiments/2026-05-21_v413_secom_swap/plots"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Order aligned with downstream_task.md (2026-05-24).
+# Order: LLM top-left → algorithmic unsup → sup → Hi-OnTop (ours) bottom-right.
 METHODS = [
-    ("texttiling",       "TextTiling"),
-    ("graphseg",         "GraphSeg"),
-    ("greedyseg",        "GreedySeg"),
-    ("csm",              "CSM"),
-    ("ours_p60",         r"Hi-OnTop (MPNet, $p_{60}$)"),
-    ("ours_p70",         r"Hi-OnTop (MPNet, $p_{70}$)"),
-    ("ours_hidots",      r"Hi-OnTop (MPNet, $p_{80}$)"),
-    ("ours_int8_p60",    r"Hi-OnTop (int8, $p_{60}$)"),
-    ("ours_int8_p70",    r"Hi-OnTop (int8, $p_{70}$)"),
-    ("ours_int8_p80",    r"Hi-OnTop (int8, $p_{80}$)"),
-    ("roberta",          "RoBERTa"),
+    # LLM — top-left (GPT4Score desc)
     ("gpt5seg",          "GPT-5"),
     ("qwen35_122bseg",   "Qwen3.5-122B-A10B"),
     ("qwen27bseg",       "Qwen3.5-27B"),
@@ -42,6 +33,20 @@ METHODS = [
     ("llama32_3bseg",    "Llama3.2-3B"),
     ("ministral3_3bseg", "Mistral3-3B"),
     ("qwen35_2bseg",     "Qwen3.5-2B"),
+    # algorithmic unsupervised
+    ("texttiling",       "TextTiling"),
+    ("graphseg",         "GraphSeg"),
+    ("greedyseg",        "GreedySeg"),
+    ("csm",              "CSM"),
+    # supervised
+    ("roberta",          "RoBERTa"),
+    # Hi-OnTop (ours) — bottom-right
+    ("ours_p60",         r"Hi-OnTop (MPNet, $p_{60}$)"),
+    ("ours_p70",         r"Hi-OnTop (MPNet, $p_{70}$)"),
+    ("ours_hiontop",      r"Hi-OnTop (MPNet, $p_{80}$)"),
+    ("ours_int8_p60",    r"Hi-OnTop (int8, $p_{60}$)"),
+    ("ours_int8_p70",    r"Hi-OnTop (int8, $p_{70}$)"),
+    ("ours_int8_p80",    r"Hi-OnTop (int8, $p_{80}$)"),
 ]
 
 

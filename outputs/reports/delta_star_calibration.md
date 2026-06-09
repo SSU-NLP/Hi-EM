@@ -2,10 +2,10 @@
 
 `outputs/experiments/2026-05-23_encoder_comparison/` · 2026-05-23
 
-Hi-DoTS 의 boundary threshold δ\* 를 인코더 3종(MPNet / MiniLM / MiniLM-int8)
+Hi-OnTop 의 boundary threshold δ\* 를 인코더 3종(MPNet / MiniLM / MiniLM-int8)
 에 대해 보정하고 segmentation Score 를 비교. 데이터 = superdialseg_data,
 metric = 공식 SuperDialseg `Score = 0.5·F1 + 0.25·(1−Pk) + 0.25·(1−WD)`.
-Hi-DoTS HP: m=2, ρ=0.7, a=0.5.
+Hi-OnTop HP: m=2, ρ=0.7, a=0.5.
 
 **δ\* 보정** — 인코더별, 벤치별 train split 에서:
 TIAGE→TIAGE-train · SuperDialseg→SuperDialseg-train(≤400 서브샘플) ·
@@ -110,7 +110,7 @@ ll
 \bottomrule
 \end{tabular*}
 
-\caption{Segmentation performance by encoder. $p_x \in \{50,\dots,95\}$: Score with $\delta^{*}$ set to the $x$-th percentile of held-out $\delta_{\text{eff}}$ (label-free, deployable). \textbf{sup}: $\delta^{*}$ from continuous sweep on the labeled \emph{train} split applied to test (supervised tuning, held-out evaluation; tiage/superseg = train split, dialseg711 = test 70:30 split with 70\% as calib). \textbf{oracle}: $\delta^{*}$ from continuous sweep on the \emph{test} split itself (supervised upper bound, label leakage, not deployable). $\delta^{*}_{\text{best }p}$ reports the threshold value at the per-row sup $p_x$ within the percentile family (the bolded $p_x$ Score column) --- semi-supervised pick among 10 percentile options. $\delta^{*}_{\text{sup}}$ and $\delta^{*}_{\text{oracle}}$ are the continuous sweep thresholds for the corresponding Score columns. Per-encoder \textit{Avg.}\ rows aggregate the three datasets (Avg.\ sup/oracle $\delta^{*}$ = mean of per-row values; Avg.\ $\delta^{*}_{\text{top }p}$ = bolded family-sup aggregate; see existing convention). Score $= 0.5\,F_1 + 0.25\,(1{-}P_k) + 0.25\,(1{-}\mathrm{WD})$. Hi-DoTS HP: $m{=}2$, $\rho{=}0.7$, $a{=}0.5$.}
+\caption{Segmentation performance by encoder. $p_x \in \{50,\dots,95\}$: Score with $\delta^{*}$ set to the $x$-th percentile of held-out $\delta_{\text{eff}}$ (label-free, deployable). \textbf{sup}: $\delta^{*}$ from continuous sweep on the labeled \emph{train} split applied to test (supervised tuning, held-out evaluation; tiage/superseg = train split, dialseg711 = test 70:30 split with 70\% as calib). \textbf{oracle}: $\delta^{*}$ from continuous sweep on the \emph{test} split itself (supervised upper bound, label leakage, not deployable). $\delta^{*}_{\text{best }p}$ reports the threshold value at the per-row sup $p_x$ within the percentile family (the bolded $p_x$ Score column) --- semi-supervised pick among 10 percentile options. $\delta^{*}_{\text{sup}}$ and $\delta^{*}_{\text{oracle}}$ are the continuous sweep thresholds for the corresponding Score columns. Per-encoder \textit{Avg.}\ rows aggregate the three datasets (Avg.\ sup/oracle $\delta^{*}$ = mean of per-row values; Avg.\ $\delta^{*}_{\text{top }p}$ = bolded family-sup aggregate; see existing convention). Score $= 0.5\,F_1 + 0.25\,(1{-}P_k) + 0.25\,(1{-}\mathrm{WD})$. Hi-OnTop HP: $m{=}2$, $\rho{=}0.7$, $a{=}0.5$.}
 \label{tab:encoder_segmentation}
 \end{table*}
 ```
@@ -119,7 +119,7 @@ ll
 
 §2 표는 Score 만 보고하지만 본 절은 동일한 best/oracle 데이터의 **Pk/WD/F1 분해** 를 추가. dts\_result.md 표의 ★ ‡ 행 per-metric 과 동일.
 
-**출처**: `outputs/experiments/2026-05-24_hidots_oracle_best/REPORT.md` (`scripts/compute_hidots_oracle_best.py` — `run_encoder_comparison.py` 함수 import + cached embeddings).
+**출처**: `outputs/experiments/2026-05-24_hiontop_oracle_best/REPORT.md` (`scripts/compute_hiontop_oracle_best.py` — `run_encoder_comparison.py` 함수 import + cached embeddings).
 
 | Encoder | Dataset | Pk best ↓ | WD best ↓ | F1 best ↑ | **Score best** | δ\*_best | Pk oracle ↓ | WD oracle ↓ | F1 oracle ↑ | **Score oracle** | δ\*_oracle |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -160,7 +160,7 @@ ll
 & \textit{Avg.} & 0.511 & \textit{0.514} & 0.740 & 0.740 \\
 \bottomrule
 \end{tabular*}
-\caption{Continuous-$\delta^{*}$ supervised calibration --- \textbf{best}: $\delta^{*}$ chosen by sweeping Score on the labeled \emph{train} split (tiage/superseg = train, dialseg711 = test 70:30 split, 70\% as calib); supervised tuning with held-out test evaluation. \textbf{oracle}: $\delta^{*}$ chosen by sweeping Score on the \emph{test} split itself (supervised upper bound, label leakage at evaluation, not deployable). Both are continuous sweeps over $\delta^{*} \in [0.35, 0.95]$ ($N=60$). Distinct from Table~\ref{tab:encoder_segmentation}'s \emph{best $p_x$}, which is the best percentile within $\{50,55,\dots,95\}$. Hi-DoTS HP: $m{=}2$, $\rho{=}0.7$, $a{=}0.5$.}
+\caption{Continuous-$\delta^{*}$ supervised calibration --- \textbf{best}: $\delta^{*}$ chosen by sweeping Score on the labeled \emph{train} split (tiage/superseg = train, dialseg711 = test 70:30 split, 70\% as calib); supervised tuning with held-out test evaluation. \textbf{oracle}: $\delta^{*}$ chosen by sweeping Score on the \emph{test} split itself (supervised upper bound, label leakage at evaluation, not deployable). Both are continuous sweeps over $\delta^{*} \in [0.35, 0.95]$ ($N=60$). Distinct from Table~\ref{tab:encoder_segmentation}'s \emph{best $p_x$}, which is the best percentile within $\{50,55,\dots,95\}$. Hi-OnTop HP: $m{=}2$, $\rho{=}0.7$, $a{=}0.5$.}
 \label{tab:train_best_vs_oracle}
 \end{table}
 ```

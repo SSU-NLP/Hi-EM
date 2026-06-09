@@ -1,10 +1,10 @@
-# Calib N convergence — Hi-DoTS portability 분석
+# Calib N convergence — Hi-OnTop portability 분석
 
-**목적**: Hi-DoTS 를 토픽 분절 외 데이터에도 제안하려면 calib 비용 (N\*) 을 알아야 함. (인코더, 벤치) 셀 마다 천장 도달 최소 N 측정.
+**목적**: Hi-OnTop 를 토픽 분절 외 데이터에도 제안하려면 calib 비용 (N\*) 을 알아야 함. (인코더, 벤치) 셀 마다 천장 도달 최소 N 측정.
 
 **판정**: N\* = mean Score ≥ test-side oracle − 0.005 AND 3-seed σ < 0.005 인 최소 N.
 
-**HP**: Hi-DoTS m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg.
+**HP**: Hi-OnTop m=2, ρ=0.7, a=0.5. metric = 공식 SuperDialseg.
 
 ## 요약: N* (천장 도달 최소 calib dialog 수)
 

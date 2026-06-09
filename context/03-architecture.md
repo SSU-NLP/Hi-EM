@@ -146,11 +146,11 @@ decision-log 2026-05-20 참조.
 
 ```
 src/hi_em/
-├── hi_dots.py       # HiDoTS — 현 main DTS 모델 (v4.1.x reduced form, commit 326b86b)
-└── hi_dots_v2.py    # HiDoTSV2(HiDoTS) — lexical-overlap 보정 변형 (검증 대기, 2026-05-23)
+├── hi_ontop.py       # HiOnTop — 현 main DTS 모델 (v4.1.x reduced form, commit 326b86b)
+└── hi_ontop_lex.py    # HiOnTopLex(HiOnTop) — lexical-overlap 보정 변형 (검증 대기, 2026-05-23)
 ```
 
-- `HiDoTSV2` = `HiDoTS` + TextTiling 식 단어-빈도 겹침 보정항. `w_lex=0` 시 v1 과
-  byte-parity. 설계·결과 → `context/methodology/hi-dots-v2.md`, decision-log 2026-05-23.
-- 실험 entry: `scripts/run_hidots_v2.py` → `outputs/experiments/2026-05-23_hidots_v2/`.
-- 현재 main 모델은 `HiDoTS` 유지 — `HiDoTSV2` 는 v1 대체 승격 보류 (검증 대기).
+- `HiOnTopLex` = `HiOnTop` + TextTiling 식 단어-빈도 겹침 보정항. `w_lex=0` 시 v1 과
+  byte-parity. 설계·결과 → `context/methodology/hi-ontop-lex.md`, decision-log 2026-05-23.
+- 실험 entry: `scripts/run_hiontop_v2.py` → `outputs/experiments/2026-05-23_hiontop_v2/`.
+- 현재 main 모델은 `HiOnTop` 유지 — `HiOnTopLex` 는 v1 대체 승격 보류 (검증 대기).
