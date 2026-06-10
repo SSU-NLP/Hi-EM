@@ -146,8 +146,76 @@ API 로 offload (encode ~0.9 s/turn CPU → ~0.11 s/turn API). retrieve 단계�
 SeCom 내부 langchain `HuggingFaceEmbeddings` (로컬) 그대로 — `benchmarks/` 는
 읽기 전용. Crts≡로컬 이므로 retrieval 결과 동일.
 
+## AMI 도메인 + V_rel 상대신호 탐색 (2026-06-10, exploratory — 정식 승격 보류)
+
+drift 형 회의 코퍼스(AMI 139미팅, gold top-level 경계 미팅당 5~7개로 극sparse)에서
+current main 의 δ_eff threshold 가 약함(±2 tolerance F1 0.151 / Score 0.203, LLM
+full-context 0.543/0.640 대비 큰 격차). 원인 규명 + 신호 개선을 codex(gpt-5.5) 위임으로
+진행. **신호는 검증됐으나 online deploy 가 oracle 격차를 못 메워 정식 버전 승격은 보류.**
+
+### 진단 — magnitude 단독의 한계
+- LLM 이 경계 찍은 turn 에서 δ_eff z-score = +0.545 (random +0.021) → 임베딩 신호는 진짜
+  화제전환에 솟음. 그러나 *가장 큰* δ_eff peak 를 top-K/threshold 로 뽑아도 LLM 일치 ~0.11.
+- 즉 **가장 큰 cosine spike 는 경계가 아니라 noise**(화자전환·단발 이상치·인용). δ_eff
+  magnitude 단독으로는 boundary-spike 와 noise-spike 를 분리 못 함.
+
+### V_rel — active-event 대비 + background 상대거리
+경계 판정을 "직전 발화 대비 거리(δ_prev)" 가 아니라 **"현재 화제(active event)가 설명
+못 하는 정도, 단 background 대비 상대적으로"** 로 바꿈:
+
+```
+m_t       active event prototype (EWMA, 경계서 reset)   # "지금 화제" 요약
+g_t       global running centroid (EWMA, g_rho=0.15)     # "최근 전체 흐름"
+r_active  = 1 − cos(s_t, m_{t-1})
+r_global  = 1 − cos(s_t, g_{t-1})
+V_rel     = r_active − λ·r_global        (λ = 0.6)
+```
+
+직관: 진짜 경계 = active 화제선 멀지만 global 로는 평범(r_active↑, r_global↓) → V_rel 큼.
+noise = 둘 다 멂 → V_rel 작음. 이게 boundary/noise 분별의 레버.
+
+### 검증 (gold-reset oracle 천장, ±2 F1)
+| 신호 | 천장 |
+|---|--:|
+| δ_eff (기존, prototype 오염) | 0.226 |
+| raw r_active (clean prototype) | 0.488 |
+| V_rel (λ=0.6) | 0.565 |
+| V_rel + global-EWMA(g_rho=0.15) | **0.687** (>LLM 0.543) |
+
+- **overfit 아님**: 2-fold 교차 격차 0.000, (λ=0.6, g_rho=0.15) 가 A/B/manifest12/held127
+  전 split 동일 best.
+- **격차 분해**: clean(gold-reset) prototype + 단순 μ+cσ(c=2.0) = ±2F1 0.554 (LLM급).
+  → **신호·임계치 충분.**
+
+### 미해결 병목 — online reset 부트스트랩
+clean prototype 은 *경계서 reset* 으로만 유지되는데, online 에선 경계를 몰라 추측 reset →
+틀리면 prototype 오염 → r_active 작아짐 → under-seg 악순환. 시도 전부 oracle 미달:
+| deploy | pred | ±2F1 | Score |
+|---|--:|--:|--:|
+| V_rel 적응임계치(c=2.0) | 318 | 0.056 | **0.358** (deployable 1위) |
+| BOCPD top-K particle filter (codex 설계) | 1408 | 0.069 | 0.305 |
+- robust 갱신·peak gating·anchor·refractory·EM 반복정제·particle filter 모두 부트스트랩
+  순환 못 깸. **deployable 최선 = 단순 V_rel 적응임계치 Score 0.358** (기존 0.203·
+  TextTiling 0.209·even-spacing oracle 0.282 모두 상회).
+
+### SEM 계승
+V_rel 의 r_global 항 = SEM new-event base distribution 비교의 거리공간 근사 (codex 설계
+`log p(x|new) − log p(x|active)` 의 reduction). active prototype reset = event 모델 신규
+개시. λ·g_rho 는 calibration(overfit 검증 완료), magic number 아님. decision-log 2026-06-10.
+
+### 포지셔닝
+AMI = drift+sparse+gold-offset 3중 난점 도메인. even-spacing oracle 이 Pk/WD 지배(content
+신호와 구조적 불일치). **robustness/한계 도메인으로 보고, DTS(concat-seam) primary 유지.**
+
+상세 수치·전 ablation: `outputs/experiments/2026-06-10_ami_vrel_localmap/REPORT.md`.
+스크립트: `ami_vrel_eval.py`, `ami_vrel2_eval.py`, `ami_bocpd_eval.py`, `ami_localmap_eval.py`.
+**정식 hi_ontop 버전 승격 조건**: deploy 가 oracle 격차(reset 부트스트랩)를 메운 뒤.
+
 ## 변경 이력
 
+- **2026-06-10 V_rel 탐색**: AMI 에서 δ_eff 한계 진단 → V_rel 상대신호(oracle 천장 0.687
+  >LLM, overfit·제약 OK) → online reset 부트스트랩 병목 확정(deploy 미달). 정식 승격 보류.
+  위 § 참조. decision-log 2026-06-10.
 - **2026-05-22 신설**: v4.1.3 dead-code audit → reduced form 추출. v4.1.3 와
   byte-identical 검증. decision-log 2026-05-22 참조.
 - **2026-05-22 후속**: `ctx_window` default 를 canonical reported config 에

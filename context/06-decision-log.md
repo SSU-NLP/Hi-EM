@@ -2603,3 +2603,36 @@ Hi-DoTS는 Hi-OnTop의 옛 이름. 코드는 이미 마이그레이션 완료(`h
 import smoke OK, 테스트 회귀 0(267 passed; 기존 실패 4건은 STM/locomo-data 무관 이슈).
 **미해결**: figure PDF/PNG 내부 렌더링 텍스트(압축 스트림)는 재생성 필요, methodology
 `hi_ontop.md`/`hi-ontop.md` 중복(구 `hi_dots.md`/`hi-dots.md`) 병합 보류.
+
+---
+
+## 2026-06-10 — AMI 분절: V_rel 상대신호 확립 + online reset 부트스트랩 병목 (Hi-OnTop)
+
+**배경**: AMI 139미팅에서 기존 Hi-OnTop δ_eff ewma = ±2F1 0.151 / Score 0.203. LLM
+full-context 0.543/0.640 대비 큰 격차. 원인 규명 + 신호 개선 (codex gpt-5.5 위임 2회).
+
+**결정 1 — 경계 판정을 magnitude 임계치 → "active-event 설명 실패 + background 상대거리"로.**
+진단: 가장 강한 δ_eff peak가 경계 아니라 noise(화자전환·단발 이상치). magnitude 단독 분리 불가.
+신호 = **V_rel = r_active − λ·r_global** (r_active=1−cos(x, active prototype EWMA);
+r_global=1−cos(x, global running centroid, g_rho=0.15); λ=0.6). gold-reset clean prototype +
+이 신호 → oracle ±2F1 천장 0.687(>LLM 0.543). overfit 2-fold 격차 0.000 (knob 전 split 동일).
+
+**SEM 계승 3-step**: ① r_global(background 대비)은 SEM new-event base distribution 비교의 거리공간
+근사 — codex 설계 `log p(x|new)−log p(x|active)`의 reduction. 의도적 도입, SEM에 근거 있음.
+② active prototype 누적·경계 reset = SEM event 모델 갱신/신규 event 개시. sCRP/local MAP 철학과 정합.
+③ 본 엔트리 기록. λ·g_rho는 calibration(인코더·도메인 속성), magic number 아님(overfit 검증 완료).
+
+**결정 2 — 병목은 임계치가 아니라 online reset 부트스트랩 (미해결, 다음 iteration).**
+격차 분해: clean(gold-reset)+단순 μ+cσ = ±2F1 0.554(LLM급). 즉 신호·임계치 충분. 그러나
+detected-reset deploy = 0.15 (오염→under-seg 악순환). robust·peak·anchor·refractory·EM 반복정제·
+BOCPD top-K particle filter(codex 설계) 모두 oracle에 도달 못 함. BOCPD는 개수만 잡음(Score 0.305,
+±2F1 0.069). **deployable 최선 = 단순 V_rel 적응임계치 Score 0.358** (기존·TextTiling·even-spacing
+oracle 모두 상회).
+
+**결정 3 — AMI 포지셔닝 = robustness/한계 도메인 (primary 아님).** drift+sparse+gold-offset 3중
+난점, even-spacing oracle이 Pk/WD 지배(content 신호와 구조적 불일치). DTS(concat-seam) primary 유지.
+codex 자문 일치.
+
+상세 + 전체 수치: `outputs/experiments/2026-06-10_ami_vrel_localmap/REPORT.md`.
+신규 스크립트: `ami_vrel_eval.py`, `ami_vrel2_eval.py`, `ami_bocpd_eval.py`, `ami_localmap_eval.py`.
+**미해결**: V_rel을 정식 hi_ontop 모듈/버전으로 승격할지는 deploy가 oracle 격차 메운 뒤 결정 (현재 보류).

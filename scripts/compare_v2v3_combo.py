@@ -60,6 +60,7 @@ def eval_block(name, yts, deffs):
     rows = {
         "percentile p80": [boundaries(s, d80) for s in deffs],
         f"ewma c={EWMA_C}":  [adaptive_boundaries(s, c=EWMA_C, mode="ewma") for s in deffs],
+        "otsu (auto)":     [adaptive_boundaries(s, mode="otsu") for s in deffs],
     }
     d_or = best_score_dstar([(None, y) for y in yts], deffs)
     rows["oracle (상한)"] = [boundaries(s, d_or) for s in deffs]

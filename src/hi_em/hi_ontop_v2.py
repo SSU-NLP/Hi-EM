@@ -129,6 +129,33 @@ class HiOnTopV2(HiOnTop):
         return self._topic_id, is_boundary
 
 
+def _otsu_threshold(vals: np.ndarray, nbins: int = 64) -> float:
+    """Otsu (1979) parameter-free threshold: the cut that maximizes between-
+    class variance of the value histogram (splits low/high into 2 classes)."""
+    vals = vals[np.isfinite(vals)]
+    if vals.size < 2 or vals.min() == vals.max():
+        return float(vals.max()) + 1.0 if vals.size else 1.0
+    hist, edges = np.histogram(vals, bins=nbins)
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    total = vals.size
+    sum_all = float((hist * centers).sum())
+    wB = 0.0; sumB = 0.0; best_var = -1.0; best_thr = centers[0]
+    for i in range(nbins):
+        wB += hist[i]
+        if wB == 0:
+            continue
+        wF = total - wB
+        if wF == 0:
+            break
+        sumB += hist[i] * centers[i]
+        mB = sumB / wB
+        mF = (sum_all - sumB) / wF
+        between = wB * wF * (mB - mF) ** 2
+        if between > best_var:
+            best_var = between; best_thr = float(edges[i + 1])
+    return best_thr
+
+
 def adaptive_boundaries(seq, c: float = 1.0, mode: str = "online",
                         warmup: int = 5, fallback: float = 0.5594) -> list[int]:
     """Boundary labels for a ``delta_eff`` sequence via ``mu + c*sigma``.
@@ -148,6 +175,9 @@ def adaptive_boundaries(seq, c: float = 1.0, mode: str = "online",
     if mode == "offline":
         arr = np.asarray(real, dtype=np.float64)
         thr = float(arr.mean() + c * arr.std())
+        out = [1 if seq[i] >= thr else 0 for i in range(1, n)]
+    elif mode == "otsu":
+        thr = _otsu_threshold(np.asarray(real, dtype=np.float64))
         out = [1 if seq[i] >= thr else 0 for i in range(1, n)]
     elif mode == "online":
         s = sq = 0.0
