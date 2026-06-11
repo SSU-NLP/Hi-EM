@@ -43,9 +43,13 @@ global EWMA, g_rho=0.15); λ=0.6). 직관: 진짜 경계는 active서 멀고 glo
   넘음**(0.42~0.44) — 평균은 짧은 segment에 원리적 불리. de-neut만 돌파.
 
 ## 1.4 run-length 적응 β (둘 다 이기기, 자기검출)
+**먼저 고정 β로 보간**: `s = a·δ_prev + (1−a)·(r_active − λ·r_global)` 등 — 두 도메인 정반대라 단일 고정값으론
+strict 동시우위 어려움. **부분 de-neut 고정 β=0.70**은 4개 oracle strict(superseg 0.475)지만 **AMI를
+0.659→0.290으로 크게 희생** → "고정 최적화"라 불만족. λ(global 항)이 DTS 회귀 원인 아님도 확인(λ=0도 superseg<δ_eff).
+**→ 적응이 답.**
 `β_t = clip(A − B·log(1+l/L0), 0, 1)`, l=segment 길이. 짧은 segment(DTS)→β→1(de-neut), 긴 segment(AMI)→β낮음
 (V_rel). **run-length가 sharp/drift를 도메인 라벨 없이 판별.** (R̄=global 집중도는 방향 거꾸로라 실패 —
-superseg R̄ 최고/AMI 최저.)
+superseg R̄ 최고/AMI 최저.) 고정 β=0.70보다 *모든* 도메인에서 우월(superseg 0.506>0.475, AMI 0.341>0.290).
 - **best (A,B)=(2.0,1.0) oracle**: tiage 0.462 / dialseg711 0.384 / superseg 0.506 / AMI 0.341 — 4개 strict
   (δ_eff .452/.313/.467/.235). β평균 DTS 1.00 / AMI 0.39.
 
@@ -128,6 +132,12 @@ filler_prototype/`, `outputs/reports/ami_*_view.md`, `run_graphseg_ami.py`) — 
 - **trace**(`outputs/reports/`): `vrel_segment_trace.md`,`vrel_compare3_trace.md`,`vrel_summary_build_trace.md`,
   `vrel_proto_content_c2.md`. **REPORT**: `outputs/experiments/2026-06-10_ami_vrel_localmap/REPORT.md`(V_rel까지).
 - **decision-log**: 2026-06-10(V_rel), 2026-06-11(de-neut/적응β + calibration-free).
+
+## 부록 B2 — SEM 계승 (정당성)
+de-neut의 r_global 항 = "공통/background 대비 화제 변별" = SEM new-event **base distribution** 대비의 거리공간
+근사. active prototype reset = SEM event 모델 신규 개시. run-length 가중 = event persistence 기반 reliability
+weighting (SEM event-model reliability 원리와 정합; 단 직접 메커니즘 아닌 heuristic — codex 자문, decision-log
+2026-06-11 기록). λ·g_rho·(A,B)는 calibration(overfit·LOO 검증), magic number 아님.
 
 ## 부록 C — 정직한 한 줄 결론
 **축 1 성공**: de-neut + run-length 적응 β로 신호가 두 도메인 다 δ_eff를 넘고(superseg 벽 cross-domain robust 돌파),
