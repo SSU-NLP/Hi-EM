@@ -61,6 +61,18 @@ V = r_active − 0.6·(1 − cos(x, g))
   BOCPD particle filter·lagged changepoint emission **모두 격차 못 메움**(deploy ±2F1 0.07~0.15 vs clean+μcσ
   oracle 0.554).
 
+## 5b. Calibration 불필요 (c 안 골라도 됨) — 2026-06-11 추가
+deploy 비교 시 c(적응임계치 σ-배수)를 calib/test split으로 고르는 게 번거로움. 검증 결과 **불필요**:
+- **AMI Score-vs-c**: deneut Score가 *모든* c에서 δ_eff ≥ (c=2.5 .356/.329, c=2.0 .364/.274, c=1.5 .372/.203,
+  c=1.2 .329/.176, c=1.0 .267/.170). 우열이 c에 안 뒤집힘 → **고정 c(또는 Otsu)면 충분, calib 생략 가능.**
+  (`scripts/ami_dts_score_vs_c.py`)
+- **AUC (threshold-free 신호 비교, c 자체 없음)**: ±2 AUC — AMI deneut 0.621 vs δ_eff 0.497(+0.123, 큼),
+  tiage +0.047, superseg +0.025, **dialseg711 −0.045(혼재)**. δ_eff ±2 AUC ~0.50 = 거의 random; 둘 다 절대값
+  약함(0.5~0.62, task 난이도). (`scripts/ami_dts_auc_eval.py`)
+- **★ caveat (지표 비대칭)**: `Score`는 deneut 압승이나 `±2F1`만 보면 δ_eff가 약간 나음(δ_eff ±2F1 ~0.168 vs
+  deneut ~0.138). deneut의 Score 우위는 Pk/WD(개수·간격)에서 옴. 지표를 Score로 두면 deneut 승.
+- 앞서 "공정 calib +0.024"는 δ_eff가 자기 best-c(과소분절)로 끌어올린 것 — 고정 c에선 격차 +0.04~+0.17.
+
 ## 6. 미해결 / 다음 후보
 1. **online reset 부트스트랩** (최우선) — clean prototype을 online으로 유지. codex 자문: BOCPD lagged
    changepoint-start emission(구현했으나 미흡), commit-and-refine(bounded lag), soft/multi-hypothesis.

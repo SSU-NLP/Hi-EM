@@ -2671,3 +2671,9 @@ modest(+0.024), localization 동률** — oracle 우위가 online으로 안 넘�
 
 상세: `handoff_ami_dts.md`. 스크립트: `ami_dts_{deneut_oracle,beta_sweep,adaptive_beta,beta_overfit,
 beta_loo,deploy_calib}.py`, `ami_adaptive_deneut_deploy.py`.
+
+**2026-06-11 추가 (calibration-free 평가)**: de-neut deploy 비교 시 c(적응임계치 σ-배수)를 calib/test로 고르는
+번거로움 → 불필요 검증. (1) AMI Score-vs-c: deneut Score가 *모든* c에서 δ_eff≥ → 우열 c-무관, 고정 c/Otsu면
+충분 (`ami_dts_score_vs_c.py`). (2) AUC(threshold-free): ±2 AUC AMI deneut 0.621 vs δ_eff 0.497(+0.123),
+tiage/superseg도 우세, dialseg711 혼재; δ_eff ±2 AUC~0.5=거의 random (`ami_dts_auc_eval.py`). 단 지표 비대칭 —
+Score는 deneut 압승이나 ±2F1은 δ_eff 약간 우세(deneut Score 우위는 Pk/WD에서). 평가지표 Score 유지 시 deneut 승.
