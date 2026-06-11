@@ -102,6 +102,40 @@ adaptive-deneut (2.0,1.0) 0.462   0.384    0.506     0.341      0.367(calib-c, t
 (참조: AMI V_rel oracle 0.687, clean+μcσ deploy-천장 0.554, LLM full-context ±2 0.543/Score 0.640)
 ```
 
+## 부록 A — 전체 시도 ledger (빠짐 없이)
+**진단**
+- δ_eff z-score (LLM/gold/random turn): 신호는 LLM 경계에 솟으나(z+0.545) magnitude 최대값은 noise → 분리 불가.
+- picking(top-K, global z-threshold): LLM 경계 일치 ~0.11 고착 — picking으론 못 풀어.
+- **gap 분해**(`decompose_gap`): clean(gold-reset)+per-meeting임계 0.687 / clean+단순μ+cσ **0.554** /
+  detected-reset deploy 0.15 → **임계치 충분, 병목은 reset**임을 분해로 증명.
+
+**codex 설계 (3개, 전부 구현·실측)**
+- **local-MAP A1~A5**(`ami_localmap_eval`): active-event LLR(가우시안) + sCRP prior + coherence/speaker/singleton
+  penalty. → **실패** (prior가 1-D LLR 압도 → 과분절 12000개; per-particle μ 수정 후도 Score 0.305/±2F1 0.069).
+- **BOCPD top-K particle filter**(`ami_bocpd_eval`): 개수 맞춤(Pk/WD↑) but localization 나쁨(±2F1 0.069).
+- **BOCPD lagged changepoint-start emission**(`ami_bocpd_lag_eval`): localization 0.069→0.10 개선, 그래도 deploy 0.10 ≪ 0.554.
+
+**신호 탐색 (prototype/blend)**
+- V_rel = active − λ·global → AMI oracle 0.687. prototype 형태 mean/centroid/nn/medoid/window/content-weight/
+  robust/subspace/varnorm/info-gate → **전부 superseg 벽(0.467) 못 넘음**(0.42~0.44).
+- **de-neutralize**(중립성분 제거) → superseg 0.506 **첫 돌파**. fixed-a combo(δ_prev+V_rel) → strict 없음.
+- **adaptive a_t reliability blend**(codex 설계, δ_prev/V_rel z-score blend; `adaptive_probe`,`grid_adaptive`) →
+  **실패**(양 극단보다 못한 어중간한 중간; tiage 간신히, dialseg/superseg 회귀, AMI 0.46≪0.66).
+- **부분 de-neut β sweep** → β=0.70 고정 strict(단 AMI 0.29로 희생).
+- **adaptive β = R̄(global 집중도)** → **실패**(R̄ 방향 거꾸로: superseg R̄ 최고, AMI 최저).
+- **adaptive β = run-length**(`ami_dts_adaptive_beta`) → **성공**, best (2.0,1.0).
+
+**deploy 시도**
+- V_rel 적응임계치 Score 0.358. robust/peak/anchor/refractory(`ami_vrel2_eval`) → 무효(±2F1 0.15 고착).
+- EM 반복정제(`em_refine`) → 나쁜 고정점 0.13 수렴 안 함. de-neut deploy(`ami_adaptive_deneut_deploy`) Score 0.372.
+
+**검증**: overfit 2-fold(`ami_dts_beta_overfit`), LOO(`ami_dts_beta_loo`), deploy calib(`ami_dts_deploy_calib`),
+Score-vs-c·Otsu(`ami_dts_score_vs_c`), AUC(`ami_dts_auc_eval`).
+
+**이 handoff scope 밖 (별도 문서)**: LLM 버퍼-지연 곡선(`outputs/experiments/2026-06-09_llm_buffer_curve/REPORT.md`,
+figure_R), filler forward-merge/geometry-backchannel/info-content/GraphSeg(`outputs/experiments/2026-06-09_ami_
+filler_prototype/`, `outputs/reports/ami_*_view.md`, `scripts/run_graphseg_ami.py`). → AMI robustness 진단 단계.
+
 ## 9. 정직한 한 줄 결론
 **de-neut + run-length 적응 β는 신호(oracle) 차원에서 진짜 발견 — superseg 벽을 cross-domain robust하게 깸.
 그러나 deploy로는 modest(+0.024 Score, localization 동률) — online reset 부트스트랩이 남은 천장.**
