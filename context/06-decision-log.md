@@ -2636,3 +2636,38 @@ codex 자문 일치.
 상세 + 전체 수치: `outputs/experiments/2026-06-10_ami_vrel_localmap/REPORT.md`.
 신규 스크립트: `ami_vrel_eval.py`, `ami_vrel2_eval.py`, `ami_bocpd_eval.py`, `ami_localmap_eval.py`.
 **미해결**: V_rel을 정식 hi_ontop 모듈/버전으로 승격할지는 deploy가 oracle 격차 메운 뒤 결정 (현재 보류).
+
+---
+
+## 2026-06-11 — de-neutralized prototype + run-length 적응 β (Hi-OnTop, AMI+DTS 동시)
+
+**배경**: V_rel(=r_active−λ·r_global)이 AMI(drift)엔 강하나 DTS(concat-seam)엔 회귀. 두 도메인이
+정반대 구조(DTS는 직전 점프 sharp, AMI는 prototype 필요). prototype 형태 변형(mean/nn/medoid/varnorm/
+subspace/info-gate) 전부 superseg 벽(0.467) 못 넘음 — 평균은 짧은 segment에 원리적 불리.
+
+**결정 1 — de-neutralized prototype.** prototype·발화에서 global(중립) 성분을 β만큼 제거 후 비교:
+`r_active = 1 − cos(normalize(x − β(x·g)g), normalize(m − β(m·g)g))`. "화제의 변별적 방향"만 봄.
+β=1(full)에서 **superseg 0.506 > 0.467 — 처음으로 벽 돌파**, DTS 3개 다 δ_eff 초과. 단 AMI 0.222(짐).
+β=0 = V_rel(AMI 0.659). 두 도메인 β에 정반대.
+
+**결정 2 — run-length 적응 β (자기검출).** `β_t = clip(A − B·log(1+l/L0), 0, 1)`, l=segment 길이.
+짧은 segment(DTS)→β→1(de-neut), 긴 segment(AMI)→β낮음(V_rel). **run-length가 sharp/drift를 도메인
+라벨 없이 판별** (R̄=global 집중도는 방향 반대라 실패). best (A,B)=(2.0,1.0): tiage 0.462/dialseg 0.384/
+superseg 0.506/AMI 0.341 — oracle 4개 strict.
+
+**검증**: 2-fold(도메인 내) — dialseg/superseg/AMI robust, **tiage tie**(even fold 회귀). LOO(cross-domain)
+— 4개 held-out 다 PASS, (A,B) 전이됨(AMI는 grid 어떤 (A,B)든 >δ_eff). deploy(공정 calib-c, held-out test) —
+adaptive-deneut Score **0.367** vs δ_eff 0.343 (**+0.024 modest**, ±2F1 동률 0.106).
+
+**SEM 계승**: de-neut의 global 성분 제거 = "공통/background 대비 화제 변별" — SEM new-event base distribution
+대비의 변형. λ·g_rho는 V_rel 결정(2026-06-10) 계승. run-length 가중은 event 지속(persistence) 기반 reliability
+weighting — SEM event-model reliability 원리와 정합(codex 자문, 단 직접 메커니즘은 아니라 heuristic). [[2026-06-10]]
+
+**판정 / 미해결**: **신호/oracle 차원 = 진짜 성과**(superseg 벽 cross-domain robust 돌파). **deploy 차원 =
+modest(+0.024), localization 동률** — oracle 우위가 online으로 안 넘어옴. 원인 = **online reset 부트스트랩**
+(clean prototype을 online 유지 불가; hard-reset·robust·peak·EM·BOCPD particle filter·lagged emission 모두
+미흡). 정식 hi_ontop 버전 승격은 deploy가 이 격차 메운 뒤로 **보류**. (A,B) 자기보정 + predictive prototype
+(transformer) 후속 후보. tiage tie 정직 인정.
+
+상세: `handoff_ami_dts.md`. 스크립트: `ami_dts_{deneut_oracle,beta_sweep,adaptive_beta,beta_overfit,
+beta_loo,deploy_calib}.py`, `ami_adaptive_deneut_deploy.py`.
